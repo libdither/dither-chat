@@ -127,31 +127,50 @@ const shot = async (name: string) => shots && page.shot(`${shots}/${name}.png`);
 
 type Pt = [number, number];
 const touch = (type: string, pts: Pt[]) => page.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], i) => ({ x, y, id: i + 1, radiusX: 6, radiusY: 6, force: 1 })) });
+/** Two frames: what the input before set off has been handled and drawn. */
+const drawn = () => page.eval(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`);
 async function tap([x, y]: Pt) {
   await touch('touchStart', [[x, y]]);
+  // A finger rests a moment: a press with no length at all is not a tap to every handler.
   await Bun.sleep(40);
   await touch('touchEnd', []);
-  await Bun.sleep(400);
+  await drawn();
 }
 async function click([x, y]: Pt) {
   for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
     await page.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: type === 'mouseMoved' ? 0 : 1 });
-  await Bun.sleep(350);
+  await drawn();
 }
-/** A right-click, or a long press on a phone: the element's own menu. */
+// A check waits for what it checks to show, never a fixed time: on a busy machine a tap can take seconds to be drawn
+// (docs/testing.md, "No sleeps"). The bound only ends a run whose page never gets there.
+/** Waits until `expr` holds in the page; says whether it did. */
+const holds = (expr: string, ms = 15000) => page.until(expr, ms).then(
+  () => true,
+  () => false,
+);
+/**
+ * Before going somewhere: a menu, sheet or dialog is a layer with a history entry of its own, and closing it steps back
+ * off that entry a moment later (phone.ts pushLayer). Going somewhere before that step lands crosses it: the address
+ * says the new place and the app stays where it was. With a layer open on purpose there is nothing to wait for.
+ */
+const layersSettled = () => holds(`!!document.querySelector('.cm, .cm-sheet, .mc-layer, .modal, [role=dialog]') || !history.state?.layer`);
+/** A right-click, or a long press on a phone: the element's own menu, once it is open. */
 async function openMenuOn(sel: string) {
+  await holds(`!!document.querySelector(${JSON.stringify(sel)})`);
   await page.eval(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 4, clientY: b.y + b.height / 2 })); })()`);
-  await Bun.sleep(350);
+  await holds(`!!document.querySelector('.cm .cm-item, .cm-sheet button')`);
 }
-/** A long press, as a phone opens a message's menu. */
-async function hold(p: Pt) {
+/** A long press, as a phone opens a message's menu: held until `opens` shows (the app opens it while the finger is
+ * down), then lifted. */
+async function hold(p: Pt, opens = '.cm .cm-item, .cm-sheet button') {
   await touch('touchStart', [p]);
-  await Bun.sleep(650);
+  await holds(`!!document.querySelector(${JSON.stringify(opens)})`);
   await touch('touchEnd', []);
-  await Bun.sleep(300);
 }
 async function at(sel: string, pick = 'el => true'): Promise<Pt> {
   const find = `[...document.querySelectorAll(${JSON.stringify(sel)})].find(${pick})`;
+  // There first: what a press before drew may still be on its way.
+  await holds(`!!${find}`);
   const r = await page.eval<Pt | null>(`(() => {
     const el = ${find};
     if (!el) return null;
@@ -186,8 +205,17 @@ async function at(sel: string, pick = 'el => true'): Promise<Pt> {
 const has = (sel: string) => page.eval<boolean>(`!!document.querySelector(${JSON.stringify(sel)})`);
 const hash = () => page.eval<string>('location.hash');
 /** On screen and not moved off it (the phone's card slides). */
-const inView = (sel: string) =>
-  page.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && r.left < innerWidth - 20; })()`);
+const inViewJs = (sel: string) => `(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && r.left < innerWidth - 20; })()`;
+const inView = (sel: string) => page.eval<boolean>(inViewJs(sel));
+/** Waits until a reading (the hub's answer, or what the page shows) is what `ok` wants; returns the last one. */
+async function settles<T>(get: () => Promise<T>, ok: (v: T) => boolean, ms = 15000): Promise<T> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await get();
+    if (ok(v) || Date.now() > end) return v;
+    await Bun.sleep(100);
+  }
+}
 
 // ------------------------------------------------------------------ layout (as verify-phone.ts)
 
@@ -223,7 +251,7 @@ async function overflowThrough(scroller: string): Promise<string[]> {
   const found = new Set<string>();
   for (let i = 0; i <= n; i++) {
     await page.eval(`(() => { const el = document.querySelector(${JSON.stringify(scroller)}); el.scrollTop = ${i} * el.clientHeight * 0.8; })()`);
-    await Bun.sleep(60);
+    await drawn();
     for (const o of await overflow()) found.add(o);
   }
   await page.eval(`document.querySelector(${JSON.stringify(scroller)}).scrollTop = 0`);
@@ -232,11 +260,13 @@ async function overflowThrough(scroller: string): Promise<string[]> {
 
 /** The theme, then a fresh load of `hash` with it. The Inbox shows mail only (its Mail filter), as mail's lists are its. */
 async function theme(name: string, hash: string) {
+  await layersSettled();
   await page.goto(`${base}/#/inbox`);
   await page.eval(`localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), theme: ${JSON.stringify(name)}, inboxFilter: 'mail' }))`);
+  // The page before the reload is marked, so the wait below is for the new one's app, not the old one's.
+  await page.eval(`window.__beforeReload = true`);
   await page.eval(`(location.hash = ${JSON.stringify(hash)}, location.reload())`).catch(() => {});
-  await Bun.sleep(800);
-  await page.until(`!!document.querySelector('.app')`, 15000);
+  await page.until(`!window.__beforeReload && !!document.querySelector('.app')`, 15000);
   // The theme took: a light one draws on a light background.
   const light = await page.eval<boolean>(`(() => { const m = getComputedStyle(document.querySelector('.sidebar')).backgroundColor.match(/\\d+(\\.\\d+)?/g).map(Number); return (m[0] * 0.3 + m[1] * 0.59 + m[2] * 0.11) > 140; })()`);
   check(`${name} is on`, light === name.includes('light'));
@@ -269,11 +299,11 @@ async function phone(themeName: string, first: boolean) {
   await page.until(`!!document.querySelector('.app.phone')`, 15000);
   // The rail's Mail entry is gone: mail is in the Inbox, under its Mail filter (docs/mail.md "Mail as chats").
   await page.until(`!!document.querySelector('.sidebar .mail-list-chips') && document.querySelectorAll('.sidebar .row[data-row]').length >= 3`, 15000);
-  await Bun.sleep(600);
   // The Mail filter's Inbox: Sam's chat (his mail is in it) and the lease thread (more people, a chat of its own), and
-  // none of the newsletters, which Updates holds. Ranking them is the Inbox's (verify-inbox.ts), not mail's.
+  // none of the newsletters, which Updates holds. Ranking them is the Inbox's (verify-inbox.ts), not mail's. The list
+  // fills in as the hub's pages land, so this waits for both rows.
   const bulk = new Set(updateThreads.map((t) => t.id));
-  const rows = await inboxRows();
+  const rows = await settles(inboxRows, (r) => r.includes(`person:${samRoute.personId}`) && r.includes(lease.id));
   check(`${tag}: the Inbox with Mail on: Sam's chat and the lease thread, no newsletters`, rows.includes(`person:${samRoute.personId}`) && rows.includes(lease.id) && !rows.some((id) => bulk.has(id)), rows);
   check(`${tag}: no sideways overflow: the Inbox`, !(await overflow()).length, await overflow());
   const bar = await chipRows();
@@ -284,10 +314,12 @@ async function phone(themeName: string, first: boolean) {
   const mails = await mailsOf(dinner.id);
   await tap(await at(`.sidebar .row[data-row="person:${samRoute.personId}"]`));
   await page.until(`!!document.querySelector(${JSON.stringify(msg(mails.at(-1).id))})`, 15000);
-  check(`${tag}: Sam's chat opens as a card over the Inbox`, (await hash()).includes(`/c/`) && (await inView(PANE)), await hash());
+  // The card slides in over the Inbox: in view once it has.
+  check(`${tag}: Sam's chat opens as a card over the Inbox`, await holds(`location.hash.includes('/c/') && ${inViewJs(PANE)}`), await hash());
   const shown = await page.eval<string[]>(`${JSON.stringify(mails.map((m) => m.id))}.filter((id) => document.getElementById('m-' + id))`);
   // The reader folded read mails to a line; a chat shows every one as a message (dropped: the folded snippets).
-  check(`${tag}: the thread's mails are messages in Sam's chat, yours too`, shown.length === mails.length && (await page.eval<string>(`document.getElementById('m-${mails.find((m) => m.addressed === 'self')?.id}')?.textContent ?? ''`)).includes('Yes, 7:30 works'), { shown: shown.length, mails: mails.length });
+  const yours = `(document.getElementById('m-${mails.find((m) => m.addressed === 'self')?.id}')?.textContent ?? '')`;
+  check(`${tag}: the thread's mails are messages in Sam's chat, yours too`, shown.length === mails.length && (await holds(`${yours}.includes('Yes, 7:30 works')`)), { shown: shown.length, mails: mails.length, yours: await page.eval<string>(yours) });
   const tags = await page.eval<string[]>(`[...document.querySelectorAll('${PANE} .mail-tag')].map((t) => t.textContent.trim())`);
   check(`${tag}: the subject is a tag where the thread starts, without its Re:`, tags.join() === 'Dinner on Friday?', tags);
   const pill = await page.eval<string>(`document.querySelector('.typing-lead .mail-pill')?.textContent ?? ''`);
@@ -296,7 +328,6 @@ async function phone(themeName: string, first: boolean) {
   const last = msg(mails.at(-1).id);
   if (await has(`${last} .mail-quote-dots`)) {
     await tap(await at(`${last} .mail-quote-dots`));
-    await Bun.sleep(300);
   }
   check(`${tag}: a mail answering the one right above keeps its quote out of …`, !(await has(`${last} .chat-mail-quote`)) && !(await page.eval<boolean>(`(document.querySelector('${last}')?.textContent ?? '').includes('Should I book a table')`)));
   if (first) {
@@ -306,30 +337,29 @@ async function phone(themeName: string, first: boolean) {
     const card = await page.eval<string>(`(document.querySelector('.cm-sheet') ?? document.querySelector('.cm')).textContent`);
     check(`${tag}: the subject tag opens the thread's card, with Archive and Star`, card.includes('3 mails · with Sam Rivera') && card.includes('Archive') && card.includes('Star'), card);
     await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
-    await page.until(`!document.querySelector('.cm-sheet, .cm')`, 5000).catch(() => {});
-    // Read here after a second in view.
-    await Bun.sleep(1600);
-    const t = (await page1('v:inbox:*')).find((x: any) => x.id === dinner.id);
+    await holds(`!document.querySelector('.cm-sheet, .cm')`);
+    // Read here after a second in view: the hub has it read.
+    const t = await settles(async () => (await page1('v:inbox:*')).find((x: any) => x.id === dinner.id), (x) => x?.unread === 0);
     check(`${tag}: read here after a second in view`, t?.unread === 0, t?.unread);
   }
   check(`${tag}: no sideways overflow: a person's chat`, !(await overflowThrough(`${PANE} .timeline-scroll`)).length, await overflowThrough(`${PANE} .timeline-scroll`));
   await shot(`mail-${tag.replace(' ', '-')}-chat`);
   await tap(await at(`${PANE} .conv-head .icon-btn.back`));
-  await Bun.sleep(400);
-  check(`${tag}: back goes to the Inbox`, !(await hash()).includes('/c/') && (await inView('.sidebar .side-scroll')), await hash());
+  check(`${tag}: back goes to the Inbox`, await holds(`!location.hash.includes('/c/') && ${inViewJs('.sidebar .side-scroll')}`), await hash());
 
   if (first) {
     // A quote that answers no mail in the chat: behind …, which shows it (Alice's garden plan answers a mail of yours
     // that is not in her chat).
     const [plan] = (await mailsOf(garden.id)).filter((m) => m.addressed !== 'self');
+    await layersSettled();
     await page.eval(`location.hash = ${JSON.stringify(`#/inbox/c/${encodeURIComponent(aliceRoute.id)}?m=${plan.id}`)}`);
     await page.until(`!!document.querySelector(${JSON.stringify(`${msg(plan.id)} .mail-quote-dots`)})`, 15000);
     check(`${tag}: the quote is folded behind …`, !(await has(`${msg(plan.id)} .chat-mail-quote`)));
     await tap(await at(`${msg(plan.id)} .mail-quote-dots`));
-    await page.until(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`, 10000).catch(() => {});
+    await holds(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`);
     check(`${tag}: … shows the quote`, await page.eval(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`));
     await page.eval('history.back()');
-    await page.until(`!location.hash.includes('/c/')`, 5000).catch(() => {});
+    await holds(`!location.hash.includes('/c/')`);
   }
 
   // The HTML-only message, from Everything: its text part in the chat; none of its script.
@@ -343,15 +373,15 @@ async function phone(themeName: string, first: boolean) {
   check(`${tag}: an HTML-only message shows`, text.includes('your order #4471 has shipped') && text.includes('Track your parcel'), text.slice(0, 120));
   check(`${tag}: none of its script shows or runs`, !/alert|evil|hacked/.test(text) && !(await page.eval(`document.title.includes('hacked')`)));
   await page.eval('history.back()');
-  await Bun.sleep(500);
-  check(`${tag}: the browser's back goes to the list too`, !(await hash()).includes('/c/') && (await hash()).includes('v%3Aall'), await hash());
+  check(`${tag}: the browser's back goes to the list too`, await holds(`!location.hash.includes('/c/') && location.hash.includes('v%3Aall')`), await hash());
   if (first) {
     // A long subject names the thread's chat: one line, cut with an ellipsis, beside Archive and ⋯.
+    await layersSettled();
     await page.eval(`location.hash = '#/inbox/c/${github.id}'`);
     // Named without its Re: (bareSubject), as every subject is drawn.
     await page.until(`document.querySelector('.mail-thread-head .mail-subject')?.textContent === ${JSON.stringify(github.subject.replace(/^Re: /, ''))}`, 10000);
-    await Bun.sleep(400);
-    const long = await subjectBox();
+    // Laid out once the head has its buttons: until then the subject has the whole width.
+    const long = await settles(subjectBox, (b) => b.lines === 1 && !b.whole && b.ellipsis);
     check(`${tag}: a long subject is cut with an ellipsis, not run off the side`, long.lines === 1 && !long.whole && long.ellipsis, long);
     check(`${tag}: beside it only Archive and ⋯`, (await headButtons()).join() === 'Archive,More', await headButtons());
     await tap(await at('.mail-thread-head .hdr-btn[aria-label="More"]'));
@@ -359,24 +389,26 @@ async function phone(themeName: string, first: boolean) {
     const items = await page.eval<string>(`document.querySelector('.cm-sheet').textContent`);
     check(`${tag}: ⋯ has Star and Move to the trash`, items.includes('Star') && items.includes('Move to the trash'), items);
     await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
-    await page.until(`!document.querySelector('.cm-sheet')`, 5000).catch(() => {});
+    await holds(`!document.querySelector('.cm-sheet')`);
     check(`${tag}: no sideways overflow: a thread's chat`, !(await overflow()).length, await overflow());
     await shot(`mail-${tag.replace(' ', '-')}-thread-long-subject`);
+    await layersSettled();
     await page.eval(`location.hash = '#/inbox'`);
     await page.until(`!location.hash.includes('/c/')`, 5000);
-    await Bun.sleep(500);
   }
 
   // Sent from More's menu, then the mail account in Accounts' one list (docs/accounts.md).
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList('v:updates:*'))}`);
   await page.until(`!!document.querySelector('.sidebar .mail-more-chip')`, 5000);
   await tap(await at('.sidebar .mail-more-chip'));
   await page.until(`!!document.querySelector('.cm, .cm-sheet')`, 5000);
   await tap(await menuItem('Sent'));
   await page.until(`location.hash.includes('v%3Asent')`, 5000);
-  await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 3`, 5000).catch(() => {});
+  await holds(`document.querySelectorAll('.sidebar .mail-row').length >= 3`);
   check(`${tag}: Sent lists what you sent`, (await page.eval<number>(`document.querySelectorAll('.sidebar .mail-row').length`)) >= 3);
   check(`${tag}: More is lit with its name`, (await page.eval<string>(`document.querySelector('.sidebar .mail-more-chip.on')?.textContent ?? ''`)).includes('Sent'));
+  await layersSettled();
   await page.goto(`${base}/#/accounts`);
   await page.until(`!!document.querySelector('.acc-row [data-feature="mail"]')`, 10000);
   check(`${tag}: Accounts lists the mail account with the others, with a mail icon`, (await page.eval<string>(`document.querySelector('.acc-row:has([data-feature="mail"])').textContent`)).includes('zyan@dither.example'));
@@ -407,10 +439,9 @@ async function desktop(themeName: string) {
   await shot(`mail-${tag.replace(' ', '-')}`);
   // The switcher finds the mailboxes.
   await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))`);
-  await Bun.sleep(200);
+  await holds(`!!document.querySelector('.switcher-input')`);
   await page.eval(`(() => { const i = document.querySelector('.switcher-input'); i.value = 'Archive'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  await Bun.sleep(200);
-  check(`${tag}: Ctrl+K finds a mailbox`, (await page.eval<string>(`document.querySelector('.switcher-list')?.textContent ?? ''`)).includes('Mailbox'));
+  check(`${tag}: Ctrl+K finds a mailbox`, await holds(`(document.querySelector('.switcher-list')?.textContent ?? '').includes('Mailbox')`));
   await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))`);
 }
 
@@ -440,7 +471,8 @@ async function typeBody(text: string, where: 'all' | 'start' | 'caret' = 'all') 
 /** The text "Here they are." with `word` selected (ProseMirror follows the page's selection). */
 const selectWord = (word: string) =>
   page.eval(`(() => { const d = document.querySelector('.me-rich-doc'); d.focus(); const w = document.createTreeWalker(d, NodeFilter.SHOW_TEXT); for (let n; (n = w.nextNode()); ) { const i = n.data.indexOf(${JSON.stringify(word)}); if (i >= 0) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + ${word.length}); getSelection().removeAllRanges(); getSelection().addRange(r); return true; } } return false; })()`);
-const chipped = (email: string) => page.eval<boolean>(`[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes(${JSON.stringify(email)}))`);
+const chippedJs = (email: string) => `[...document.querySelectorAll('.mc-chip')].some((c) => c.textContent.includes(${JSON.stringify(email)}))`;
+const chipped = (email: string) => page.eval<boolean>(chippedJs(email));
 const outbox = async () => ((await fetch(`${base}/api/mail/outbox`).then((r) => r.json())) as any).items as any[];
 const threadNow = async (id: string) => (await fetch(`${base}/api/mail/threads/${id}`).then((r) => r.json())) as any;
 /** A file for the file picker, through the browser's own protocol. */
@@ -491,7 +523,7 @@ async function composer(themeName: string, full: boolean) {
     // Pressed as a tap would if nothing were over them, so what they do is checked all the same.
     const press = (label: string) => page.eval(`[...document.querySelectorAll('.mail-send.held .link-btn')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
     await press('Undo');
-    await page.until(`!document.querySelector('.mail-send.held') && document.querySelector(${JSON.stringify(BOX)}).value === ${JSON.stringify(words)}`, 10000).catch(() => {});
+    await holds(`!document.querySelector('.mail-send.held') && document.querySelector(${JSON.stringify(BOX)}).value === ${JSON.stringify(words)}`);
     check(`${tag}: Undo puts the words back in the box`, !(await has('.mail-send.held')) && (await page.eval<string>(`document.querySelector(${JSON.stringify(BOX)}).value`)) === words);
     check(`${tag}: nothing went`, !(await outbox()).some((o: any) => o.state === 'sent' && o.threadId === dinner.id));
     await tap(await at(SEND));
@@ -503,7 +535,7 @@ async function composer(themeName: string, full: boolean) {
       mine = (await mailsOf(dinner.id)).find((m) => m.addressed === 'self' && !mails.some((x) => x.id === m.id));
     }
     check(`${tag}: Send now sends it into the thread, as a reply`, !!mine && mine.subject === 'Re: Dinner on Friday?', mine?.subject);
-    if (mine) await page.until(`!!document.querySelector(${JSON.stringify(msg(mine.id))}) && !document.querySelector('.mail-send')`, 10000).catch(() => {});
+    if (mine) await holds(`!!document.querySelector(${JSON.stringify(msg(mine.id))}) && !document.querySelector('.mail-send')`);
     check(`${tag}: and the chat shows it as its message, the sending line gone`, !!mine && (await has(msg(mine.id))) && !(await has('.mail-send')));
   }
   // What went to the thread before (the box's mail, in the light run).
@@ -524,17 +556,16 @@ async function composer(themeName: string, full: boolean) {
   check(`${tag}: To, the subject and the quote are filled in, the quote as text to trim or answer in`, filled.to.includes('Sam Rivera') && filled.subject === 'Re: Dinner on Friday?' && filled.quote && filled.nested === 2 && !filled.island, filled);
   // Markdown says it as Markdown does: `>` lines, a bar for each level, and `<` drawn as itself.
   await tap(await at('.me-mode', `el => el.textContent === 'Markdown'`));
-  await page.until(`!!document.querySelector('.me-markdown.shown .md-quote-in2')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-markdown.shown .md-quote-in2')`);
   const mdQuote = await page.eval<{ text: string; levels: number }>(`({ text: (document.querySelector('.me-markdown .cm-content')?.innerText ?? '').replace(/\u2060/g, '').slice(0, 200), levels: document.querySelectorAll('.me-markdown .md-quote-in2').length })`);
   check(`${tag}: Markdown quotes it with a bar for each level, the address in <>`, mdQuote.levels > 0 && mdQuote.text.includes('<sam@rivera.example>') && !mdQuote.text.includes('&lt;'), mdQuote);
   await tap(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown .me-rich-doc blockquote')`, 10000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown .me-rich-doc blockquote')`);
   check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(/ /g, '-')}`);
   if (!full) {
     await tap(await at('.mc-head .icon-btn'));
-    await Bun.sleep(300);
-    check(`${tag}: ✕ closes it`, !(await has('.mc-layer')));
+    check(`${tag}: ✕ closes it`, await holds(`!document.querySelector('.mc-layer')`));
     return;
   }
   // A Bcc line opened by mistake goes away again while it is empty; Bcc beside To brings it back.
@@ -546,15 +577,15 @@ async function composer(themeName: string, full: boolean) {
   await tap(await at('.mc-more .link-btn', `el => el.textContent === 'Cc'`));
   await type('#mc-cc', 'jo@park.example');
   await key('#mc-cc', 'Enter');
-  await Bun.sleep(150);
-  check(`${tag}: a typed Cc becomes a chip`, await chipped('jo@park.example'));
+  check(`${tag}: a typed Cc becomes a chip`, await holds(chippedJs('jo@park.example')));
   // Backspace at the start of the box opens the chip back into text, its last letter gone; Ctrl+Z puts it back.
   await key('#mc-cc', 'Backspace');
-  await Bun.sleep(150);
-  check(`${tag}: Backspace opens the chip back into text, a letter gone`, (await page.eval(`document.querySelector('#mc-cc').value`)) === 'jo@park.exampl' && !(await chipped('jo@park')));
+  check(`${tag}: Backspace opens the chip back into text, a letter gone`, await holds(`document.querySelector('#mc-cc').value === 'jo@park.exampl' && !${chippedJs('jo@park')}`));
+  // It puts the caret back in the box in the next frame (ComposerCard): that frame has run before the body is typed in,
+  // or it takes the caret from the body.
+  await drawn();
   await key('#mc-cc', 'z', { ctrlKey: true });
-  await Bun.sleep(150);
-  check(`${tag}: Ctrl+Z makes it a chip again`, (await page.eval(`document.querySelector('#mc-cc').value`)) === '' && (await chipped('jo@park.example')));
+  check(`${tag}: Ctrl+Z makes it a chip again`, await holds(`document.querySelector('#mc-cc').value === '' && ${chippedJs('jo@park.example')}`));
   // The reply goes with its bold (Ctrl+B, as in any mail app), written where the caret starts: above the quote, on a
   // line of its own (not at the end of "… wrote:").
   await typeBody('See you at ', 'caret');
@@ -585,7 +616,7 @@ async function composer(themeName: string, full: boolean) {
   await page.until(`!!document.querySelector('.mc-strip .mc-out')`, 10000);
   const end = Date.now() + 30_000;
   while (Date.now() < end && (await sentTo()) === sentBefore) await Bun.sleep(250);
-  await page.until(`!!document.querySelector('.mc-strip .mc-out.sent')`, 5000).catch(() => {});
+  await holds(`!!document.querySelector('.mc-strip .mc-out.sent')`);
   check(`${tag}: then "Sent"`, await has('.mc-strip .mc-out.sent'));
   // Yours, with its Cc (Sam answers it by himself a few seconds later, so it is found by being yours and new).
   let mine: any = null;
@@ -597,7 +628,7 @@ async function composer(themeName: string, full: boolean) {
   if (!mine) return;
   // With Jo on it the thread is no longer Sam's alone: it leaves his chat for one of its own (docs/mail.md "Where a
   // thread goes"), where the reply shows.
-  await page.until(`!document.querySelector(${JSON.stringify(msg(booked.id))})`, 10000).catch(() => {});
+  await holds(`!document.querySelector(${JSON.stringify(msg(booked.id))})`);
   check(`${tag}: with Jo on it, the thread leaves Sam's chat`, !(await has(msg(booked.id))));
   // Its HTML part is plain (no colours or fonts) but formatted (bold): it reads as its HTML in the app's theme, not on a white sheet.
   const body = (await fetch(`${base}/api/mail/messages/${mine.id}/body`).then((r) => r.json())) as any;
@@ -617,7 +648,7 @@ async function composer(themeName: string, full: boolean) {
     check(`composer phone ${t}: your reply's words in the chat, as its text part has them`, said.startsWith('See you at **7:30**!') && String(body.text).startsWith(said.split('\n')[0]), said.slice(0, 120));
     await tap(await at(`${card} .mail-quote-dots`));
     await tap(await at(`${card} .mail-open-chip`, `el => el.textContent.includes('Show as sent')`));
-    await page.until(`!!document.querySelector('${card} .chat-mail-sent .mail-html.ready')`, 10000).catch(() => {});
+    await holds(`!!document.querySelector('${card} .chat-mail-sent .mail-html.ready')`);
     const shown = await page.eval<{ bold: string; bg: string; fold: boolean; text: string; app: string }>(
       `(() => { const c = document.querySelector('${card}'); const d = c?.querySelector('.mail-sheet.themed iframe')?.contentDocument; const rgb = (v) => { const e = document.createElement('i'); e.style.color = v; document.body.append(e); const x = getComputedStyle(e).color; e.remove(); return x; }; return { bold: d?.querySelector('strong')?.textContent ?? '', bg: d ? getComputedStyle(d.body).backgroundColor : '', fold: !!d?.querySelector('.dc-fold'), text: d ? getComputedStyle(d.querySelector('.dc-mail')).color : '', app: rgb(getComputedStyle(document.documentElement).getPropertyValue('--text')) }; })()`,
     );
@@ -644,31 +675,26 @@ async function composerDesktop(themeName: string, full: boolean) {
   await shot(`mail-${tag.replace(/ /g, '-')}`);
   if (!full) {
     await click(await at('.mc-discard'));
-    await Bun.sleep(300);
-    check(`${tag}: discard closes it`, !(await has('.mc-layer')));
+    check(`${tag}: discard closes it`, await holds(`!document.querySelector('.mc-layer')`));
     return;
   }
   // To completes from the people in your mail.
   await type('#mc-to', 'sam');
-  await page.until(`document.querySelectorAll('.mc-hits li').length > 0`, 5000).catch(() => {});
+  await holds(`document.querySelectorAll('.mc-hits li').length > 0`);
   check(`${tag}: To completes from your mail`, (await page.eval<string>(`document.querySelector('.mc-hits')?.textContent ?? ''`)).includes('sam@rivera.example'));
   await page.eval(`document.querySelector('.mc-hits li').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
-  await Bun.sleep(150);
-  check(`${tag}: picking one makes a chip`, await chipped('Sam'));
+  check(`${tag}: picking one makes a chip`, await holds(chippedJs('Sam')));
   // And from the account's own server (mail.contacts; the demo's address book): someone no mail here names.
   await type('#mc-to', 'dana');
-  await page.until(`[...document.querySelectorAll('.mc-hits li')].some((l) => l.textContent.includes('dana@okafor.example'))`, 6000).catch(() => {});
+  await holds(`[...document.querySelectorAll('.mc-hits li')].some((l) => l.textContent.includes('dana@okafor.example'))`);
   check(`${tag}: To completes from the account's server too`, (await page.eval<string>(`document.querySelector('.mc-hits')?.textContent ?? ''`)).includes('Dana Okafor'));
   await key('#mc-to', 'Enter');
-  await Bun.sleep(150);
-  check(`${tag}: Enter takes the suggestion`, await chipped('Dana Okafor'));
+  check(`${tag}: Enter takes the suggestion`, await holds(chippedJs('Dana Okafor')));
   // A click on a chip opens it to edit, whole; Enter puts it back where it was.
   await click(await at('.mc-chip-name', `el => el.textContent.includes('Sam')`));
-  await Bun.sleep(150);
-  check(`${tag}: a click opens a chip to edit, whole`, (await page.eval(`document.querySelector('#mc-to').value`)) === 'sam@rivera.example');
+  check(`${tag}: a click opens a chip to edit, whole`, await holds(`document.querySelector('#mc-to').value === 'sam@rivera.example'`));
   await key('#mc-to', 'Enter');
-  await Bun.sleep(150);
-  check(`${tag}: Enter puts it back where it was, with its name`, (await page.eval<string[]>(`[...document.querySelectorAll('.mc-chip-name')].map((c) => c.textContent)`)).join(',') === 'Sam Rivera,Dana Okafor');
+  check(`${tag}: Enter puts it back where it was, with its name`, await holds(`[...document.querySelectorAll('.mc-chip-name')].map((c) => c.textContent).join(',') === 'Sam Rivera,Dana Okafor'`));
   // Resized by its bottom right corner with the mouse: the top left stays put.
   const rect = () => page.eval<{ x: number; y: number; w: number; h: number }>(`(() => { const r = document.querySelector('.mc-layer.dock').getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })()`);
   const was = await rect();
@@ -677,7 +703,7 @@ async function composerDesktop(themeName: string, full: boolean) {
   await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: gx, y: gy, button: 'left', buttons: 1, clickCount: 1 });
   for (const k of [1, 2, 3]) await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: gx - 20 * k, y: gy - 30 * k, button: 'left', buttons: 1 });
   await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: gx - 60, y: gy - 90, button: 'left', buttons: 0, clickCount: 1 });
-  await Bun.sleep(150);
+  await holds(`document.querySelector('.mc-layer.dock').getBoundingClientRect().width === ${was.w - 60}`);
   const now = await rect();
   check(`${tag}: the bottom right corner resizes it, the top left staying`, now.x === was.x && now.y === was.y && now.w === was.w - 60 && now.h === was.h - 90, { was, now });
   // Maximized: the window but a gap; again: back to that size.
@@ -700,10 +726,10 @@ async function composerDesktop(themeName: string, full: boolean) {
   })()`);
   await page.until(`!!document.querySelector('.me-rich-doc')`, 15000);
   await paste('.me-rich-doc');
-  await page.until(`!!document.querySelector('.me-rich-doc img[src^="data:image/png"]')`, 8000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich-doc img[src^="data:image/png"]')`);
   check(`${tag}: a picture pasted into the text sits in the text, not attached`, (await has('.me-rich-doc img[src^="data:image/png"]')) && !(await has('.mc-files .composer-file')));
   await paste('#mc-subject');
-  await page.until(`!!document.querySelector('.mc-files .composer-file[data-status="done"] img')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.mc-files .composer-file[data-status="done"] img')`);
   const pasted = await page.eval<{ name: string; img: boolean }>(`(() => { const f = document.querySelector('.mc-files .composer-file'); return { name: f?.querySelector('.composer-file-name')?.textContent ?? '', img: !!f?.querySelector('img')?.naturalWidth }; })()`);
   check(`${tag}: pasted outside the text, it is attached with its thumbnail and a name`, /^Pasted picture \d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d\.png$/.test(pasted.name) && pasted.img, pasted);
   check(`${tag}: the size counts the picture in the text`, /^≈ \d/.test(await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`)));
@@ -713,7 +739,7 @@ async function composerDesktop(themeName: string, full: boolean) {
     const m = document.querySelector('.mc-scroll');
     for (const type of ['dragenter', 'dragover', 'drop']) m.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
   })()`);
-  await page.until(`[...document.querySelectorAll('.mc-files .composer-file-name')].some((n) => n.textContent === 'notes.txt')`, 15000).catch(() => {});
+  await holds(`[...document.querySelectorAll('.mc-files .composer-file-name')].some((n) => n.textContent === 'notes.txt')`);
   check(`${tag}: a dropped file is attached`, await page.eval<boolean>(`[...document.querySelectorAll('.mc-files .composer-file-name')].some((n) => n.textContent === 'notes.txt')`));
   await shot(`mail-${tag.replace(/ /g, '-')}-pasted`);
   // Taken off again, so the draft below is as it was.
@@ -724,26 +750,24 @@ async function composerDesktop(themeName: string, full: boolean) {
   check(`${tag}: the formatting bar shows`, await has('.me-bar .mc-fmt-bold'));
   await selectWord('they');
   await click(await at('.mc-fmt-bold'));
-  await Bun.sleep(150);
-  check(`${tag}: B makes the selection bold`, (await page.eval(`document.querySelector('.me-rich-doc strong')?.textContent ?? ''`)) === 'they');
+  check(`${tag}: B makes the selection bold`, await holds(`document.querySelector('.me-rich-doc strong')?.textContent === 'they'`));
   await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
-  await page.until(`!!document.querySelector('.me-markdown.shown .cm-content')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-markdown.shown .cm-content')`);
   const md = await page.eval<string>(`[...document.querySelectorAll('.me-markdown .cm-line')].map((l) => l.textContent).join('\\n')`);
   // Live: the bold shows bold, its ** marks shown only on the caret's line.
   check(`${tag}: the Markdown view says it as Markdown, drawn as it will look`, md.replace(/\*\*/g, '') === 'Here they are.' && (await page.eval(`document.querySelector('.me-markdown .md-strong')?.textContent.replace(/\\*/g, '') ?? ''`)) === 'they', md);
   await shot(`mail-${tag.replace(/ /g, '-')}-markdown`);
   await click(await at('.me-mode', `el => el.textContent === 'HTML'`));
-  await page.until(`document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('strong')?.textContent === 'they'`, 15000).catch(() => {});
+  await holds(`document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('strong')?.textContent === 'they'`);
   check(`${tag}: the HTML view shows the HTML and the mail as it arrives`, (await page.eval(`document.querySelector('.me-html .cm-content')?.textContent ?? ''`)).includes('<strong>they</strong>') && (await page.eval(`document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('strong')?.textContent ?? ''`)) === 'they');
   check(`${tag}: no sideways overflow: the HTML view`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(/ /g, '-')}-html`);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown')`);
   check(`${tag}: back in Rich, nothing lost`, (await bodyText()) === 'Here they are.' && (await page.eval(`document.querySelector('.me-rich-doc strong')?.textContent ?? ''`)) === 'they', await bodyText());
   await page.eval(`document.querySelector('.me-rich-doc').focus()`);
   await press('z', 'KeyZ', 90, 2);
-  await Bun.sleep(150);
-  check(`${tag}: Ctrl+Z takes the bold back`, !(await has('.me-rich-doc strong')) && (await bodyText()) === 'Here they are.', await bodyText());
+  check(`${tag}: Ctrl+Z takes the bold back`, await holds(`!document.querySelector('.me-rich-doc strong') && document.querySelector('.me-rich-doc').innerText.trim() === 'Here they are.'`), await bodyText());
   // More of the bar: a list item nests with Tab and its button shows pressed; Heading; Remove formatting; a table.
   // "- " starts a list as it is typed.
   await typeBody('-');
@@ -752,13 +776,11 @@ async function composerDesktop(themeName: string, full: boolean) {
   await press('Enter', 'Enter', 13);
   await page.send('Input.insertText', { text: 'two' });
   await press('Tab', 'Tab', 9);
-  await Bun.sleep(150);
-  check(`${tag}: Tab nests a list item`, (await page.eval(`document.querySelector('.me-rich-doc ul ul li')?.textContent ?? ''`)) === 'two');
-  await page.until(`document.querySelector('.me-bar .mc-fmt-bullets')?.getAttribute('aria-pressed') === 'true'`, 3000).catch(() => {});
+  check(`${tag}: Tab nests a list item`, await holds(`document.querySelector('.me-rich-doc ul ul li')?.textContent === 'two'`));
+  await holds(`document.querySelector('.me-bar .mc-fmt-bullets')?.getAttribute('aria-pressed') === 'true'`);
   check(`${tag}: the bullets button shows pressed in a list`, (await page.eval(`document.querySelector('.me-bar .mc-fmt-bullets').getAttribute('aria-pressed')`)) === 'true');
   await press('Tab', 'Tab', 9, 8);
-  await Bun.sleep(150);
-  check(`${tag}: Shift+Tab takes it back out`, !(await has('.me-rich-doc ul ul')) && (await page.eval<number>(`document.querySelectorAll('.me-rich-doc ul li').length`)) === 2);
+  check(`${tag}: Shift+Tab takes it back out`, await holds(`!document.querySelector('.me-rich-doc ul ul') && document.querySelectorAll('.me-rich-doc ul li').length === 2`));
   // Heading, Remove formatting, colour, code, alignment and tables are behind ⋯, which keeps the bar to one row.
   check(`${tag}: the less used buttons wait behind ⋯`, !(await has('.me-bar .mc-fmt-heading')) && !(await has('.me-bar .mc-fmt-table')) && (await has('.me-bar .me-more')));
   await click(await at('.me-more'));
@@ -770,10 +792,10 @@ async function composerDesktop(themeName: string, full: boolean) {
   await typeBody('Plan:');
   await press('Enter', 'Enter', 13);
   await click(await at('.mc-fmt-table'));
-  await page.until(`!!document.querySelector('.me-rich-doc table')`, 3000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich-doc table')`);
   await page.send('Input.insertText', { text: 'Day' });
   await click(await at('.me-mode', `el => el.textContent === 'HTML'`));
-  await page.until(`!!document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('th')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-html-preview iframe')?.contentDocument?.querySelector('th')`);
   const cell = await page.eval<{ th: string; border: string }>(`(() => { const d = document.querySelector('.me-html-preview iframe')?.contentDocument; const td = d?.querySelector('td'); return { th: d?.querySelector('th')?.textContent ?? '', border: td ? getComputedStyle(td).borderTopWidth + ' ' + getComputedStyle(td).borderTopStyle : '' }; })()`);
   check(`${tag}: a table goes with its lines`, cell.th.trim() === 'Day' && cell.border === '1px solid', cell);
   await shot(`mail-${tag.replace(/ /g, '-')}-table`);
@@ -781,25 +803,26 @@ async function composerDesktop(themeName: string, full: boolean) {
   await page.eval(`document.querySelector('.me-html .cm-content').focus()`);
   await press('End', 'End', 35, 2);
   await page.send('Input.insertText', { text: '\n<p>After the table</p>' });
-  await Bun.sleep(500);
+  // In the view; switching views puts what it holds into the document (MailEditor flush), pause or not.
+  await holds(`(document.querySelector('.me-html .cm-content')?.textContent ?? '').includes('After the table')`);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown')`);
   check(`${tag}: edited in HTML, a table comes back a table`, (await has('.me-rich-doc table')) && !(await has('.me-rich-doc .me-island')) && (await bodyText()).includes('After the table'), await bodyText());
   // Alignment survives an edit in the Markdown view (written there as a small piece of HTML).
   await typeBody('Centred');
   await click(await at('.mc-fmt-align'));
   await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
-  await page.until(`!!document.querySelector('.me-markdown.shown .cm-content')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-markdown.shown .cm-content')`);
   await page.eval(`document.querySelector('.me-markdown .cm-content').focus()`);
   await press('End', 'End', 35, 2);
   await page.send('Input.insertText', { text: '\n\nNext' });
-  await Bun.sleep(500);
+  await holds(`(document.querySelector('.me-markdown .cm-content')?.textContent ?? '').includes('Next')`);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown')`);
   check(`${tag}: edited in Markdown, centred text stays centred`, (await page.eval(`document.querySelector('.me-rich-doc p[style*="center"]')?.textContent ?? ''`)) === 'Centred', await page.eval(`document.querySelector('.me-rich-doc').innerHTML.slice(0, 300)`));
   // Plain: the fourth view, plain text only, kept with the draft; no pictures choice; Rich again undoes it.
   await click(await at('.me-mode', `el => el.textContent === 'Plain'`));
-  await page.until(`!!document.querySelector('.me-plain.shown .cm-content')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-plain.shown .cm-content')`);
   const plainDraft = async () => ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts.find((x: any) => x.draft.subject === 'Photos from Friday')?.draft;
   let pd: any = null;
   for (let i = 0; i < 30 && !pd?.plainOnly; i++) (await Bun.sleep(200), (pd = await plainDraft()));
@@ -809,30 +832,30 @@ async function composerDesktop(themeName: string, full: boolean) {
   check(`${tag}: Plain has no HTML tags in it`, !/<\/?[a-z][^>]*>/i.test(plainShown), plainShown.slice(0, 200));
   await shot(`mail-${tag.replace(/ /g, '-')}-plain`);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown')`, 5000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown')`);
   for (let i = 0; i < 30 && pd?.plainOnly; i++) (await Bun.sleep(200), (pd = await plainDraft()));
   check(`${tag}: back to Rich, it is HTML again`, pd?.plainOnly === false || pd?.plainOnly === undefined, pd?.plainOnly);
   await typeBody('Here they are.');
-  // Closed: kept as a draft, which the Drafts line opens again.
-  await Bun.sleep(300);
+  // Closed: kept as a draft, which the Drafts line opens again. Closing writes back what was typed (ComposerCard close).
   await click(await at('.mc-head .icon-btn'));
-  await page.until(`!!document.querySelector('.mail-drafts-line')`, 8000).catch(() => {});
+  await holds(`!!document.querySelector('.mail-drafts-line')`);
   const draftsLine = await page.eval<string>(`document.querySelector('.mail-drafts-line')?.textContent ?? ''`);
   check(`${tag}: closing keeps a draft`, draftsLine.includes('1 draft'), { draftsLine, drafts: ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts.map((d: any) => [d.key, d.draft.kind, d.draft.subject, d.draft.text.slice(0, 40), d.draft.html?.slice(0, 80)]) });
   await click(await at('.mail-drafts-line'));
   await click(await at('.cm-item, .context-menu button, [role=menuitem]', `el => el.textContent.includes('Photos from Friday')`));
-  await page.until(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim() === 'Here they are.'`, 8000).catch(() => {});
+  await holds(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim() === 'Here they are.'`);
   check(`${tag}: the draft opens again as it was`, (await page.eval(`document.querySelector('.mc-subject')?.value`)) === 'Photos from Friday' && (await bodyText()) === 'Here they are.');
   // Discarded: Undo in the strip brings it back; once that is over, the draft is gone.
   await click(await at('.mc-discard'));
-  await page.until(`!document.querySelector('.mc-layer') && !!document.querySelector('.mc-out.discarded .mc-undo')`, 8000).catch(() => {});
+  await holds(`!document.querySelector('.mc-layer') && !!document.querySelector('.mc-out.discarded .mc-undo')`);
   check(`${tag}: discarding offers Undo, and the Drafts line leaves it out`, (await has('.mc-out.discarded .mc-undo')) && !(await has('.mail-drafts-line')));
   await click(await at('.mc-out.discarded .mc-undo'));
-  await page.until(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim() === 'Here they are.'`, 8000).catch(() => {});
+  await holds(`(document.querySelector('.me-rich-doc')?.innerText ?? '').trim() === 'Here they are.'`);
   check(`${tag}: Undo brings the discarded draft back`, (await bodyText()) === 'Here they are.');
   await click(await at('.mc-discard'));
-  await Bun.sleep(9_500);
-  const left = ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts as any[];
+  // Once its Undo has gone by, the hub lets the draft go.
+  await holds(`!document.querySelector('.mc-out.discarded')`, 30_000);
+  const left = await settles(async () => ((await fetch(`${base}/api/mail/drafts`).then((r) => r.json())) as any).drafts as any[], (d) => !d.length);
   check(`${tag}: after its Undo, the draft is gone`, !(await has('.mail-drafts-line')) && !(await has('.mc-out.discarded')) && !left.length, left.length);
   await forwardWithPictures(tag);
   await leftAsLeft(tag);
@@ -841,6 +864,7 @@ async function composerDesktop(themeName: string, full: boolean) {
 /** A reply emptied on purpose stays empty when it is opened again. */
 async function leftAsLeft(tag: string) {
   const [, , jo] = await mailsOf(lease.id);
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList('v:all:*', lease.id))}`);
   await page.until(`!!document.querySelector(${JSON.stringify(`.mail-thread-pane ${msg(jo.id)}`)})`, 15000);
   // The reader's Reply is the chat's box; the full editor, where a reply can be emptied, is in the mail's menu.
@@ -848,20 +872,21 @@ async function leftAsLeft(tag: string) {
     await openMenuOn(`${msg(jo.id)} .msg-body`);
     await click(await menuItem('Reply all in the full editor'));
     await page.until(`!!document.querySelector('.me-rich-doc')`, 15000);
-    await Bun.sleep(600);
   };
   await reply();
-  check(`${tag}: a reply starts with its quote`, (await has('.me-rich-doc blockquote')) || (await has('.me-island')));
+  check(`${tag}: a reply starts with its quote`, await holds(`!!document.querySelector('.me-rich-doc blockquote, .me-island')`));
   await typeBody('');
-  await page.until(`!document.querySelector('.me-rich-doc blockquote, .me-island')`, 5000).catch(() => {});
-  await Bun.sleep(1200);
+  await holds(`!document.querySelector('.me-rich-doc blockquote, .me-island')`);
   await click(await at('.mc-head .icon-btn', `el => (el.getAttribute('aria-label') ?? '').startsWith('Close')`));
-  await page.until(`!document.querySelector('.mc-layer')`, 5000).catch(() => {});
+  await holds(`!document.querySelector('.mc-layer')`);
   await reply();
-  check(`${tag}: emptied and closed, it opens again empty, with "Quote" to put the quote back`, !(await has('.me-rich-doc blockquote')) && !(await has('.me-island')) && (await has('.mc-quote-add')));
+  const reopened = () => page.eval<{ quote: boolean; island: boolean; add: boolean }>(`({ quote: !!document.querySelector('.me-rich-doc blockquote'), island: !!document.querySelector('.me-island'), add: !!document.querySelector('.mc-quote-add') })`);
+  await holds(`!!document.querySelector('.mc-quote-add')`);
+  const again = await reopened();
+  check(`${tag}: emptied and closed, it opens again empty, with "Quote" to put the quote back`, again.add && !again.quote && !again.island, again);
   await click(await at('.mc-discard'));
   // Its "Discarded · Undo" strip gone, and the draft with it: nothing left over for the checks after.
-  await page.until(`!document.querySelector('.mc-layer') && !document.querySelector('.mc-out.discarded')`, 15000).catch(() => {});
+  await holds(`!document.querySelector('.mc-layer') && !document.querySelector('.mc-out.discarded')`);
   check(`${tag}: discarded, the emptied reply is gone`, !(await has('.mc-out.discarded')));
 }
 
@@ -871,6 +896,7 @@ async function forwardWithPictures(tag: string) {
   if (!sale) return check(`${tag}: the store newsletter is in Updates`, false);
   const [news] = await mailsOf(sale.id);
   const card = msg(news.id);
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList('v:updates:*', sale.id))}`);
   await page.until(`!!document.querySelector(${JSON.stringify(`${card} .mail-quote-dots`)})`, 15000);
   // The reader showed a newsletter's HTML; a chat shows its words, and the HTML behind … as "Show as sent".
@@ -888,46 +914,46 @@ async function forwardWithPictures(tag: string) {
     page.until(`${frameSrc} !== ${JSON.stringify(before)} && !!document.querySelector('${card} .mail-html.ready')`, 10000).catch(() => {});
   let before = await page.eval<string>(frameSrc);
   await click(await at('[role=menuitemradio]', `el => el.textContent.trim() === 'No pictures'`));
-  await page.until(`/not loaded/.test(document.querySelector('.mail-img-banner')?.textContent ?? '')`, 8000).catch(() => {});
+  await holds(`/not loaded/.test(document.querySelector('.mail-img-banner')?.textContent ?? '')`);
   await redrawn(before);
   check(`${tag}: No pictures, for this mail only`, /not loaded/.test(await page.eval<string>(`document.querySelector('.mail-img-banner')?.textContent ?? ''`)));
   await click(await at('.mail-img-more'));
   before = await page.eval<string>(frameSrc);
   await click(await at('[role=menuitem]', `el => el.textContent.trim() === 'Back to the usual'`));
-  await page.until(`!/not loaded|your choice/.test(document.querySelector('.mail-img-banner')?.textContent ?? '')`, 8000).catch(() => {});
+  await holds(`!/not loaded|your choice/.test(document.querySelector('.mail-img-banner')?.textContent ?? '')`);
   await redrawn(before);
   // Forward, from the mail's menu, on its words again.
   await click(await at(`${card} .mail-open-chip`, `el => el.textContent.includes('Just the words')`));
   await page.until(`!!document.querySelector(${JSON.stringify(`${card} .msg-body`)})`, 5000);
   await openMenuOn(`${card} .msg-body`);
   await click(await menuItem('Forward'));
-  await page.until(`!!document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelector('img[data-dc-src]')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelector('img[data-dc-src]')`);
   const isl = await page.eval<{ styled: boolean; pictures: number; trackers: number }>(`(() => { const d = document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument; return { styled: !!d?.querySelector('.card[style*="border"]'), pictures: d?.querySelectorAll('img[data-dc-src]').length ?? 0, trackers: d ? [...d.querySelectorAll('img[data-dc-src]')].filter((i) => /track|\\/o\\//.test(i.dataset.dcSrc)).length : -1 }; })()`);
   check(`${tag}: a forward keeps its layout (style sheets inlined), its pictures, and none of its trackers`, isl.styled && isl.pictures > 60 && isl.trackers === 0, isl);
   // The footer says how its pictures from the web go, in sight however long the forward is; it opens the choice.
   // The hub's answer on which can tell (the newsletter's personal header) comes after the button draws, and widens it.
-  await page.until(`!!document.querySelector('.mc-foot .mc-pics-btn .mc-seg-warn')`, 10000).catch(() => {});
+  await holds(`!!document.querySelector('.mc-foot .mc-pics-btn .mc-seg-warn')`);
   const picsBtn = await page.eval<string>(`document.querySelector('.mc-foot .mc-pics-btn')?.textContent ?? ''`);
   // Link leaves out the one that can tell unless asked: the footer counts what goes.
   check(`${tag}: the footer says how its pictures from the web go, and that the one that can tell is left out`, /^69 · Link · 1 left out$/.test(picsBtn), picsBtn);
   // The editor shows it: the one left out is faded in the forward, the rest as they are.
   const outIn = `document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelectorAll('img.dc-out').length ?? -1`;
-  await page.until(`${outIn} === 1`, 5000).catch(() => {});
+  await holds(`${outIn} === 1`);
   check(`${tag}: the forward marks the picture Link leaves out`, (await page.eval<number>(outIn)) === 1, await page.eval<number>(outIn));
   // Plain shows the forward's text as it goes, not a chip.
   await click(await at('.me-mode', `el => el.textContent === 'Plain'`));
-  await page.until(`!!document.querySelector('.me-plain.shown .md-island-text')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-plain.shown .md-island-text')`);
   const plainFwd = await page.eval<string>(`document.querySelector('.me-plain .md-island-text')?.textContent ?? ''`);
   check(`${tag}: Plain shows the forwarded message's text`, plainFwd.includes('Forwarded message') && plainFwd.includes('Northbound Outfitters'), plainFwd.slice(0, 160));
   check(`${tag}: Plain's forward can be taken out there`, await has('.me-plain .md-island-text .md-island-x'));
   // Taken out in Plain and put back: Rich again, and an HTML part again (the pictures choice is back).
   await click(await at('.me-plain .md-island-x'));
-  await page.until(`!document.querySelector('.me-plain .md-island-text') && !!document.querySelector('.mc-quote-add')`, 5000).catch(() => {});
+  await holds(`!document.querySelector('.me-plain .md-island-text') && !!document.querySelector('.mc-quote-add')`);
   await click(await at('.mc-quote-add'));
-  await page.until(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]') && !!document.querySelector('.mc-pics-btn')`, 10000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]') && !!document.querySelector('.mc-pics-btn')`);
   check(`${tag}: put back from Plain, the forward goes as HTML again`, (await has('.me-rich.shown .me-island[data-kind="forward"]')) && (await has('.mc-pics-btn')));
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown') && !!document.querySelector('.mc-pics-btn')`, 10000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown') && !!document.querySelector('.mc-pics-btn')`);
   await click(await at('.mc-pics-btn'));
   check(`${tag}: under Link, leaving out the one that can tell is on`, await page.eval<boolean>(`!!document.querySelector('.mc-pics-tell input')?.checked`));
   check(`${tag}: it opens the choice`, (await page.eval<string>(`document.querySelector('.mc-pics-pop')?.textContent ?? ''`)).includes('pictures from the web'));
@@ -938,7 +964,7 @@ async function forwardWithPictures(tag: string) {
   check(`${tag}: the footer button follows the choice and counts what goes`, embedBtn === '69 · Embed · 1 left out', embedBtn);
   await click(await at('.mc-seg-btn', `el => el.textContent === 'Leave out'`));
   const allIn = `document.querySelector('.me-island[data-kind="forward"] iframe')?.contentDocument?.querySelectorAll('img[data-dc-src]').length ?? -2`;
-  await page.until(`${outIn} === ${allIn}`, 5000).catch(() => {});
+  await holds(`${outIn} === ${allIn}`);
   const dropBtn = await page.eval<string>(`document.querySelector('.mc-pics-btn')?.textContent ?? ''`);
   const marked = { dropBtn, out: await page.eval<number>(outIn), all: await page.eval<number>(allIn) };
   check(`${tag}: Leave out marks every picture from the web, and the footer counts none going`, dropBtn === '0 · Leave out' && marked.out === marked.all && marked.all > 60, marked);
@@ -950,13 +976,13 @@ async function forwardWithPictures(tag: string) {
     t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   })()`);
   const bare = `document.querySelector('.me-rich-doc .me-pic-web[data-dc-was^="//pixel.example"]')`;
-  await page.until(`!!${bare}?.classList.contains('dc-out')`, 5000).catch(() => {});
+  await holds(`!!${bare}?.classList.contains('dc-out')`);
   check(`${tag}: a pasted picture whose address has no scheme is marked left out too`, await page.eval<boolean>(`!!${bare}?.classList.contains('dc-out')`));
   await click(await at('.me-rich-doc .me-pic-web[data-dc-was^="//pixel.example"]'));
   const picked = await page.eval<string>(`(() => { const b = ${bare}; return b?.classList.contains('ProseMirror-selectednode') ? getComputedStyle(b).outlineStyle : 'not picked'; })()`);
   check(`${tag}: a click picks a picture box, and it shows it is picked`, picked === 'solid', picked);
   await press('Backspace', 'Backspace', 8);
-  await page.until(`!${bare}`, 3000).catch(() => {});
+  await holds(`!${bare}`);
   check(`${tag}: Backspace takes the picked box out`, !(await has('.me-rich-doc .me-pic-web[data-dc-was^="//pixel.example"]')));
   // The click in the text closed the choice: open it again.
   await click(await at('.mc-pics-btn'));
@@ -972,39 +998,38 @@ async function forwardWithPictures(tag: string) {
   // and only opening it changes nothing that goes.
   const sizeBefore = await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`);
   await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Edit HTML'`));
-  await page.until(`!!document.querySelector('.me-island[data-kind="forward"] .me-island-code .cm-content')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-island[data-kind="forward"] .me-island-code .cm-content')`);
   const nested = await page.eval<{ open: boolean; above: boolean; text: string }>(
     `(() => { const i = document.querySelector('.me-island[data-kind="forward"]'); const c = i?.querySelector('.me-island-code'); return { open: !!c?.querySelector('.cm-content') && !c.hidden, above: !!c && c.compareDocumentPosition(i.querySelector('.me-island-sheet')) === Node.DOCUMENT_POSITION_FOLLOWING, text: c?.querySelector('.cm-content')?.textContent.slice(0, 200) ?? '' }; })()`,
   );
   check(`${tag}: a forward kept whole opens its own HTML editor in place, over the forward`, nested.open && nested.above && nested.text.includes('dc-forward-head'), nested);
   await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Done'`));
-  await Bun.sleep(400);
-  check(`${tag}: Done closes it, and the mail is as it was`, (await page.eval<boolean>(`document.querySelector('.me-island[data-kind="forward"] .me-island-code').hidden`)) && (await page.eval<string>(`document.querySelector('.mc-size-btn')?.textContent ?? ''`)) === sizeBefore);
+  check(`${tag}: Done closes it, and the mail is as it was`, await holds(`document.querySelector('.me-island[data-kind="forward"] .me-island-code').hidden && (document.querySelector('.mc-size-btn')?.textContent ?? '') === ${JSON.stringify(sizeBefore)}`));
   // Make it text turns the block into the document's text, the caret at its start in sight; Undo brings it back.
   await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Make it text'`));
-  await page.until(`!document.querySelector('.me-island')`, 5000).catch(() => {});
+  await holds(`!document.querySelector('.me-island')`);
   const made = await page.eval<{ island: boolean; text: boolean; top: number }>(
     `({ island: !!document.querySelector('.me-island'), text: (document.querySelector('.me-rich-doc')?.innerText ?? '').includes('Forwarded message'), top: document.querySelector('.me-rich-doc')?.closest('.mc-scroll')?.scrollTop ?? -1 })`,
   );
   check(`${tag}: Make it text makes the forward text, the caret at its start`, !made.island && made.text && made.top >= 0 && made.top < 600, made);
   await press('z', 'KeyZ', 90, 2);
-  await page.until(`!!document.querySelector('.me-island[data-kind="forward"]')`, 5000).catch(() => {});
+  await holds(`!!document.querySelector('.me-island[data-kind="forward"]')`);
   check(`${tag}: Undo brings the block back`, await has('.me-island[data-kind="forward"]'));
   // Markdown draws it as it arrives, under a bar that names it: not a stand-in.
   await click(await at('.me-mode', `el => el.textContent === 'Markdown'`));
-  await page.until(`!!document.querySelector('.me-markdown.shown .md-island-sheet iframe')`, 15000).catch(() => {});
+  await holds(`!!document.querySelector('.me-markdown.shown .md-island-sheet iframe')`);
   const sheetBar = await page.eval<string>(`document.querySelector('.me-markdown .md-island-sheet-bar')?.textContent ?? ''`);
   check(`${tag}: Markdown shows the forward kept whole as it arrives, named as its own HTML first`, sheetBar.startsWith('Kept as its own HTML') && sheetBar.includes('Open in HTML view') && (await has('.me-markdown .md-island-sheet iframe')), sheetBar);
   await click(await at('.me-mode', `el => el.textContent === 'Rich'`));
-  await page.until(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]')`, 10000).catch(() => {});
+  await holds(`!!document.querySelector('.me-rich.shown .me-island[data-kind="forward"]')`);
   await type('#mc-to', 'jo@park.example');
   await key('#mc-to', 'Enter');
   // A line typed into its HTML and sent at once with Ctrl+Enter (before the editor's pause) goes too.
   await click(await at('.me-island[data-kind="forward"] .me-island-btn', `el => el.textContent === 'Edit HTML'`));
-  await page.until(`document.activeElement?.closest?.('.me-island-code') != null`, 15000).catch(() => {});
+  await holds(`document.activeElement?.closest?.('.me-island-code') != null`);
   await page.send('Input.insertText', { text: '<p>Typed just before sending</p>' });
   await press('Enter', 'Enter', 13, 2);
-  await page.until(`/left out/.test(document.querySelector('.mc-strip')?.textContent ?? '')`, 10000).catch(() => {});
+  await holds(`/left out/.test(document.querySelector('.mc-strip')?.textContent ?? '')`);
   const strip = await page.eval<string>(`document.querySelector('.mc-strip')?.textContent ?? ''`);
   check(`${tag}: the sending strip says how many pictures were left out`, /· 1 picture left out/.test(strip), strip);
   const end = Date.now() + 30_000;
@@ -1051,12 +1076,14 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   check(`${tag}: no sideways overflow: Updates`, !(await overflow()).length, await overflow());
   await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-proton-updates`);
   // The Inbox (its Mail filter) has the account's people but not its newsletter.
+  await layersSettled();
   await page.eval(`location.hash = '#/inbox'`);
   await page.until(`document.querySelectorAll('.sidebar .row[data-row]').length >= 3`, 15000);
   check(`${tag}: Inbox does not show the newsletter`, !(await page.eval<boolean>(`[...document.querySelectorAll('.sidebar .row[data-row]')].some((r) => r.textContent.includes('Garden Club Weekly'))`)));
   check(`${tag}: no sideways overflow: Inbox`, !(await overflow()).length, await overflow());
 
   // Two accounts: the wheels over a mail list pick whose mail it shows, and their menu says what the rows' dots are.
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList('v:all:*'))}`);
   await page.until(`!!document.querySelector('.sidebar .scope-wheel') && [...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.textContent.includes('Found your scarf'))`, 15000);
   const press = onPhone ? tap : click;
@@ -1067,7 +1094,7 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   // All mail spans both accounts, so its account wheel shows too; a platform with one account needs none.
   check(`${tag}: the wheels say All mail, All accounts`, (await wheel()) === 'All mail › All accounts', await wheel());
   await press(await at('.sidebar .scope-wheel'));
-  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:k.email'))})`, 5000).catch(() => {});
+  await holds(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:k.email'))})`);
   check(`${tag}: a click turns it to the next platform`, (await wheel()) === 'Email', await wheel());
   await press(await at('.sidebar .scope-wheel'));
   await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:k.proton'))})`, 5000);
@@ -1075,7 +1102,7 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   check(`${tag}: and the next, whose mail only shows`, (await wheel()) === 'Proton' && !(await rows()).some((r) => r.includes('Dinner')), await wheel());
   await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-one-account`);
   await press(await at('.sidebar .scope-wheel'));
-  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:*'))})`, 5000).catch(() => {});
+  await holds(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:*'))})`);
   check(`${tag}: and round to All mail`, (await wheel()) === 'All mail › All accounts', await wheel());
 
   // A right-click (a long press on a phone) opens the account menu, which says what the rows' dots are.
@@ -1097,7 +1124,7 @@ async function headerless(themeName: string, onPhone: boolean, first: boolean) {
   check(`${tag}: picking an account there shows its platform on the wheel`, (await wheel()) === 'Proton', await wheel());
   await openMenuOn('.sidebar .scope-wheel');
   await press(await menuItem('All accounts'));
-  await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:*'))})`, 5000).catch(() => {});
+  await holds(`location.hash.includes(${JSON.stringify(encodeURIComponent('v:all:*'))})`);
   check(`${tag}: and All accounts again`, (await wheel()) === 'All mail › All accounts', await wheel());
 }
 
@@ -1143,6 +1170,7 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
   const rows = () => page.eval<string[]>(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].map((r) => r.dataset.thread)`);
   /** A thread's chat over its list, as a row opens it (the list keeps its Undo). */
   const open = async (id: string, list: string) => {
+    await layersSettled();
     await page.eval(`location.hash = ${JSON.stringify(inList(list, id))}`);
     await page.until(`!!document.querySelector('.mail-thread-pane .mail-thread-head .hdr-btn') || !!document.querySelector('${PANE} [id^="m-mml_"]')`, 15000);
   };
@@ -1184,6 +1212,7 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
   await press(await menuItem(GMAIL_ME));
   await page.until(`location.hash.includes(${JSON.stringify(encodeURIComponent(`v:all:${GMAIL_ACC}`))})`, 5000);
   // Its Inbox as a list: the account's view (the Inbox chip is every account's, chats and all).
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList(`v:inbox:${GMAIL_ACC}`))}`);
   await page.until(`document.querySelectorAll('.sidebar .mail-row[data-thread]').length >= 2`, 10000);
   const inboxRows = await rows();
@@ -1222,7 +1251,7 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
     const photos = find('Garden photos');
     await open(photos.id, `v:inbox:${GMAIL_ACC}`);
     await fileIt(photos.id, 'Archive');
-    await page.until(`/Archived/.test([...document.querySelectorAll('.mail-undo, .toast')].map((e) => e.textContent).join())`, 5000).catch(() => {});
+    await holds(`/Archived/.test([...document.querySelectorAll('.mail-undo, .toast')].map((e) => e.textContent).join())`);
     check(`${tag}: Archive says "Archived · Undo"`, /Archived/.test(await undoLine()) && /Undo/.test(await undoLine()), await undoLine());
     await undo();
     check(`${tag}: Undo brings it back before Gmail heard of it`, await settled(photos.id, (t) => t.roles.includes('inbox')));
@@ -1239,7 +1268,7 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
     await open(photos.id, `mb:${all.id}`);
     await page.eval(`document.querySelectorAll('.toasts .toast-x').forEach((x) => x.click())`);
     await fileIt(photos.id, 'Move to Inbox');
-    await page.until(`/Moved to Inbox/.test([...document.querySelectorAll('.mail-undo, .toast')].map((e) => e.textContent).join())`, 5000).catch(() => {});
+    await holds(`/Moved to Inbox/.test([...document.querySelectorAll('.mail-undo, .toast')].map((e) => e.textContent).join())`);
     check(`${tag}: Move to Inbox says "Moved to Inbox · Undo"`, /Moved to Inbox/.test(await undoLine()) && /Undo/.test(await undoLine()), await undoLine());
     check(`${tag}: Move to Inbox from All Mail: in Inbox and All Mail`, await settled(photos.id, (t) => t.roles.includes('inbox') && t.roles.includes('all')));
     const back = await hubThread(photos.id);
@@ -1250,8 +1279,9 @@ async function gmail(themeName: string, onPhone: boolean, step: 'archive' | 'tra
       named(inbox2) === 1 && inbox2.some((t) => t.id === photos.id) && named(inAll2) === 1 && inFamily2.some((t) => t.id === photos.id) && back.count === before.count && back.labels.join() === 'Family',
       { inbox: named(inbox2), all: named(inAll2), count: [before.count, back.count], labels: back.labels },
     );
+    await layersSettled();
     await page.eval(`location.hash = ${JSON.stringify(inList(`v:inbox:${GMAIL_ACC}`))}`);
-    await page.until(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.dataset.thread === ${JSON.stringify(photos.id)})`, 10000).catch(() => {});
+    await holds(`[...document.querySelectorAll('.sidebar .mail-row[data-thread]')].some((r) => r.dataset.thread === ${JSON.stringify(photos.id)})`);
     const inboxRows2 = await rows();
     check(`${tag}: its row is in the Inbox list once`, inboxRows2.filter((id) => id === photos.id).length === 1, inboxRows2.length);
     await shot(`mail-${sz}-${themeName}-gmail-back-in-inbox`);
@@ -1309,10 +1339,11 @@ async function classification(themeName: string, onPhone: boolean) {
   check(`${tag}: no sideways overflow: Everything`, !(await overflow()).length, await overflow());
   await shot(`mail-${onPhone ? 'phone' : 'desktop'}-${themeName}-everything`);
   // People has no chip; an old link to the Mail page's People still lists.
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(`#/mail/l/${encodeURIComponent('v:people:*')}`)}`);
   await page.until(`location.hash.includes('v%3Apeople')`, 5000);
-  await Bun.sleep(600);
-  const ppl = await shownIds();
+  // The list fills in as its pages land.
+  const ppl = await settles(shownIds, (ids) => ids.includes(dinner.id) && ids.includes(lease.id));
   // Read as the Inbox's list (routes.ts), the address kept as typed.
   check(`${tag}: an old People link: in the Inbox's place, Dinner and the lease, no newsletters`, (await has('.sidebar .mail-list-chips')) && ppl.includes(dinner.id) && ppl.includes(lease.id) && !ppl.some((id) => bulk.has(id)), { hash: await hash(), n: ppl.length });
   if (onPhone) return;
@@ -1322,25 +1353,26 @@ async function classification(themeName: string, onPhone: boolean) {
   const menu = async () => {
     const [x, y] = await at(sel);
     for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await page.send('Input.dispatchMouseEvent', { type, x, y, button: type === 'mouseMoved' ? 'none' : 'right', buttons: type === 'mousePressed' ? 2 : 0, clickCount: 1 });
-    await Bun.sleep(300);
+    await holds(`!!document.querySelector('.cm .cm-item')`);
     return page.eval<string>(`document.querySelector('.cm')?.textContent ?? ''`);
   };
   const pick = async (label: string) => {
     await click(await at('.cm .cm-item', `el => el.textContent.includes(${JSON.stringify(label)})`));
-    await Bun.sleep(600);
+    await holds(`!document.querySelector('.cm')`);
   };
   const classOf = async () => ((await fetch(`${base}/api/mail/threads/${climb.id}`).then((r) => r.json())) as any).thread;
   check(`${tag}: a sender nobody knows is in People, marked unknown`, (await shownIds()).includes(climb.id) && (await classOf()).unknown === true);
   const m = await menu();
   check(`${tag}: its menu offers both`, m.includes('This is a person') && m.includes('Not a person'), m);
   await pick('Not a person');
-  check(`${tag}: "Not a person" sends it to Updates`, (await classOf()).class === 'bulk' && !(await has(sel)));
+  check(`${tag}: "Not a person" sends it to Updates`, (await settles(classOf, (t) => t.class === 'bulk')).class === 'bulk' && (await holds(`!document.querySelector(${JSON.stringify(sel)})`)));
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(UPDATES)}`);
   await page.until(`!!document.querySelector(${JSON.stringify(sel)})`, 5000);
   check(`${tag}: and it is in Updates`, await has(sel));
   check(`${tag}: there its menu says "This is a person"`, (await menu()).includes('This is a person'));
   await pick('This is a person');
-  const back = await classOf();
+  const back = await settles(classOf, (t) => t.class === 'personal' && t.unknown === false);
   check(`${tag}: "This is a person" brings it back, no longer unknown`, back.class === 'personal' && back.unknown === false, back);
   // As it was, for the next run.
   await fetch(`${base}/api/mail/threads/${climb.id}/person`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ person: null }) });
@@ -1376,19 +1408,14 @@ async function filing() {
       await Bun.sleep(16);
     }
     await touch('touchEnd', []);
-    await Bun.sleep(600);
+    await drawn();
   }
-  async function longPress(sel: string) {
-    const p = await at(sel);
-    await touch('touchStart', [p]);
-    await Bun.sleep(650);
-    await touch('touchEnd', []);
-    await Bun.sleep(300);
-  }
+  /** Held until the row is picked (the pick bar shows), then lifted. */
+  const longPress = async (sel: string) => hold(await at(sel), '.mail-pickbar');
   async function mouse(p: Pt, button: 'left' | 'right', modifiers = 0) {
     for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
       await page.send('Input.dispatchMouseEvent', { type, x: p[0], y: p[1], modifiers, button: type === 'mouseMoved' ? 'none' : button, buttons: type === 'mousePressed' ? (button === 'left' ? 1 : 2) : 0, clickCount: type === 'mouseMoved' ? 0 : 1 });
-    await Bun.sleep(300);
+    await drawn();
   }
   const key = (k: string) => page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
 
@@ -1404,31 +1431,35 @@ async function filing() {
     await theme(themeName, UPDATES);
     await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 5`, 15000);
     await swipe(row(a.id), 1);
-    await page.until(`!document.querySelector(${JSON.stringify(row(a.id))})`, 5000).catch(() => {});
+    await holds(`!document.querySelector(${JSON.stringify(row(a.id))})`);
     check(`${tag}: a swipe right archives the row away`, !(await has(row(a.id))));
+    // The row leaves first; the line that says so comes with the move's answer.
+    await holds(`(document.querySelector('.mail-undo')?.textContent ?? '').includes('Archived')`);
     const undoLine = await page.eval<string>(`document.querySelector('.mail-undo')?.textContent ?? ''`);
     check(`${tag}: "Archived · Undo" shows`, undoLine.includes('Archived'), { undoLine, strips: await page.eval<string>(`[...document.querySelectorAll('.mc-strip, .mail-ops-note')].map((e) => e.textContent).join(' | ')`) });
     check(`${tag}: the hub archived it on the server`, await settled(a.id, (t) => t.roles.includes('archive') && !t.roles.includes('inbox'), 'it archived'));
     check(`${tag}: no sideways overflow: Undo`, !(await overflow()).length, await overflow());
     await shot(`mail-phone-${themeName}-archived`);
     await tap(await at('.mail-undo .link-btn'));
-    await page.until(`!!document.querySelector(${JSON.stringify(row(a.id))})`, 5000).catch(() => {});
+    await holds(`!!document.querySelector(${JSON.stringify(row(a.id))})`);
     check(`${tag}: Undo brings it back`, (await has(row(a.id))) && (await settled(a.id, (t) => t.roles.includes('inbox'), 'it back in Inbox')));
 
+    const unreadRow = `!!document.querySelector(${JSON.stringify(`${row(b.id)}.unread`)})`;
     await swipe(row(b.id), -1);
-    check(`${tag}: a swipe left marks it unread`, (await has(`${row(b.id)}.unread`)) && (await settled(b.id, (t) => t.unread === 1, 'it unread')));
+    check(`${tag}: a swipe left marks it unread`, (await holds(unreadRow)) && (await settled(b.id, (t) => t.unread === 1, 'it unread')));
     await swipe(row(b.id), -1);
-    check(`${tag}: and again marks it read`, !(await has(`${row(b.id)}.unread`)) && (await settled(b.id, (t) => t.unread === 0, 'it read')));
+    check(`${tag}: and again marks it read`, (await holds(`!${unreadRow}`)) && (await settled(b.id, (t) => t.unread === 0, 'it read')));
 
     await longPress(row(a.id));
     const picked = () => page.eval<string[]>(`[...document.querySelectorAll('.mail-swipe.selected .mail-row')].map((r) => r.dataset.thread)`);
     check(`${tag}: a long press picks that thread`, (await page.eval<string>(`document.querySelector('.mail-pickbar-n')?.textContent ?? ''`)) === '1' && (await picked()).join() === a.id, await picked());
     await tap(await at(row(b.id)));
+    await holds(`document.querySelectorAll('.mail-swipe.selected .mail-row').length === 2`);
     check(`${tag}: then a tap picks another, and does not open it`, (await picked()).sort().join() === [a.id, b.id].sort().join() && !(await hash()).includes('/c/'), await picked());
     check(`${tag}: no sideways overflow: the selection's bar`, !(await overflow()).length, await overflow());
     await shot(`mail-phone-${themeName}-picked`);
     await tap(await at('.mail-pickbar .icon-btn[aria-label="Star"]'));
-    check(`${tag}: the bar stars both`, (await settled(a.id, (t) => t.flagged, 'a starred')) && (await settled(b.id, (t) => t.flagged, 'b starred')) && !(await has('.mail-pickbar')));
+    check(`${tag}: the bar stars both`, (await settled(a.id, (t) => t.flagged, 'a starred')) && (await settled(b.id, (t) => t.flagged, 'b starred')) && (await holds(`!document.querySelector('.mail-pickbar')`)));
     await fetch(`${base}/api/mail/flag`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ threadIds: [a.id, b.id], flagged: false }) });
   }
 
@@ -1453,36 +1484,37 @@ async function filing() {
     check(`${tag}: ⋯ has Star and Move to the trash`, items.some((l) => l.startsWith('Star')) && items.some((l) => l.startsWith('Move to the trash')), items);
     await click(await at('.cm .cm-item', `el => el.textContent.trim().startsWith('Star')`));
     check(`${tag}: Star stars it`, await settled(c.id, (t) => t.flagged, 'it starred'));
-    await page.until(`!document.querySelector('.cm')`, 5000).catch(() => {});
+    await holds(`!document.querySelector('.cm')`);
     check(`${tag}: ⋯ then says Unstar`, (await more()).some((l) => l.startsWith('Unstar')));
     await click(await at('.cm .cm-item', `el => el.textContent.trim().startsWith('Unstar')`));
     check(`${tag}: Unstar unstars it`, await settled(c.id, (t) => !t.flagged, 'it unstarred'));
-    await page.until(`!document.querySelector('.cm')`, 5000).catch(() => {});
+    await holds(`!document.querySelector('.cm')`);
     await shot(`mail-desktop-${themeName}-thread`);
     await page.eval('document.activeElement?.blur?.()');
     await key('e');
-    await Bun.sleep(400);
-    check(`${tag}: e archives the open thread and goes back to the list`, !(await hash()).includes('/c/') && !(await has(row(c.id))) && (await settled(c.id, (t) => !t.roles.includes('inbox'), 'it archived')));
+    check(`${tag}: e archives the open thread and goes back to the list`, (await holds(`!location.hash.includes('/c/') && !document.querySelector(${JSON.stringify(row(c.id))})`)) && (await settled(c.id, (t) => !t.roles.includes('inbox'), 'it archived')));
     await click(await at('.mail-undo .link-btn'));
     check(`${tag}: Undo brings it back`, await settled(c.id, (t) => t.roles.includes('inbox'), 'it back'));
-    await page.until(`!!document.querySelector(${JSON.stringify(row(c.id))})`, 5000).catch(() => {});
+    await holds(`!!document.querySelector(${JSON.stringify(row(c.id))})`);
 
     await mouse(await at(row(d.id)), 'right');
+    await holds(`!!document.querySelector('.cm .cm-item')`);
     const menu = await page.eval<string>(`document.querySelector('.cm')?.textContent ?? ''`);
     check(`${tag}: a row's right-click menu files it`, ['Archive', 'Move to…', 'Mark as junk', 'Move to the trash', 'Select'].every((l) => menu.includes(l)), menu);
     await page.eval(`document.querySelector('.cm')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-    await Bun.sleep(200);
+    await holds(`!document.querySelector('.cm')`);
     await mouse(await at(row(c.id)), 'left', 2);
+    await holds(`document.querySelector('.mail-pickbar-n')?.textContent === '1'`);
     await mouse(await at(row(d.id)), 'left', 2);
-    check(`${tag}: Ctrl-click picks threads`, (await page.eval<string>(`document.querySelector('.mail-pickbar-n')?.textContent ?? ''`)) === '2');
+    check(`${tag}: Ctrl-click picks threads`, await holds(`document.querySelector('.mail-pickbar-n')?.textContent === '2'`));
     check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
     await key('Escape');
-    await Bun.sleep(200);
-    check(`${tag}: Escape lets them go`, !(await has('.mail-pickbar')));
+    check(`${tag}: Escape lets them go`, await holds(`!document.querySelector('.mail-pickbar')`));
   }
 
+  await layersSettled();
   await page.goto(`${base}/#/settings`);
-  await page.until(`!!document.querySelector('#set-mail .mail-read-set')`, 10000).catch(() => {});
+  await holds(`!!document.querySelector('#set-mail .mail-read-set')`);
   check('filing: Settings → Mail has the read setting', (await page.eval<string>(`document.querySelector('#set-mail .mail-read-set')?.textContent ?? ''`)).includes('Only when I mark it'));
 }
 
@@ -1503,7 +1535,7 @@ async function inFrame(sel: string): Promise<Pt> {
     return [Math.round(a.left + b.left + Math.min(b.width / 2, 24)), Math.round(a.top + b.top + b.height / 2)];
   })()`);
   if (!r) throw new Error(`nothing in the frame matches ${sel}`);
-  await Bun.sleep(200);
+  await drawn();
   return r;
 }
 async function swipe(a: Pt, b: Pt, steps = 14) {
@@ -1513,7 +1545,7 @@ async function swipe(a: Pt, b: Pt, steps = 14) {
     await Bun.sleep(16);
   }
   await touch('touchEnd', []);
-  await Bun.sleep(600);
+  await drawn();
 }
 /** The menu item (desktop) or sheet button (phone) with this text. */
 const menuItem = (text: string) => at('.cm-item, .cm-sheet button', `el => el.textContent.includes(${JSON.stringify(text)})`);
@@ -1546,7 +1578,6 @@ async function htmlChecks() {
     await page.size(390, 844, true);
     await theme(themeName, inList('v:updates:*', autumn.id));
     await asSent(autumnCard, tap);
-    await Bun.sleep(500);
     await stubOpen();
 
     const frame = await page.eval<{ sandbox: string; referrer: string; sheet: string; body: string }>(`(() => { const f = document.querySelector(${JSON.stringify(FRAME)}); return { sandbox: f.getAttribute('sandbox'), referrer: f.getAttribute('referrerpolicy'), sheet: getComputedStyle(f.parentElement).backgroundColor, body: getComputedStyle(f.contentDocument.body).backgroundColor }; })()`);
@@ -1563,7 +1594,8 @@ async function htmlChecks() {
         const i = d.createElement('img'); i.setAttribute('onerror', 'parent.__ran = 2'); i.src = 'data:,x'; i.className = 'probe'; d.body.append(i);
         const im = d.createElement('img'); im.src = 'https://evil.example/canary.png'; im.className = 'probe'; d.body.append(im);
         const st = d.createElement('div'); st.className = 'probe'; st.style.backgroundImage = 'url(https://evil.example/css-canary.png)'; st.style.height = '4px'; d.body.append(st); })()`);
-      await Bun.sleep(700);
+      // Both pictures have failed by now (an onerror allowed to run would have run): a script put in runs as it goes in.
+      await holds(`[...${FD}.querySelectorAll('img.probe')].every((i) => i.complete)`);
       check(`${tag}: script put in the frame by hand does not run`, (await page.eval<number>('window.__ran')) === 0);
       await page.eval(`${FD}.querySelectorAll('.probe, script').forEach((x) => x.remove())`);
       // The browser says it blocked them; that is the point, not an error.
@@ -1603,12 +1635,13 @@ async function htmlChecks() {
 
     // Swipe back over the body.
     const fr = await page.eval<{ left: number; top: number; bottom: number }>(`(() => { const f = document.querySelector(${JSON.stringify(FRAME)}); f.scrollIntoView({ block: 'start' }); const r = f.getBoundingClientRect(); return { left: r.left, top: r.top, bottom: Math.min(r.bottom, innerHeight) }; })()`);
-    await Bun.sleep(300);
+    await drawn();
     const y = Math.round((Math.max(fr.top, 80) + fr.bottom) / 2);
     await swipe([Math.round(fr.left + 24), y], [370, y + 4]);
-    check(`${tag}: swiping back over the body goes back`, !(await hash()).includes('/c/') && (await inView('.sidebar .mail-row')), await hash());
+    check(`${tag}: swiping back over the body goes back`, await holds(`!location.hash.includes('/c/') && ${inViewJs('.sidebar .mail-row')}`), await hash());
 
     // The files under the mail's words (no need to open it), then as sent: its quote folded, a cid: picture.
+    await layersSettled();
     await page.eval(`location.hash = ${JSON.stringify(`#/inbox/c/${encodeURIComponent(aliceRoute.id)}?m=${plan.id}`)}`);
     await page.until(`document.querySelectorAll(${JSON.stringify(`${planCard} .mail-files .att-file`)}).length >= 2`, 15000);
     const cards = await page.eval<string[]>(`[...document.querySelectorAll(${JSON.stringify(`${planCard} .mail-files .att-file b`)})].map((b) => b.textContent)`);
@@ -1618,6 +1651,7 @@ async function htmlChecks() {
       await page.until(`(document.querySelector('.fviewer')?.textContent ?? '').includes('San Marzano')`, 10000);
       check(`${tag}: a text file opens in the viewer`, true);
       await tap(await at('.fviewer .icon-btn[aria-label="Close"]'));
+      await holds(`!document.querySelector('.fviewer')`);
       await tap(await at(`${planCard} .mail-files .att-file`, `el => el.textContent.includes('garden-plan.pdf')`));
       await page.until(`!!document.querySelector('.fviewer[data-kind="pdf"] .fv-page canvas, .fviewer[data-kind="pdf"] .fv-page')`, 20000);
       check(`${tag}: a PDF opens in the viewer`, await page.eval<boolean>(`(document.querySelector('.fviewer .fviewer-name small')?.textContent ?? '').includes('1 page')`), await page.eval(`document.querySelector('.fviewer .fviewer-name small')?.textContent`));
@@ -1629,15 +1663,15 @@ async function htmlChecks() {
     check(`${tag}: the quote folds behind ···`, await page.eval<boolean>(`(() => { const d = ${FD}; return d.querySelector('.gmail_quote').classList.contains('dc-folded') && getComputedStyle(d.querySelector('.gmail_quote')).display === 'none'; })()`));
     const h0 = await page.eval<number>(`document.querySelector(${JSON.stringify(FRAME)}).clientHeight`);
     await tap(await inFrame('.dc-fold'));
-    check(`${tag}: ··· shows it, and the frame grows`, await page.eval<boolean>(`(() => { const d = ${FD}; return !d.querySelector('.dc-folded') && d.body.innerText.includes('tomatoes go') && document.querySelector(${JSON.stringify(FRAME)}).clientHeight > ${h0}; })()`));
+    check(`${tag}: ··· shows it, and the frame grows`, await holds(`(() => { const d = ${FD}; return !d.querySelector('.dc-folded') && d.body.innerText.includes('tomatoes go') && document.querySelector(${JSON.stringify(FRAME)}).clientHeight > ${h0}; })()`));
     await page.until(`(() => { const i = ${FD}.querySelector('img[src*="/cid/"]'); return i && i.complete && i.naturalWidth === 300; })()`, 10000);
     check(`${tag}: a picture inside the mail (cid:) shows`, true);
     await shot(`mail-html-${tag.replace(/ /g, '-')}-garden`);
     // And from outside the frame, over the message's head.
     const head = await page.eval<{ left: number; y: number }>(`(() => { const h = document.querySelector(${JSON.stringify(`${planCard} .msg-head`)}); h.scrollIntoView({ block: 'center' }); const r = h.getBoundingClientRect(); return { left: r.left, y: Math.round(r.top + r.height / 2) }; })()`);
-    await Bun.sleep(300);
+    await drawn();
     await swipe([Math.round(head.left + 60), head.y], [370, head.y + 4]);
-    check(`${tag}: swiping back over the head goes back too`, !(await hash()).includes('/c/'), await hash());
+    check(`${tag}: swiping back over the head goes back too`, await holds(`!location.hash.includes('/c/')`), await hash());
   }
 
   for (const themeName of ['dither-dark', 'dither-light']) {
@@ -1646,7 +1680,6 @@ async function htmlChecks() {
     await theme(themeName, inList('v:updates:*', autumn.id));
     await asSent(autumnCard, click);
     await page.until(`!!document.querySelector(${JSON.stringify(FRAME)})?.contentDocument?.querySelector('.dc-mail img[src^="/api/mail/img/"]')`, 15000);
-    await Bun.sleep(400);
     await stubOpen();
     const t = await page.eval<string>(`${FD}.querySelector('.dc-mail').style.transform`);
     check(`${tag}: a mail that fits is not scaled`, !t.includes('scale'), t);
@@ -1711,8 +1744,9 @@ async function big(themeName: string, phoneSize: boolean, first: boolean) {
 
   // A folder the hub does not follow: its first page when opened, then the server's older pages as it is scrolled.
   const held = (await mailNow()).accounts[0].sync.synced;
+  await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList(`mb:${projects.id}`))}`);
-  await page.until(`document.querySelectorAll('.sidebar .mail-row').length >= 20`, 15000).catch(() => {});
+  await holds(`document.querySelectorAll('.sidebar .mail-row').length >= 20`);
   check(`${tag}: a folder not synced shows its first page when opened`, (await rows()) >= 20, await rows());
   const opened = (await mailNow()).accounts[0].sync.synced;
   await down(async () => (await mailNow()).accounts[0].sync.synced > opened && (await rows()) > 70, 30);
@@ -1752,13 +1786,13 @@ async function search() {
     const mails = await mailsOf(lease.id);
     await tap(await at(`.mail-search .mail-hit[data-thread="${lease.id}"]`));
     await page.until(`!!document.querySelector(${JSON.stringify(msg(mails.at(-1).id))})`, 15000);
-    check(`${tag}: a hit opens its chat over the results`, (await hash()).includes(`/c/${lease.id}`) && (await inView('.center .mail-thread-pane')), await hash());
+    // The card slides in over the results: in view once it has.
+    check(`${tag}: a hit opens its chat over the results`, await holds(`location.hash.includes(${JSON.stringify(`/c/${lease.id}`)}) && ${inViewJs('.center .mail-thread-pane')}`), await hash());
     // A chat arriving meanwhile (the demo world's) shows a toast over the chat's header: out of the way first.
     await page.eval(`document.querySelectorAll('.toasts .toast-x').forEach((b) => b.click())`);
-    await Bun.sleep(300);
+    await holds(`!document.querySelector('.toasts .toast')`);
     await tap(await at(`${PANE} .conv-head .icon-btn.back`));
-    await Bun.sleep(400);
-    check(`${tag}: back goes to the results`, !(await hash()).includes('/c/') && (await inView('.sidebar .mail-search .mail-hit')), await hash());
+    check(`${tag}: back goes to the results`, await holds(`!location.hash.includes('/c/') && ${inViewJs('.sidebar .mail-search .mail-hit')}`), await hash());
     // Words in a body the hub holds: marked where they matched.
     await type('signed');
     await page.until(`!!document.querySelector('.mail-search .mail-hit mark')`, 15000);
@@ -1766,6 +1800,7 @@ async function search() {
     // Words only the server has: they come after the hub's own, under "On the server". A list's search keeps to the list
     // (Everything is all of Inbox), so this one is in all mail, as the search page's "Open in Mail" opens it; the
     // receipt is in a folder the hub does not follow.
+    await layersSettled();
     await page.eval(`location.hash = ${JSON.stringify(inList('s:warranty'))}`);
     await page.until(`!!document.querySelector('.mail-search-head') && !/Searching the servers/.test(document.querySelector('.mail-search').textContent)`, 15000);
     const mine = await page.eval<number>(`[...document.querySelectorAll('.mail-search .mail-hit')].filter((r) => !r.matches('.mail-search-head ~ .mail-hit')).length`);

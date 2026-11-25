@@ -9,12 +9,16 @@ import { haptic } from '../phone.ts';
 export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const start = useRef<{ x: number; y: number } | null>(null);
-  const fired = useRef(false);
+  /** Where the press that fired was: the lift's click lands there. */
+  const fired = useRef<{ x: number; y: number } | null>(null);
   const cancel = () => {
     clearTimeout(timer.current);
     start.current = null;
   };
-  const swallow = (e: Event) => {
+  // Only the click the lift makes, where the finger was: held past the browser's own long press, lifting makes no
+  // click, and a quick tap somewhere else (picking a second row) is a tap of its own.
+  const swallow = (at: { x: number; y: number }) => (e: MouseEvent) => {
+    if (Math.hypot(e.clientX - at.x, e.clientY - at.y) > 10) return;
     e.stopPropagation();
     e.preventDefault();
   };
@@ -25,11 +29,12 @@ export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
       e.longPressTaken = true;
       // A second finger while the first is still held: a pinch (ui/PictureSwitch.tsx), not a long press.
       if (start.current) return cancel();
-      start.current = { x: e.clientX, y: e.clientY };
-      fired.current = false;
+      const at = { x: e.clientX, y: e.clientY };
+      start.current = at;
+      fired.current = null;
       timer.current = setTimeout(() => {
         start.current = null;
-        fired.current = true;
+        fired.current = at;
         haptic(10);
         onPress(e);
       }, ms);
@@ -39,10 +44,12 @@ export function useLongPress(onPress: (e: PointerEvent) => void, ms = 420) {
     },
     onPointerUp: () => {
       cancel();
-      if (!fired.current) return;
-      fired.current = false;
-      window.addEventListener('click', swallow, { capture: true, once: true });
-      setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 400);
+      const at = fired.current;
+      if (!at) return;
+      fired.current = null;
+      const s = swallow(at);
+      window.addEventListener('click', s, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', s, { capture: true }), 400);
     },
     onPointerCancel: cancel,
     onContextMenu: (e: Event) => {
