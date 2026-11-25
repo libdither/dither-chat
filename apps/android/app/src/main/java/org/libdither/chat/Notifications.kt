@@ -1,5 +1,6 @@
 package org.libdither.chat
 
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -27,9 +28,11 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -170,9 +173,44 @@ object Notifications {
                 post(app, tag, title, d.optString("body"), hash, nid = nid, device = device, look = look, quiet = tier == "quiet")
                 true
             }
-            if (shown) outcome(app, nid, device, "shown")
+            if (shown) outcome(app, nid, device, "shown", seen(app, d, tier, conv ?: notice?.let { "notice:$it" }))
         }.start()
     }
+
+    /**
+     * Where it showed, for the Notification calibration page (docs/notifications.md, "Where you saw it"): on the lock
+     * screen, as a heads-up, in the shade or as a row of the phone's list; whether it made a sound, vibrated or stayed
+     * silent (the hub's word, then the phone's ringer and Do Not Disturb); and the tags of our other notifications
+     * showing beside it. Codes and ids only, never what they say.
+     */
+    internal fun seen(c: Context, d: JSONObject, tier: String, own: String?): JSONObject? = runCatching {
+        val locked = c.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked
+        val screenOn = c.getSystemService(PowerManager::class.java)?.isInteractive
+        val alert = tier == "push" && d.optBoolean("alert", true)
+        val list = tier == "digest" && d.optJSONObject("nextLook") == null
+        val surface = when {
+            list -> "list_row"
+            locked == true -> "lock"
+            alert && screenOn == true -> "heads_up"
+            else -> "shade"
+        }
+        val quietNow = nm(c).currentInterruptionFilter > NotificationManager.INTERRUPTION_FILTER_ALL
+        val sound = if (!alert || quietNow) "silent" else when (c.getSystemService(AudioManager::class.java)?.ringerMode) {
+            AudioManager.RINGER_MODE_NORMAL -> "sound"
+            AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
+            AudioManager.RINGER_MODE_SILENT -> "silent"
+            else -> null
+        }
+        val beside = org.json.JSONArray()
+        nm(c).activeNotifications.mapNotNull { it.tag }.filter { it != own }.distinct().take(12).forEach { beside.put(it) }
+        JSONObject().apply {
+            put("surface", surface)
+            if (sound != null) put("sound", sound)
+            if (locked != null) put("locked", locked)
+            if (screenOn != null) put("screenOn", screenOn)
+            put("beside", beside)
+        }
+    }.getOrNull()
 
     /**
      * The push's tier: "push" an alert, "quiet" a Conversation, "digest" a row of the ranked list. A hub from before
@@ -187,10 +225,11 @@ object Notifications {
      * What became of a notification, for the hub's activity log: its id and this push registration, never its content.
      * Android says when one is swiped away (the delete intent), which browsers mostly do not.
      */
-    fun outcome(c: Context, nid: String?, device: String?, event: String) {
+    fun outcome(c: Context, nid: String?, device: String?, event: String, seen: JSONObject? = null) {
         if (nid == null) return
         val app = c.applicationContext
         val e = JSONObject().put("id", nid).put("device", device ?: "").put("event", event).put("at", System.currentTimeMillis())
+        if (seen != null) e.put("seen", seen)
         Thread { runCatching { Hub.request(app, "POST", "/api/activity/notifications", JSONObject().put("events", org.json.JSONArray().put(e))) } }.start()
     }
 

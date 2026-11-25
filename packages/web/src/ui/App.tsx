@@ -53,6 +53,7 @@ import { toInboxChip } from './MailLists.tsx';
 import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
+import { CalibrationPaneLazy } from './Calibration.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
@@ -137,6 +138,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
     case 'notices':
       return { pane: <NoticesPaneLazy focus={r.notice} onBack={back} /> };
+    case 'calibration':
+      return { pane: <CalibrationPaneLazy onBack={back} /> };
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
     case 'feed':
@@ -179,6 +182,7 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
       return phone.value && isPage(r) ? sidebarFor(ownList(r, places), onAdd) : <InboxSidebar activeConv={r.conv} />;
     case 'requests':
     case 'notices':
+    case 'calibration':
       return <InboxSidebar />;
     case 'calendar':
       return null;

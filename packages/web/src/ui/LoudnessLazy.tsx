@@ -1,10 +1,10 @@
 /**
  * The loudness scale's parts (Loudness.tsx) are a chunk of their own, loaded the first time one is shown: a bell
- * opened, a check-in or a why to ask, Settings. Nothing of it is drawn at start-up unless there is something to ask.
+ * opened, a why to ask, Settings. Nothing of it is drawn at start-up unless there is something to ask.
  */
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { checkins, loadCheckins, whyAsk } from '../loudness.ts';
+import { whyAsk } from '../loudness.ts';
 
 type Parts = typeof import('./Loudness.tsx');
 let parts: Parts | null = null;
@@ -38,22 +38,6 @@ export function WhyFollowUpLazy() {
   const asking = !!whyAsk.value;
   const p = useParts(asking);
   return p && asking ? <p.WhyFollowUp /> : null;
-}
-
-/**
- * The check-in at the top of the inbox. Asking the hub is also a look (the next look's bundle is let go): at start,
- * and each time the page comes back into view.
- */
-export function CheckinLazy() {
-  useEffect(() => {
-    void loadCheckins();
-    const back = () => document.visibilityState === 'visible' && void loadCheckins();
-    document.addEventListener('visibilitychange', back);
-    return () => document.removeEventListener('visibilitychange', back);
-  }, []);
-  const any = checkins.value.length > 0;
-  const p = useParts(any);
-  return p && any ? <p.CheckinCard /> : null;
 }
 
 export function LoudnessSettingsLazy() {

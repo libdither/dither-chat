@@ -247,7 +247,7 @@ interface ForYouOptions {
    * decides, DITHER_ATTENTION=on). Absent: 1.
    */
   worth?: (c: { conv: string; author: string | null }) => number;
-  /** One card a day asks "Glad I saw this / Not for me" (checkin.ts): the check-in's id and the item, or null. */
+  /** One card a day is asked about, "Glad I saw this / Not for me", on the Notification calibration page (checkin.ts). */
   ask?: (items: { id: string; messageId: string }[]) => { checkinId: string; itemId: string } | null;
 }
 
@@ -431,9 +431,9 @@ export class ForYou {
       const n = Math.min(Math.max(0, limit), 50);
       const slice = snap.items.slice(from, from + n);
       const served = this.serve(snap, slice, now);
-      // The first page of a snapshot may carry the day's one "worth seeing" question.
-      const asked = from === 0 ? this.o.ask?.(served.items.map((i) => ({ id: i.id, messageId: i.message.id }))) : null;
-      if (asked) for (const it of served.items) if (it.id === asked.itemId) it.ask = asked.checkinId;
+      // The first page of a snapshot may pick the day's one "worth seeing" question: it waits on the Notification
+      // calibration page, not on the card.
+      if (from === 0) this.o.ask?.(served.items.map((i) => ({ id: i.id, messageId: i.message.id })));
       return { ...served, epoch: snap.epoch, at: snap.at, next: from + n < snap.items.length ? from + n : null, ...(reset ? { reset: true } : {}) };
     });
   }

@@ -332,8 +332,8 @@ the list: [notifications.md](notifications.md)) counts too (`Attention.input`):
 **The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (next look and above)
 has a thin bar on its left while it is unread, stronger the louder it was (`loudness.ts` `loudByConv`, `loudEdge`).
 
-**Check-ins.** A question about a notification, when there is one to ask, sits at the top of the list, above
-requests ([notifications.md](notifications.md#check-ins)).
+**Notification calibration.** While questions about notifications wait, a quiet row under Requests and Notices
+counts them and opens their page ([notifications.md](notifications.md#check-ins)); nothing is asked in the list itself.
 
 **Seen.** All three last until you read the conversation, or swipe its notification away on the phone: the app
 reports the swipe as `dismissed` ([activity.md](activity.md)), a dismissal at or after that message is read as

@@ -293,9 +293,9 @@ function freshTap(id: string | null): string | null {
   return id;
 }
 
-function event(id: string, kind: P.NotificationEventKind) {
+function event(id: string, kind: P.NotificationEventKind, seen?: P.NotificationSeen) {
   if (!enabled) return;
-  events.push({ id, event: kind, device: deviceId(), at: Date.now() });
+  events.push({ id, event: kind, device: deviceId(), at: Date.now(), ...(seen ? { seen } : {}) });
   save();
 }
 
@@ -480,7 +480,8 @@ export function startActivity() {
   eventHooks.add((ev) => {
     if (ev.t !== 'notify' || !ev.nid || !showsHere(ev)) return;
     toastNid.set(ev.conversationId ?? '', ev.nid);
-    if (document.visibilityState === 'visible') event(ev.nid, 'inapp');
+    // Where you saw it (docs/notifications.md): the app's own toast, in front.
+    if (document.visibilityState === 'visible') event(ev.nid, 'inapp', { surface: 'toast', sound: 'silent', pageOpen: true });
   });
 
   const tick = () => {

@@ -1,20 +1,26 @@
 /**
- * Check-ins (docs/notifications.md, "Asking, without nagging"): a question or two at the top of the inbox when you
- * have opened the app anyway, never a push. "This sounded at 09:12: worth it, could have waited, shouldn't have
- * reached me?" and "This stayed quiet: wish I'd known sooner, or fine where it was?"
+ * Check-ins (docs/notifications.md, "Asking, without nagging"): questions about single notifications, waiting on the
+ * Notification calibration page until you get to them, never a push and never a card in your way. "This sounded at
+ * 09:12: worth it, could have waited, shouldn't have reached me?" and "This stayed quiet: wish I'd known sooner, or
+ * fine where it was?", each with where and how you came across it (seen.ts).
  *
- *  - At most three a day (Settings: never, rarely = one, up to three); one from each side, sounded and stayed quiet.
- *    "Ask me less" halves the rate; three skips in a row pause it for a week.
+ *  - Up to three put on the page a day (Settings: never, rarely = one, up to three); one from each side, sounded and
+ *    stayed quiet. "Ask me less" halves the rate; three explicit Skips in a row pause it for a week. A question left
+ *    waiting is not a skip.
+ *  - They wait: at most QUEUE_CAP open at once (the oldest go past it), none older than EXPIRE_AFTER (memory fades).
+ *    Each keeps when it was asked and when it was answered, and the page shows its age.
  *  - Half are picked at random among the day's deliveries of that side, with the chance each had kept
- *    (`propensity`), so the scorecard's rates are honest when weighted back by it (scorecard-attn.ts); half where the
+ *    (`propensity`), so the scorecard's rates are honest when weighted back by it (scorecard.ts); half where the
  *    model is least sure (a sound whose want is nearest even odds, a quiet one nearest the sound line), so each
- *    answer teaches the most.
- *  - For you asks one card a day "Glad I saw this / Not for me", picked at random among the page's first ten.
+ *    answer teaches the most. Dropping unanswered ones does not change those chances: it is the same for every pick.
+ *  - For you asks about one card a day, "Glad I saw this / Not for me", picked at random among the page's first ten;
+ *    it waits on the same page.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { bandOf } from '@dither-chat/protocol';
 import { TIER_BAND } from './loudness.ts';
+import { seenContext } from './seen.ts';
 
 type Row = Record<string, any>;
 const MIN = 60_000;
@@ -34,8 +40,29 @@ export const SKIPS_TO_PAUSE = 3;
 export const PAUSE = 7 * DAY;
 /** A delivery is asked about once it is this old (you've had time to see it), and while it is younger than a day. */
 const SETTLE = 20 * MIN;
-/** Questions are picked again at most this often, so one opening of the app does not bring all three. */
+/** Questions are picked again at most this often, so they come spread over the day. */
 const PICK_EVERY = 2 * HOUR;
+/** Open questions kept on the page at most; past it, the oldest go. */
+export const QUEUE_CAP = 20;
+/** An open question older than this goes: you would hardly remember the moment. */
+export const EXPIRE_AFTER = 14 * DAY;
+/** An answer this late (after the message came) or sooner counts in full. */
+const FRESH_FOR = DAY;
+/** The least a late answer counts, at EXPIRE_AFTER and beyond. */
+export const LATE_FLOOR = 0.5;
+
+/**
+ * How much an answer counts in what is learned, by how long after the message it came: memory of the moment fades.
+ * Full within a day, then down in a straight line to LATE_FLOOR at EXPIRE_AFTER. The scorecard's rates leave it out
+ * (they count each answer once, weighted only by the chance its question had).
+ */
+export function lateWeight(delay: number): number {
+  if (!(delay > FRESH_FOR)) return 1;
+  return Math.max(LATE_FLOOR, 1 - ((1 - LATE_FLOOR) * (delay - FRESH_FOR)) / (EXPIRE_AFTER - FRESH_FOR));
+}
+
+/** Open: not answered, skipped or dropped. */
+const OPEN = `answer IS NULL AND skipped = 0 AND expired_at IS NULL`;
 /** The rate never falls below this: "Ask me less" four times is about one question a week. */
 const MIN_RATE = 1 / 8;
 
@@ -57,7 +84,7 @@ export class Checkins {
   constructor(
     private db: Database,
     private meta: { get: () => CheckinState | null; set: (s: CheckinState) => void },
-    private describe: (messageId: string) => { title: string; preview: string; conversationId: string | null } | null,
+    private describe: (messageId: string) => { title: string; preview: string; conversationId: string | null; network?: string | null; shape?: string | null } | null,
   ) {}
 
   state(): CheckinState {
@@ -94,33 +121,57 @@ export class Checkins {
   }
 
   /**
-   * The questions to show now: those still open from today, and new ones when the day's quota and the pace allow.
-   * The app asks when it opens; nothing here pushes.
+   * Put new questions on the page when the day's quota and the pace allow, and drop the ones that waited too long or
+   * fall past the cap. Called when the app asks how many wait (a look) and on the hub's hourly round; nothing pushes.
    */
-  due(prefs: P.AttentionPrefs, now = Date.now()): P.CheckinView[] {
+  fill(prefs: P.AttentionPrefs, now = Date.now()): void {
     const st = this.state();
-    const open = () => this.db.query(`SELECT * FROM checkin WHERE created_at >= ? AND answer IS NULL AND skipped = 0 AND side != 'foryou' ORDER BY created_at`).all(this.dayStart(now)) as Row[];
     const paused = st.pausedUntil !== null && st.pausedUntil > now;
-    if (paused || !QUOTA[prefs.ask]) return [];
-    let rows = open();
-    const left = this.quota(prefs, now) - this.askedToday(now);
-    if (!rows.length && left > 0 && (st.lastPick === null || now - st.lastPick >= PICK_EVERY || now < st.lastPick)) {
-      const asked = this.db.query(`SELECT side, arm FROM checkin WHERE created_at >= ?`).all(this.dayStart(now)) as Row[];
-      const sides: ('sounded' | 'quiet')[] = (['sounded', 'quiet'] as const).filter((s) => !asked.some((a) => a.side === s));
-      // One question today: either side, at even odds, so "Rarely" asks about quiet ones too.
-      if (left === 1 && sides.length === 2 && this.random() < 0.5) sides.reverse();
-      // A third question goes to whichever side the day has more of.
-      if (!sides.length) sides.push(this.count('sounded', now) > this.count('quiet', now) / 20 ? 'sounded' : 'quiet');
-      let picked = 0;
-      for (const side of sides.slice(0, left)) {
-        // The arm is a fair coin every time, so the stored chance of a random pick (a half, then one of n) holds.
-        const arm: 'random' | 'unsure' = this.random() < 0.5 ? 'random' : 'unsure';
-        if (this.pick(side, arm, now)) picked++;
+    if (!paused && QUOTA[prefs.ask]) {
+      const left = this.quota(prefs, now) - this.askedToday(now);
+      if (left > 0 && (st.lastPick === null || now - st.lastPick >= PICK_EVERY || now < st.lastPick)) {
+        const asked = this.db.query(`SELECT side, arm FROM checkin WHERE created_at >= ?`).all(this.dayStart(now)) as Row[];
+        const sides: ('sounded' | 'quiet')[] = (['sounded', 'quiet'] as const).filter((s) => !asked.some((a) => a.side === s));
+        // One question today: either side, at even odds, so "Rarely" asks about quiet ones too.
+        if (left === 1 && sides.length === 2 && this.random() < 0.5) sides.reverse();
+        // A third question goes to whichever side the day has more of.
+        if (!sides.length) sides.push(this.count('sounded', now) > this.count('quiet', now) / 20 ? 'sounded' : 'quiet');
+        let picked = 0;
+        for (const side of sides.slice(0, left)) {
+          // The arm is a fair coin every time, so the stored chance of a random pick (a half, then one of n) holds.
+          const arm: 'random' | 'unsure' = this.random() < 0.5 ? 'random' : 'unsure';
+          if (this.pick(side, arm, now)) picked++;
+        }
+        if (picked) this.meta.set({ ...this.state(), lastPick: now });
       }
-      if (picked) this.meta.set({ ...st, lastPick: now });
-      rows = open();
     }
+    this.expire(now);
+  }
+
+  /** Drop open questions older than EXPIRE_AFTER, then the oldest past QUEUE_CAP. Not skips: nothing pauses. */
+  expire(now = Date.now()): number {
+    let n = this.db.query(`UPDATE checkin SET expired_at = ? WHERE ${OPEN} AND created_at < ?`).run(now, now - EXPIRE_AFTER).changes;
+    const open = (this.db.query(`SELECT COUNT(*) AS n FROM checkin WHERE ${OPEN}`).get() as Row).n as number;
+    if (open > QUEUE_CAP)
+      n += this.db.query(`UPDATE checkin SET expired_at = ? WHERE id IN (SELECT id FROM checkin WHERE ${OPEN} ORDER BY created_at, id LIMIT ?)`).run(now, open - QUEUE_CAP).changes;
+    return n;
+  }
+
+  /** How many wait on the page: the badge's count. */
+  pendingCount(): number {
+    return (this.db.query(`SELECT COUNT(*) AS n FROM checkin WHERE ${OPEN}`).get() as Row).n;
+  }
+
+  /** The questions waiting, newest first (the freshest memory first), each with where you came across it. */
+  pending(now = Date.now()): P.CheckinView[] {
+    const rows = this.db.query(`SELECT * FROM checkin WHERE ${OPEN} ORDER BY created_at DESC, id LIMIT ?`).all(QUEUE_CAP) as Row[];
     return rows.map((r) => this.view(r, now)).filter((v): v is P.CheckinView => !!v);
+  }
+
+  /** Fill, then what waits: the page's list. */
+  due(prefs: P.AttentionPrefs, now = Date.now()): P.CheckinView[] {
+    this.fill(prefs, now);
+    return this.pending(now);
   }
 
   private candidates(side: 'sounded' | 'quiet', now: number): string {
@@ -189,11 +240,10 @@ export class Checkins {
     return this.db.query('SELECT * FROM checkin WHERE id = ?').get(id) as Row;
   }
 
-  /** "Ask me less": half as many from now on, and today's open questions go. */
-  askLess(now = Date.now()) {
+  /** "Ask me less": half as many from now on. What already waits stays, to answer or leave. */
+  askLess() {
     const st = this.state();
     this.meta.set({ ...st, rate: Math.max(MIN_RATE, st.rate / 2) });
-    this.db.query('UPDATE checkin SET skipped = 1 WHERE created_at >= ? AND answer IS NULL').run(this.dayStart(now));
   }
 
   private view(r: Row, now: number): P.CheckinView | null {
@@ -206,7 +256,9 @@ export class Checkins {
       .get(m.conversation_id, m.ts) as Row;
     const note = r.side === 'quiet' && answeredAfter?.ts ? `you answered it ${ago(answeredAfter.ts - m.ts)} later` : r.side === 'quiet' ? 'it stayed quiet' : undefined;
     void now;
-    return { id: r.id, side: r.side, messageId: r.message_id, conversationId: d.conversationId, title: d.title, preview: d.preview, at: m.ts, ...(note ? { note } : {}) };
+    const context = seenContext(this.db, r.message_id, { title: d.title, preview: d.preview, at: m.ts, network: d.network ?? null, shape: d.shape ?? null, conversationId: d.conversationId });
+    if (r.side === 'foryou' && context.forYou && context.forYou.shownAt === null) context.unknown.unshift("No device said this card was on screen on For you, so we don't know if you saw it there.");
+    return { id: r.id, side: r.side, messageId: r.message_id, conversationId: d.conversationId, title: d.title, preview: d.preview, at: m.ts, askedAt: r.created_at, ...(note ? { note } : {}), context };
   }
 }
 

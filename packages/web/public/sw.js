@@ -183,12 +183,30 @@ async function keepAccounts(ids) {
  * What became of a notification, for the activity log (docs/activity.md). Only pushes that carry an id (`nid`) are
  * reported, and only with the id of this push registration (`device`), never anything about their content.
  */
-function outcome(data, event) {
+function outcome(data, event, seen) {
   if (!data?.nid) return Promise.resolve();
-  const body = JSON.stringify({ events: [{ id: data.nid, device: data.device, event, at: Date.now() }] });
+  const body = JSON.stringify({ events: [{ id: data.nid, device: data.device, event, at: Date.now(), ...(seen ? { seen } : {}) }] });
   // A hub that takes the request and never answers (a phone off its network) must not hold the push's work open.
   const signal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(10_000) : undefined;
   return fetch('/api/activity/notifications', { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal }).catch(() => {});
+}
+
+/**
+ * Where this browser showed a notification, for the Notification calibration page (docs/notifications.md, "Where you
+ * saw it"): a browser notification, with sound or not as the hub asked (a browser cannot say what the system did with
+ * it), whether a page of the app was open behind, and the tags of what else of ours was showing beside it. Codes and
+ * ids only.
+ */
+async function seenHere(d, tag, clients) {
+  const alert = (d.tier ?? (d.level === 'quiet' ? 'quiet' : 'push')) === 'push' && (d.alert ?? true);
+  let beside = [];
+  try {
+    beside = (await self.registration.getNotifications())
+      .map((n) => n.tag)
+      .filter((t) => t && t !== tag)
+      .slice(0, 12);
+  } catch {}
+  return { surface: 'browser', sound: alert ? 'sound' : 'silent', pageOpen: clients.length > 0, beside };
 }
 
 // ------------------------------------------------------------------ how a notification looks
@@ -517,7 +535,7 @@ self.addEventListener('push', (e) => {
       const looking = clients.some((c) => c.focused && c.visibilityState === 'visible');
       if (looking && !d.test) (await self.registration.getNotifications({ tag })).forEach((n) => n.close());
       await outcome(d, 'delivered');
-      await outcome(d, looking ? 'suppressed' : 'shown');
+      await outcome(d, looking ? 'suppressed' : 'shown', looking ? { pageOpen: true } : await seenHere(d, tag, clients));
       await keeping;
     })(),
   );
