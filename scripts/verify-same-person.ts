@@ -8,6 +8,7 @@
  *   bun scripts/verify-same-person.ts http://127.0.0.1:8670 [/tmp/shots]
  */
 import { mkdirSync } from 'node:fs';
+import { components } from '../packages/web/src/same/merge.ts';
 import { launch } from './browser.ts';
 
 const hub = process.argv[2] ?? 'http://127.0.0.1:8670';
@@ -42,6 +43,21 @@ const click = async (sel: string, text?: string) => {
   if (!r) throw new Error(`nothing matches ${sel} ${text ?? ''}`);
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 };
+/** Cards the page draws for a view, filter All: one per group, one per pair in none. */
+const cardsFor = (v: any) => {
+  const inGroup = new Set((v.groups ?? []).flatMap((g: any) => g.keys));
+  return (v.groups ?? []).length + v.suggestions.filter((s: any) => !inGroup.has(s.key)).length;
+};
+/** Waits for the hub's run to end, then for the page to draw what it handed out; returns that view. */
+const inStep = async () => {
+  let v = await matches();
+  for (let i = 0; i < 80 && (v.running || v.picturesWaiting > 0); i++) {
+    await Bun.sleep(250);
+    v = await matches();
+  }
+  await p.until(`document.querySelectorAll('.sp-list > .sp-card').length === ${cardsFor(v)}`, 10000).catch(() => {});
+  return v;
+};
 const chunks = () => p.eval<string[]>(`performance.getEntriesByType('resource').map((e) => e.name.split('/').pop()).filter((n) => /\\.js$/.test(n))`);
 const cards = () => p.eval<number>(`document.querySelectorAll('.sp-list > .sp-card').length`);
 
@@ -66,6 +82,11 @@ try {
   }
   check(after.picturesWaiting === 0, 'the page hashed the pictures it was sent', after.picturesWaiting);
   await p.until(`!/Comparing pictures/.test(document.querySelector('.sp-status')?.textContent ?? '')`, 10000).catch(() => {});
+  // Hashed, the page asks for a run with the pictures in it, and shows its list once it ends.
+  const hashed = await inStep();
+  check((await cards()) === cardsFor(hashed), 'after the pictures, the page shows the run with them in it', { cards: await cards(), hub: cardsFor(hashed) });
+  // Letter pictures (one colour, initials) are alike for everyone: they are not taken as the same picture.
+  check(!hashed.suggestions.some((s: any) => s.evidence.some((e: any) => e.kind === 'picture')), 'no pair rests on a letter picture', hashed.suggestions.filter((s: any) => s.evidence.some((e: any) => e.kind === 'picture')).map((s: any) => [s.a.name, s.b.name]));
   if (shots) await p.shot(`${shots}/same-person.png`);
 
   // Merge all over 90%: a review, each pair ticked; unticking one leaves it out.
@@ -96,8 +117,8 @@ try {
       back = (await matches()).suggestions.some((s: any) => s.key === weak.key);
       if (!back) await Bun.sleep(250);
     }
-    await p.until(`document.querySelectorAll('.sp-list > .sp-card').length === ${before}`, 5000).catch(() => {});
-    check(back && (await cards()) === before, 'Undo brings it back, on the hub and on the page', { back, cards: await cards() });
+    const undone = await inStep();
+    check(back && (await cards()) === before && cardsFor(undone) === before, 'Undo brings it back, on the hub and on the page', { back, cards: await cards(), before });
   }
 
   // Groups (A~B and B~C) are one card: the demo has none, so this shows one made up in the page.
@@ -154,7 +175,6 @@ try {
   // server): those are counted as off the graph. One made-up pair between two people on it shows the dashed link.
   const g = (await fetch(`${hub}/api/graph`).then((r) => r.json())) as any;
   const [ga, gb] = ['Jules', 'Noor'].map((n) => g.people.find((x: any) => x.name === n));
-  // Pairs with a side the graph does not draw, as the hub has them now: the status line counts those.
   const onGraph = new Set(g.people.map((x: any) => x.id));
   await fetch(`${hub}/api/matches/refresh`, { method: 'POST' });
   let now = await matches();
@@ -162,7 +182,6 @@ try {
     await Bun.sleep(250);
     now = await matches();
   }
-  const offGraph = now.suggestions.filter((x: any) => !onGraph.has(x.a.id) || !onGraph.has(x.b.id)).length;
   await p.goto(`${hub}/#/people`);
   await p.until(`!!document.querySelector('.side-graph')`, 15000);
   await p.eval(`(() => {
@@ -173,16 +192,27 @@ try {
       const v = await r.clone().json();
       const side = (x) => ({ id: x.id, name: x.name, identities: [] });
       v.suggestions.push({ key: ${JSON.stringify(`${ga.id}+${gb.id}`)}, a: side(${JSON.stringify(ga)}), b: side(${JSON.stringify(gb)}), p: 0.71, evidence: [{ kind: 'picture', text: 'The same profile picture', weight: 3.2 }] });
+      window.__sameSeen = v.suggestions;
       return new Response(JSON.stringify(v), { headers: { 'content-type': 'application/json' } });
     };
   })()`);
   await click('.side-graph');
   await p.until(`!!document.querySelector('.pg-canvas canvas') && /Showing/.test(document.querySelector('.pg-showing')?.textContent ?? '')`, 15000);
   await click('.pg-controls .chip-btn', 'Same person?');
-  await p.until(`/more off the graph/.test(document.querySelector('.pg-status')?.textContent ?? '')`, 10000).catch(() => {});
-  const said = await p.eval<string>(`document.querySelector('.pg-status').textContent`);
-  check(/[1-9]\d* possible same-person/.test(said), 'the graph says how many it draws', said);
-  check(offGraph > 0 && new RegExp(`\\(${offGraph} more off the graph`).test(said), 'pairs with a side off the graph are counted as such', { said, offGraph });
+  // Groups (pairs joined by a side they share) with nobody the graph draws: the status line counts those as off the
+  // graph. Counted here from the list the page was handed last, which moves while profiles are being collected.
+  const offOf = (seen: any[]) => components(seen).filter((c) => !c.sides.some((id) => onGraph.has(id))).length;
+  let said = '';
+  let offGraph = -1;
+  for (let i = 0; i < 100; i++) {
+    const r = await p.eval<{ said: string; seen: any[] | null }>(`({ said: document.querySelector('.pg-status')?.textContent ?? '', seen: window.__sameSeen ?? null })`);
+    said = r.said;
+    offGraph = r.seen ? offOf(r.seen) : -1;
+    if (offGraph > 0 && said.includes(`(${offGraph} more off the graph`)) break;
+    await Bun.sleep(100);
+  }
+  check(/[1-9]\d* groups? that may be one person/.test(said), 'the graph says how many it draws', said);
+  check(offGraph > 0 && said.includes(`(${offGraph} more off the graph`), 'groups with nobody on the graph are counted as off it', { said, offGraph });
   await p.eval(`(() => { const i = document.querySelector('.pg-find input'); i.value = 'Ravi'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await p.until(`!!document.querySelector('.pg-hits .pg-row')`, 3000);
   await click('.pg-hits .pg-row');
@@ -191,7 +221,8 @@ try {
   await p.eval(`(() => { const i = document.querySelector('.pg-find input'); i.value = 'Jules'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await p.until(`[...document.querySelectorAll('.pg-hits .pg-row')].some((r) => r.textContent.includes('Jules'))`, 3000);
   await click('.pg-hits .pg-row', 'Jules');
-  await p.until(`/Noor/.test(document.querySelector('.pg-same')?.innerText ?? '')`, 5000);
+  // Jules has pairs of their own too: the made-up one is a row among them.
+  await p.until(`[...document.querySelectorAll('.pg-same')].some((r) => /Noor/.test(r.innerText))`, 5000);
   check(true, 'the card: maybe the same as, someone on it');
   await p.until(`document.querySelector('.pg-canvas').dataset.settled === '1'`, 15000).catch(() => {});
   if (shots) await p.shot(`${shots}/graph-same.png`);
