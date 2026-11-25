@@ -198,7 +198,9 @@ function main() {
         const cpu = s.cpuUserMs !== undefined ? s.cpuUserMs + (s.cpuSystemMs ?? 0) : undefined;
         const kind = cpu === undefined ? '' : cpu >= s.heldMs * 0.7 ? ' cpu' : cpu <= s.heldMs * 0.3 ? ' waiting' : ' mixed';
         const faults = s.majorFaults ? ` ${s.majorFaults} major faults` : '';
-        return `${new Date(s.atMs).toISOString()}  ${dirs.length > 1 ? `${s.from} ` : ''}${lpad(ms(s.heldMs), 8)}${kind}${cpu !== undefined ? ` (cpu ${ms(cpu)})` : ''}${faults}  ${s.work}${s.spans.length ? `  [${s.spans.map((x) => `${x.name} ${x.traceId.slice(0, 8)}`).join(', ')}]` : ''}`;
+        // What the hub's threads waited on in it (its cgroup's pressure, docs/tracing.md): the machine's doing.
+        const waited = s.waitDiskPct !== undefined ? ` waited disk ${s.waitDiskPct}% memory ${s.waitMemoryPct}% cpu ${s.waitCpuPct}%` : '';
+        return `${new Date(s.atMs).toISOString()}  ${dirs.length > 1 ? `${s.from} ` : ''}${lpad(ms(s.heldMs), 8)}${kind}${cpu !== undefined ? ` (cpu ${ms(cpu)})` : ''}${faults}${waited}  ${s.work}${s.spans.length ? `  [${s.spans.map((x) => `${x.name} ${x.traceId.slice(0, 8)}`).join(', ')}]` : ''}`;
       }),
     ]);
     return;

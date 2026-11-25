@@ -11,7 +11,12 @@
  * Every hold of `overMs` or more, at any time, also goes to `record` (docs/tracing.md): main.ts writes them to
  * event-loop-stalls.ndjson beside the trace, with the spans that were on the thread and what the process did while it
  * was held (CPU time, page faults, context switches), which tells JavaScript work from a wait on the disk or on memory.
+ * With `waits` (pressure.ts), a hold also says how much of it the hub's own threads spent waiting on the disk, on
+ * memory and for a CPU, in the log line too: `stall: 25.3 s from 3648.6 s after start: flush [waited: disk 35%, memory
+ * 0%, CPU 2%]`. A hold that waited on the disk or on memory was the machine's doing, not the hub's JavaScript.
  */
+import { type Waits, waitShares } from './pressure.ts';
+
 type Note = { at: number; what: string };
 
 const RING = 64;
@@ -69,6 +74,10 @@ export interface StallRecord {
   majorFaults?: number;
   voluntarySwitches?: number;
   involuntarySwitches?: number;
+  /** Percent of the hold that one or more of the hub's threads waited on each (its cgroup's PSI, pressure.ts). */
+  waitDiskPct?: number;
+  waitMemoryPct?: number;
+  waitCpuPct?: number;
 }
 
 interface StallOptions {
@@ -86,6 +95,8 @@ interface StallOptions {
   spans?: (from: number, to: number) => StallRecord['spans'];
   /** The process's counters; null leaves them out. */
   usage?: (() => Usage) | null;
+  /** The hub's cgroup's wait totals (pressure.ts waitsOf); null leaves them out. */
+  waits?: (() => Waits | null) | null;
   wallNow?: () => number;
 }
 
@@ -96,6 +107,7 @@ export class StallWatch {
   private timer: ReturnType<typeof setInterval> | null = null;
   private summed = false;
   private lastUsage: Usage | null = null;
+  private lastWaits: Waits | null = null;
   /** Holds logged in the first `forMs`, and the longest with what began in it. */
   count = 0;
   longest: { ms: number; what: string } | null = null;
@@ -111,6 +123,7 @@ export class StallWatch {
       record: null,
       spans: () => [],
       usage: () => process.resourceUsage(),
+      waits: null,
       wallNow: () => Date.now(),
       ...o,
     };
@@ -128,6 +141,7 @@ export class StallWatch {
   from(t: number) {
     this.start = this.last = t;
     this.lastUsage = this.o.usage ? this.o.usage() : null;
+    this.lastWaits = this.o.waits ? this.o.waits() : null;
     return this;
   }
 
@@ -136,6 +150,8 @@ export class StallWatch {
     const held = t - this.last - this.o.everyMs;
     const early = this.last - this.start < this.o.forMs;
     const usage = this.o.usage ? this.o.usage() : null;
+    const waits = this.o.waits ? this.o.waits() : null;
+    const shares = held >= this.o.overMs && waits && this.lastWaits ? waitShares(this.lastWaits, waits, t - this.last) : null;
     if (held >= this.o.overMs && this.o.record) {
       const u = usage && this.lastUsage ? usage : null;
       const was = this.lastUsage!;
@@ -155,12 +171,15 @@ export class StallWatch {
               involuntarySwitches: u.involuntaryContextSwitches - was.involuntaryContextSwitches,
             }
           : {}),
+        ...(shares ? { waitDiskPct: shares.disk, waitMemoryPct: shares.memory, waitCpuPct: shares.cpu } : {}),
       });
     }
     this.lastUsage = usage;
+    this.lastWaits = waits;
     if (held >= (early ? this.o.overMs : this.o.laterOverMs)) {
       const what = workBetween(this.last, t);
-      this.o.log(`stall: ${secs(held)} from ${secs(this.last - this.start)} after start: ${what}`);
+      const waited = shares ? ` [waited: disk ${shares.disk}%, memory ${shares.memory}%, CPU ${shares.cpu}%]` : '';
+      this.o.log(`stall: ${secs(held)} from ${secs(this.last - this.start)} after start: ${what}${waited}`);
       if (early) {
         this.count++;
         if (!this.longest || held > this.longest.ms) this.longest = { ms: held, what };
