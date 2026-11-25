@@ -4,8 +4,7 @@
  * long polls, the keys file; and dither-ask against a real hub, with its exit codes.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { keysLine, mergePayload, parseKeys } from '@dither-chat/approvals';
 import { verifyAnswer, type RequestView } from '../../approvals/src/client.ts';
@@ -15,6 +14,7 @@ import { TOKEN_FILE } from '../src/auth.ts';
 import { HubServer, mediaSigner } from '../src/server.ts';
 import { Store } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
 const CLI = join(import.meta.dir, '../../approvals/src/cli.ts');
 
@@ -60,7 +60,9 @@ const read: string[] = [];
 let clock = 0;
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'dither-approvals-'));
+  // In memory: the hub's database, its token file and the askers file each sync to disk when written, and on a busy
+  // disk the setup alone took over a minute (memdir.ts).
+  dir = memTempDir('dither-approvals-');
   writeFileSync(join(dir, 'index.html'), '<!doctype html><title>app</title>');
   store = new Store(join(dir, 'hub.sqlite'), mediaSigner('s'));
   phone = await FakeDevice.make('dev_TestPhone0001');

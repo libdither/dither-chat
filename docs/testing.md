@@ -173,10 +173,11 @@ kill %1 %2 %3 %4                                                       # or let 
   writes are the code under test, one at a time (the media archiver's, in gapfill.test.ts), `PRAGMA synchronous = OFF`
   on the test's database drops their fsyncs: nothing in a test has to outlive the process. A store the test never
   opens again from its file can be `new Store(':memory:', …)`, with no disk at all (jobs.test.ts). When the syncs
-  can't be switched off (secret files, the checkpointer's own connection, a store opened and closed again from its
-  file with its copy before migrating), put the test's files on a memory
-  filesystem: `memTempDir` (test/fixtures/memdir.ts) makes the directory under `/dev/shm`. `strace -f -c -e
-  trace=fsync bun test <file>` counts them, and `strace -f -w -c` shows the wall time they take.
+  can't be switched off (secret files, a test hub's token and askers files, the checkpointer's own connection, a
+  store opened and closed again from its file with its copy before migrating, a nightly copy), put the test's files on
+  a memory filesystem: `memTempDir` (test/fixtures/memdir.ts) makes the directory under `/dev/shm`. A store closed
+  once still syncs its file on the way out: a test that keeps a database file for any reason keeps it there.
+  `strace -f -c -e trace=fsync bun test <file>` counts them, and `strace -f -w -c` shows the wall time they take.
 - A test clock moved hours on steps through every timer due on the way: a loop that looks for work every 5 s fires
   17,000 times in a day, each with a few turns of the event loop and its queries (0.6 s of jobs.test.ts's repeat run).
   Stop the loop, `advance` the clock to just before what the test waits for, then start the loop again.
