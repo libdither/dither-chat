@@ -75,11 +75,13 @@ The Android app is tested in three layers, outside the required `check`:
   takes a `File` or a `JSONObject` rather than a `Context`, as `Arrived` does.
 - **The app on an emulator** (`.github/workflows/android-device.yml`): `scripts/verify-android.ts` runs
   `verify-android-call.ts` (calls and rings: prompts, the call service, the shade's buttons; docs/android.md,
-  "Testing calls") against a demo hub, then `verify-android-arrived.ts` (a push's copy kept and shown offline;
+  "Testing calls") and `verify-android-media.ts` (playing in the background: the media service, its notification
+  and session, the screen off; docs/android.md, "Playing in the background") against a demo hub, then
+  `verify-android-arrived.ts` (a push's copy kept and shown offline;
   docs/notifications.md, "A copy in the push"). The debug build, an API 35 x86_64 emulator with KVM on a standard
   runner, its booted snapshot cached between runs. About 4 minutes of tests on a local emulator, plus the builds and
   the boot. It runs on pull requests that change `apps/android/`, the web files that talk to the app
-  (`packages/web/src/android.ts`, `arrived.ts`) or these scripts, on main for the same, and every night on main.
+  (`packages/web/src/android.ts`, `arrived.ts`, `nowplaying.ts`) or these scripts, on main for the same, and every night on main.
   The push test's pushes reach the app through the debug build's `DebugPushReceiver`, which takes the same path as a
   UnifiedPush message (`Push.arrived`). The calls test's rings come through real push: the hub's Web Push request,
   the app's UnifiedPush connector registering, decrypting and handing it on. Where the device has no distributor

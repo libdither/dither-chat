@@ -64,6 +64,7 @@ object Notifications {
     /** The ranked list's rows: silent too, with a channel of their own so they can be turned off alone. */
     const val LIST = "list"
     const val CALLS = "calls"
+    const val PLAYING = "playing"
     /** Calls ringing you: the one channel that rings, with the phone's ringtone. */
     const val RINGS = "rings"
     const val UPLOADS = "uploads"
@@ -102,6 +103,7 @@ object Notifications {
             NotificationChannel(NEXT_LOOK, "Next look (silent)", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
             NotificationChannel(LIST, "Ranked list (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CALLS, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
+            NotificationChannel(PLAYING, "Playing", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
             NotificationChannel(RINGS, "Incoming calls", NotificationManager.IMPORTANCE_HIGH).apply {
                 setShowBadge(false)
                 setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
