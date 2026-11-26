@@ -168,6 +168,20 @@ export function Change({ c, network, person }: { c: P.ChangeView; network?: P.Ne
       </li>
     );
 
+  if (c.field === 'voice') {
+    // Where they are in voice: the channel joined, or null for none (docs/history.md).
+    const to = typeof c.new === 'string' ? db.conversations.get(c.new) : null;
+    const from = typeof c.old === 'string' ? db.conversations.get(c.old) : null;
+    return (
+      <li class="hist-item">
+        <Icon name="voice" size={14} />
+        {where}
+        <span>{c.new ? <>Joined <b>{to ? convTitle(to) : 'a voice channel'}</b></> : <>Left <b>{from ? convTitle(from) : 'voice'}</b></>}</span>
+        {when}
+      </li>
+    );
+  }
+
   if (c.field === 'presence')
     return (
       <li class="hist-item">

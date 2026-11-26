@@ -23,6 +23,11 @@ objects that changed, not with the number of changes.
   The epoch changes when the journal cannot vouch for what happened: the hub did not stop cleanly last time (a crash
   or a kill can lose the last 80 ms of changes, which were in the database but not yet in a frame), the demo world was
   reset, or the database is new. A clean stop flushes and marks the journal closed (`main.ts`).
+- **A write that fails** (a full disk, a file that will not open): the frame still goes out to every connected device,
+  with no position, and its changes are held in memory and go in with the next frame that is written, at that frame's
+  position. No position is handed out for them, so a client resuming from before has missed nothing. A flush whose own
+  transaction fails takes back what the journal thought it wrote (`mark`/`undo`). A clean stop with changes still held
+  leaves the journal open, so the next start is a new epoch.
 - **Floor**: rows older than 14 days, or beyond the newest 250,000, are dropped hourly. The newest dropped position is
   the floor; a client from before it starts over.
 - **Version**: `SYNC_VERSION` in `packages/protocol`. A client of another version starts over.

@@ -88,7 +88,10 @@ Left:
   the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
   history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
   is no status, nothing logged and no message or conversation with them.
-- **History**: what changed about them, except statuses and presence (ui/HistoryCard.tsx), and, while changes are kept,
+- **Voice** (ui/VoiceClose.tsx; below, "Voice"): with the adversarial voice log on and something in it, their minutes in
+  voice channels this month and in the past 30 days, who they are usually in voice with, and their latest stretches in
+  a channel.
+- **History**: what changed about them, except statuses, presence and voice (ui/HistoryCard.tsx), and, while changes are kept,
   the roles and user groups they were given or lost in a place ("was given designers in Example Org"), which are
   kept against the place and show in its History too.
 
@@ -319,6 +322,26 @@ fetches nothing (hub msgcount.ts). It never claims more than the data supports:
 
 The profile's In common tiles show it ("≥120 seen; ~1,400 estimated, 900–2,100", rounded to two figures), with the
 share, the server's own estimated total and what it rests on in the tooltip.
+
+### Voice
+
+From the voice log (the adversarial "Record who is in voice channels", docs/history.md, docs/calls.md "Voice
+channels"): `GET /api/persons/:id/voice` (or `/api/identities/:id/voice`) answers `{voice, identities}`, `voice` a
+`PersonVoiceView` (hub voicetime.ts), null while the log is off. A stretch in a channel runs from a join to the person's
+next logged move, or to now while they are still in it; one with no end heard is left out, and none counts for more
+than 12 hours (a leave missed while the account was away). The card says their minutes this month, in the past 30 days
+and since the log first has them; **Usually in voice with**: who was in the same channel at the same time for 5 minutes
+or more at once, most minutes first, over the past 90 days (up to 8); and their latest 20 stretches, each with its
+channel, its server, how long, and "in it now". A channel opens its page. Hidden when they have no stretch.
+
+### Close to
+
+Who they are most tied to among people other than you (`CloseCard`), as the people graph ties people
+(docs/people-graph.md "Ties and circles"): replies, reactions, turns in a small chat, time in voice together and
+friendships, faded to now with your tuning's fade and voice weight, each divided by how much both have of it all.
+`GET /api/persons/:id/close` (or `/api/identities/:id/close`) answers `{close, identities}`: up to 12 `CloseView`s,
+strongest first, each with what it counted (shown as "12 replies · 3 h in voice · friends"). The small places two
+people share, which the graph also counts, are left out. Not on your own page.
 
 ### Activity
 

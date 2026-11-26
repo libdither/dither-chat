@@ -663,7 +663,7 @@ if (!demo && realAccounts.some((a) => a.network !== 'calendar')) {
   store.db.query(`DELETE FROM meta WHERE key = 'demo_overlay'`).run();
 }
 // A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
-if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true });
+if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true, voice: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 // The first start with calendar accounts: the calendar this hub had by DITHER_CALENDAR_URL (or its default) becomes
 // one, once (calendar-account.ts). Removing it later sticks.

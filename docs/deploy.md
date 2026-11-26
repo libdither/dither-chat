@@ -208,8 +208,9 @@ The hub keeps its data directory private to its user (umask 077, and older files
 at start). It copies the database every night at 04:00 (`DITHER_BACKUP_HOUR`) to `backups/auto-<time>.sqlite` with
 `VACUUM INTO` from a separate process, and keeps the newest seven (`DITHER_BACKUP_KEEP`). After downtime it copies at
 the first chance. Copies you made yourself are never removed. Before opening a database with a schema it has not
-seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest five kept), and every migration runs in
-one transaction. Mail's schema files (`packages/hub/src/mail/schema*.sql`) count as the schema too.
+seen, the hub also copies it to `backups/pre-migrate-<time>.sqlite` (newest two kept, `DITHER_PRE_MIGRATE_KEEP`),
+unless the deployer copied it to `backups/pre-deploy.sqlite` in the 15 minutes before this start: that is the same
+database, and each copy is gigabytes. Every migration runs in one transaction. Mail's schema files (`packages/hub/src/mail/schema*.sql`) count as the schema too.
 
 A copy of the live database by hand: `sqlite3 hub.sqlite "VACUUM INTO 'backups/<name>.sqlite'"`, or let the hub's own
 nightly copy be the one. Never `cp` it: in WAL mode the file alone is not the database. Any other connection to it can
