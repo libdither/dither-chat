@@ -202,6 +202,7 @@ const PAGES: PageCase[] = [
   { name: 'the directory', at: '#/directory' },
   { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
   { name: 'Feed', at: '#/feed' },
+  { name: 'Notification calibration', at: '#/calibration' },
 ];
 
 // ------------------------------------------------------------------ the browser

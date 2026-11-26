@@ -116,7 +116,6 @@ class MainActivity : Activity() {
         Crashes.install(this)
         Crashes.collectExits(this)
         Notifications.channels(this)
-        Unlock.listen(this)
         bg = Hub.prefs(this).getInt("bg", getColor(R.color.app_bg))
         window.setBackgroundDrawable(ColorDrawable(bg))
         root = FrameLayout(this).apply { setBackgroundColor(bg) }

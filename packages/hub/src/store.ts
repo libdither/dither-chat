@@ -237,7 +237,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 7;
+const MIGRATIONS = 8;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -351,6 +351,7 @@ export class Store {
       this.addColumns('notification', { alert: 'INTEGER', title: 'TEXT', body: 'TEXT', look: 'TEXT', computer_in_use: 'INTEGER' });
       this.addColumns('notification_event', { seen: 'TEXT' });
       this.addColumns('checkin', { expired_at: 'INTEGER' });
+      this.addColumns('attn_answer', { parts: 'TEXT', chance: 'REAL' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
@@ -374,6 +375,7 @@ export class Store {
       this.nicknamesToAccounts();
       this.facesOnce();
       this.forgetGoneSeenVia();
+      this.bandsWithoutNextLook();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -527,6 +529,27 @@ export class Store {
     }
     if (named.length) console.log(`names: ${named.length} nickname${named.length === 1 ? '' : 's'} moved onto the accounts of the person named`);
     this.db.query(`INSERT INTO meta (key, value) VALUES ('nicknames_by_account', ?)`).run(String(Date.now()));
+  }
+
+  /**
+   * The next look went (2026-11, docs/notifications.md "One scale"): its band, 30 to 55, is the bottom of Show, so every
+   * stored "next" says "show" (the loudness numbers themselves stay as they were), what was held for it is let go (it
+   * is in the inbox already), and its settings (when the next look came, its set times) are dropped. Once.
+   */
+  private bandsWithoutNextLook() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'bands_without_next'`).get()) return;
+    this.db.exec(`UPDATE triage SET loud_view = json_set(loud_view, '$.band', 'show') WHERE loud IS NOT NULL AND loud >= 30 AND loud < 55 AND json_extract(loud_view, '$.band') = 'next'`);
+    for (const col of ['live_band', 'shadow_band']) this.db.exec(`UPDATE checkin SET ${col} = 'show' WHERE ${col} = 'next'`);
+    this.db.exec(`UPDATE attn_answer SET band = 'show' WHERE band = 'next'`);
+    this.db.exec('DROP TABLE IF EXISTS next_look');
+    const prefs = this.db.query(`SELECT value FROM meta WHERE key = 'attention_prefs'`).get() as Row | null;
+    if (prefs?.value) {
+      const p = json<Record<string, unknown>>(prefs.value, {});
+      delete p.nextLook;
+      delete p.times;
+      this.db.query(`UPDATE meta SET value = ? WHERE key = 'attention_prefs'`).run(JSON.stringify(p));
+    }
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('bands_without_next', '1')`);
   }
 
   /**

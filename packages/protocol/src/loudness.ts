@@ -1,16 +1,23 @@
 /**
  * One loudness scale for notifications, the inbox and For you (docs/notifications.md): every message gets a number
  * from 0 to 100, how much of your attention it is worth right now, and the devices draw their lines across it in
- * bands. Learned mainly from your answers to "was that worth it?" (check-ins, Louder / Quieter and their "why").
+ * bands. Learned mainly from your answers on the Notification calibration feed (Sound / Show / Inbox, and what it
+ * was wrong about) and from Louder / Quieter and their "why".
  */
 
-/** Where a loudness lands. Loudest last. */
-export type LoudBand = 'unread' | 'inbox' | 'next' | 'show' | 'sound';
-export const LOUD_BANDS: readonly LoudBand[] = ['unread', 'inbox', 'next', 'show', 'sound'];
+/**
+ * Where a loudness lands. Loudest last. `show` is a silent notification you see only when you look in the shade (on
+ * Android the minimized kind: no status-bar icon, no lock-screen line). Until 2026-11 a "next look" band sat between
+ * the inbox and show (30-55), holding things for one bundle when you next looked; what fell in it is show now.
+ */
+export type LoudBand = 'unread' | 'inbox' | 'show' | 'sound';
+export const LOUD_BANDS: readonly LoudBand[] = ['unread', 'inbox', 'show', 'sound'];
 /** Each band's stretch of the 0-100 scale. */
-export const BAND_RANGE: Record<LoudBand, readonly [number, number]> = { unread: [0, 10], inbox: [10, 30], next: [30, 55], show: [55, 80], sound: [80, 100] };
-export const BAND_NAME: Record<LoudBand, string> = { unread: 'Unread only', inbox: 'Inbox', next: 'Next look', show: 'Show now, silent', sound: 'Sound' };
-export const bandOf = (loudness: number): LoudBand => (loudness >= 80 ? 'sound' : loudness >= 55 ? 'show' : loudness >= 30 ? 'next' : loudness >= 10 ? 'inbox' : 'unread');
+export const BAND_RANGE: Record<LoudBand, readonly [number, number]> = { unread: [0, 10], inbox: [10, 30], show: [30, 80], sound: [80, 100] };
+export const BAND_NAME: Record<LoudBand, string> = { unread: 'Unread only', inbox: 'Inbox', show: 'Show, silent', sound: 'Sound' };
+export const bandOf = (loudness: number): LoudBand => (loudness >= 80 ? 'sound' : loudness >= 30 ? 'show' : loudness >= 10 ? 'inbox' : 'unread');
+/** A band as stored, also one stored before the next look went (it is show now). */
+export const asBand = (b: unknown): LoudBand | null => (b === 'next' ? 'show' : (LOUD_BANDS as readonly unknown[]).includes(b) ? (b as LoudBand) : null);
 
 /**
  * Which decides what is sent (DITHER_ATTENTION): today's tiers alone, the loudness worked out beside them and stored
@@ -58,6 +65,9 @@ export interface LoudView {
 
 /** The answers the app can give about a message (POST /api/loudness/answers). */
 export type AttnAnswer =
+  | 'sound' // The calibration feed: it should have sounded
+  | 'show' // … shown silently, in the shade
+  | 'inbox' // … waited in the inbox
   | 'worth' // Worth it (a sound)
   | 'could_wait' // Could have waited
   | 'shouldnt' // Shouldn't have reached me
@@ -67,7 +77,7 @@ export type AttnAnswer =
   | 'quieter'; // Quieter, for this person or chat
 
 /** Where an answer came from. */
-export type AttnSource = 'checkin' | 'sheet' | 'notification' | 'followup';
+export type AttnSource = 'checkin' | 'feed' | 'sheet' | 'notification' | 'followup';
 
 /** Why, after Quieter, Could have waited or Shouldn't have reached me; and after Louder (or Wish I'd known sooner). */
 export type WhyReason =
@@ -110,8 +120,6 @@ export interface AttnAnswerBody {
   source: AttnSource;
   /** Louder / Quieter: for this person or this chat (default: the message itself, its kind). */
   scope?: 'person' | 'chat';
-  /** The check-in it answers. */
-  checkinId?: string;
 }
 
 /** What an answer leaves for the app: whether to ask why, and about which side. */
@@ -136,28 +144,6 @@ export interface WhyResult {
   ok: true;
   /** The reason it was taken as (from the text, when one was given). */
   reason: WhyReason | null;
-}
-
-/**
- * A check-in question (checkin.ts), waiting on the Notification calibration page (docs/notifications.md, "Asking,
- * without nagging") until you answer, skip, or it gets too old.
- */
-export interface CheckinView {
-  id: string;
-  /** 'sounded': it sounded; 'quiet': it stayed quiet; 'foryou': a For you card. */
-  side: 'sounded' | 'quiet' | 'foryou';
-  messageId: string;
-  conversationId: string | null;
-  title: string;
-  preview: string;
-  /** When the message came. */
-  at: number;
-  /** When the question was put on the page. */
-  askedAt: number;
-  /** "you answered it 5 h later" */
-  note?: string;
-  /** Where and how you came across it, as far as the hub knows. */
-  context: SeenContext;
 }
 
 /** Where a device drew a notification (the device's own word, `NotificationSeen`). */
@@ -235,43 +221,103 @@ export interface NotificationSeen {
   beside?: string[];
 }
 
-/** GET /api/loudness/calibration: the numbers at the top of the Notification calibration page. */
-export interface CalibrationStats {
-  /** Sounds a day, from the scorecard's days (attn.sounds): the means of the last 7 and 30 days scored, and each day. */
-  sounds: { last7: number | null; last30: number | null; days: { day: string; n: number | null }[] };
-  /** The scorecard's weighted shares over the last 30 days (attn.worth, attn.missed): honest, from the random half. */
-  worth: { value: number | null; n: number };
-  missed: { value: number | null; n: number };
-  /** Straight counts of your answers over the last 30 days, every question. */
-  answers: { worth: number; couldWait: number; shouldnt: number; sooner: number; fine: number; glad: number; not: number };
-  pending: number;
-  answered: number;
-  skipped: number;
-  expired: number;
-  /** Time from the question going on the page to your answer, the mean and the median (ms), over the last 30 days. */
-  delay: { mean: number | null; median: number | null };
-  /** How old the message was when you answered, the mean (ms): late answers count a little less in what is learned. */
-  age: { mean: number | null };
-  /** The model's chance you wanted it, against what you answered, in bins (sounded: worth it; quiet: wish I'd known sooner). */
-  calibration: { bins: { lo: number; hi: number; predicted: number; observed: number; n: number }[]; brier: number | null; n: number };
+/** The calibration feed's answers (docs/notifications.md, "The calibration feed"): what it should have been. */
+export type CalAnswer = 'sound' | 'show' | 'inbox';
+export const CAL_ANSWERS: readonly CalAnswer[] = ['sound', 'show', 'inbox'];
+export const CAL_ANSWER_NAME: Record<CalAnswer, string> = { sound: 'Sound', show: 'Show', inbox: 'Inbox' };
+/** The band a feed answer stands for, and back (unread only is the inbox's here). */
+export const calAnswerOf = (b: LoudBand): CalAnswer => (b === 'sound' ? 'sound' : b === 'show' ? 'show' : 'inbox');
+
+/** The parts of the model a correction can be routed to ("What was it wrong about?"). */
+export type CalPart = 'person' | 'chat' | 'topic' | 'wait' | 'moment' | 'delivery';
+export const CAL_PARTS: readonly CalPart[] = ['person', 'chat', 'topic', 'wait', 'moment', 'delivery'];
+export const CAL_PART_NAME: Record<CalPart, string> = { person: 'person', chat: 'chat', topic: 'topic', wait: 'can wait', moment: 'moment', delivery: 'delivery' };
+
+/** Chances or spreads, one for each answer in CAL_ANSWERS' order. */
+export type Trio = [number, number, number];
+
+/**
+ * One notification on the calibration feed, as it looked, with what the model gave each answer (p, with u its
+ * uncertainty), what it did, and what you did.
+ */
+export interface CalItem {
+  id: string;
+  /** card: open with its answers; row: compact, tap to open; past: an answer of yours back once; sure: hidden as sure. */
+  kind: 'card' | 'row' | 'past' | 'sure';
+  messageId: string;
+  conversationId: string | null;
+  network: string | null;
+  /** The picture the notification had, where it had one. */
+  icon: string | null;
+  /** Its title as drawn (the person, or the chat), and its text. */
+  who: string;
+  text: string;
+  at: number;
+  /** Where it was seen: a notification in the shade, a toast or browser notification, or only a row in the app. */
+  look: 'shade' | 'toast' | 'row';
+  /** The model's chance of each answer, and how unsure each is (a spread, not a range). */
+  p: Trio;
+  u: Trio;
+  /** What the model did: it sounded, showed silently, or sent nothing. */
+  did: CalAnswer;
+  /** What you did, read from how soon you opened or answered it; null while that is not known. */
+  you: CalAnswer | null;
+  /** "Opened in 1 min", "Not opened" */
+  youWhat: string;
+  /** How surprised (bits, at most 5) and how unsure (0 to 1) the model is, and worth asking now (with its fading). */
+  surprise: number;
+  unsure: number;
+  score: number;
+  /** The chance it had of being drawn as a card: answers are weighted back by it. */
+  chance: number;
+  /** A sound held back (quiet hours, a computer in use, a burst): never hidden as sure. */
+  held?: boolean;
+  /** Your answer, where there is one (a past card). */
+  answer?: CalAnswer;
+  /** The model's chances now, after your answer (a past card; and after answering on any card). */
+  after?: Trio;
+  /** Which way each part pushed it, −1 (quieter) to 1 (louder), with what that part is here ("Ben", "Family"). */
+  parts: { part: CalPart; label: string; push: number }[];
+  /** Where and how it was seen, in a line, and what moved it, by how many points. */
+  context: string;
+  reasons: LoudReason[];
 }
+
+/** GET /api/loudness/feed: the cards and rows, newest worth asking first; the sure ones apart. */
+export interface CalFeedView {
+  items: CalItem[];
+  sure: CalItem[];
+}
+
+/** POST /api/loudness/feed/:id { answer }: the chances before and after it was learned. */
+export interface CalAnswerResult {
+  ok: true;
+  answerId: string;
+  before: Trio;
+  after: Trio;
+}
+
+/** POST /api/loudness/feed/:id/parts { parts }: the chances once the answer was routed to those parts. */
+export interface CalPartsResult {
+  ok: true;
+  after: Trio;
+}
+
+/** A past answer come back: kept, kept as a one-off that teaches nothing, or taken back. */
+export type CalSettle = 'keep' | 'once' | 'undo';
 
 /** The attention settings (Settings → Notifications). */
 export interface AttentionPrefs {
   /** A nudge on what it learned: how readily it sounds. */
   readily: 'less' | 'learned' | 'more';
-  /** When the next look comes: when you open the app or unlock the phone, at set times, or both. */
-  nextLook: 'open' | 'times' | 'both';
-  /** "HH:MM" local times, for `times` and `both`. */
-  times: string[];
   /** While a computer is in use, the phone stays silent and nothing reaches it for a chat open and read there. */
   computerFirst: boolean;
-  /** How many questions a day go on the Notification calibration page: never, rarely (one a day), up to three a day. */
+  /** How many cards a day open on the calibration feed: never, rarely (one a day), up to three a day. */
   ask: 'never' | 'rarely' | 'often';
   /** A note on people you're drifting from, in the weekly report. */
   drifting: boolean;
 }
-export const DEFAULT_ATTENTION_PREFS: AttentionPrefs = { readily: 'learned', nextLook: 'both', times: ['12:00', '18:00'], computerFirst: true, ask: 'often', drifting: true };
+export const DEFAULT_ATTENTION_PREFS: AttentionPrefs = { readily: 'learned', computerFirst: true, ask: 'often', drifting: true };
 
 /** GET /api/loudness/state: the mode, your settings, what it asks and has learned, for the app. */
 export interface AttentionStateView {
@@ -279,17 +325,11 @@ export interface AttentionStateView {
   prefs: AttentionPrefs;
   /** Sounds today, for your information only. */
   soundsToday: number;
-  /** Check-ins asked and answered today. */
+  /** Cards opened and answered today. */
   asked: number;
   answered: number;
-  /** Waiting on the Notification calibration page. */
+  /** Waiting on the calibration feed (cards, and past answers back). */
   pending: number;
-  /** Paused after three skips in a row, until then. */
-  pausedUntil: number | null;
-  /** "Ask me less" halves this each time. */
-  rate: number;
-  /** Held for the next look. */
-  held: number;
   /** What it learned, strongest first, with Forget. */
   learned: { key: string; text: string; by: number }[];
 }

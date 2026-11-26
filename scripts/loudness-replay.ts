@@ -31,7 +31,7 @@ type Row = Record<string, any>;
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
-const BANDS: P.LoudBand[] = ['sound', 'show', 'next', 'inbox', 'unread'];
+const BANDS: P.LoudBand[] = ['sound', 'show', 'inbox', 'unread'];
 
 const argv = process.argv.slice(2);
 const opt = (name: string, dflt?: string) => {

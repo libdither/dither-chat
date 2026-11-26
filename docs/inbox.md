@@ -329,11 +329,12 @@ the list: [notifications.md](notifications.md)) counts too (`Attention.input`):
   [notifications.md](notifications.md#one-scale-loudness)) the importance is its loudness over 100 instead: how loud
   it is now, with a person owed a reply already in it. The learned order and its exploring stay as they are.
 
-**The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (next look and above)
+**The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (Show and above)
 has a thin bar on its left while it is unread, stronger the louder it was (`loudness.ts` `loudByConv`, `loudEdge`).
 
-**Notification calibration.** While questions about notifications wait, a quiet row under Requests and Notices
-counts them and opens their page ([notifications.md](notifications.md#check-ins)); nothing is asked in the list itself.
+**Notification calibration.** While cards about notifications wait, a quiet row under Requests and Notices counts
+them and opens their feed ([notifications.md](notifications.md#the-calibration-feed)); nothing is asked in the list
+itself.
 
 **Seen.** All three last until you read the conversation, or swipe its notification away on the phone: the app
 reports the swipe as `dismissed` ([activity.md](activity.md)), a dismissal at or after that message is read as
