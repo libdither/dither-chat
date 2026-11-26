@@ -345,17 +345,17 @@ channel, its server, how long, and "in it now". A channel opens its page. Hidden
 
 ### People in common
 
-The friends you share and the people they are most tied to, one row a person (`tiesOf` and `PeopleInCommon` in
-ui/VoiceClose.tsx). The ties are the people graph's (docs/people-graph.md "Ties and circles"): replies, reactions, turns
-in a small chat, time in voice together and friendships, faded to now with your tuning's fade and voice weight, each
-divided by how much both have of it all. `GET /api/persons/:id/close` (or `/api/identities/:id/close`, `?limit=` up to
-200, 12 by default; the page asks for 200) answers `{close, identities}`: `CloseView`s, strongest first, each with what
-it counted. The friends are each of their profiles' mutual friends, and a tie marked `friends`, which a friend's own
-profile naming them gives: friendship counts either way, so someone whose own profile came through one of your
-accounts still shows the friends another of your accounts sees them with. Each row says why ("friends" with the
-network's badge, "58 replies", "3 h in voice", the turns in its tooltip) and has a bar for how strong the tie is. The
-small places two people share, which the graph also counts, are left out. Not on your own page. Before 2026-11-25
-these were two cards, Mutual friends and Close to.
+The friends you share and the people they are most tied to, one row a person, the friends first, each part strongest
+first (`tiesOf` and `PeopleInCommon` in ui/VoiceClose.tsx). The ties are the people graph's (docs/people-graph.md
+"Ties and circles"): replies, reactions, turns in a small chat, time in voice together and friendships, faded to now
+with your tuning's fade and voice weight, each divided by how much both have of it all. `GET /api/persons/:id/close`
+(or `/api/identities/:id/close`, `?limit=` up to 200, 12 by default; the page asks for 200) answers `{close,
+identities}`: `CloseView`s, strongest first, each with what it counted. The friends are each of their profiles' mutual
+friends, and a tie marked `friends`, which a friend's own profile naming them gives: friendship counts either way, so
+someone whose own profile came through one of your accounts still shows the friends another of your accounts sees them
+with. Each row says why ("friends" with the network's badge, "58 replies", "3 h in voice", the turns in its tooltip)
+and, where the graph ties them, a bar for how strong the tie is. The small places two people share, which the graph
+also counts, are left out. Not on your own page. Before 2026-11-25 these were two cards, Mutual friends and Close to.
 
 ### Activity
 

@@ -133,8 +133,8 @@ export function useCloseTo(base: string): P.CloseView[] | undefined {
 }
 
 /**
- * People in common (docs/profile.md "In common"): the people graph's ties and the friends you share, one row a person,
- * strongest first. Friendship counts either way: their profile naming the friend, or the friend's profile naming them,
+ * People in common (docs/profile.md "People in common"): the people graph's ties and the friends you share, one row a
+ * person, the friends first, each part strongest first. Friendship counts either way: their profile naming the friend, or the friend's profile naming them,
  * which the hub's ties carry (`friends`).
  */
 export function tiesOf(close: P.CloseView[], said: P.PersonAboutView[]): Tie[] {
@@ -149,7 +149,8 @@ export function tiesOf(close: P.CloseView[], said: P.PersonAboutView[]): Tie[] {
       t.friendOn = [...new Set([...t.friendOn.filter((n) => n !== db.identities.get(iid)?.network), a.network])];
       out.set(k, t);
     }
-  return [...out.values()].sort((x, y) => y.strength - x.strength || x.key.localeCompare(y.key));
+  const friend = (t: Tie) => (t.friendOn.length ? 1 : 0);
+  return [...out.values()].sort((x, y) => friend(y) - friend(x) || y.strength - x.strength || x.key.localeCompare(y.key));
 }
 
 /** What tied them, in words; `short` for a row. */
@@ -205,9 +206,11 @@ export function PeopleInCommon({ ties, shown = 8 }: { ties: Tie[]; shown?: numbe
                   {why(t, true)}
                 </small>
               </span>
-              <span class="pf-meter" title={`Tied ${Math.round(t.strength * 100)}% of the most two people can be`}>
-                <i style={{ width: `${Math.max(6, Math.min(100, t.strength * 250))}%` }} />
-              </span>
+              {t.close && (
+                <span class="pf-meter" title={`Tied ${Math.round(t.strength * 100)}% of the most two people can be`}>
+                  <i style={{ width: `${Math.max(6, Math.min(100, t.strength * 250))}%` }} />
+                </span>
+              )}
             </button>
           );
         })}
