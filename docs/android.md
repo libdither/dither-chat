@@ -128,7 +128,8 @@ conversationId, duration, position, rate}`, and the app:
 - keeps the service while paused, so Play from the notification or a headset needs no new start from the background,
   and stops it after 10 minutes paused, at Close (or the notification swiped away), when the sound ends, when its
   page goes (a new page says hello, or the activity is destroyed: swiped from Recents), or when its player leaves the
-  page (its chat closed);
+  page (a video whose chat closed; voice messages and sound files play in the app's own player, which stays,
+  [media-kinds.md](media-kinds.md#playing-on-after-leaving-a-chat));
 - pauses it when headphones come out (`ACTION_AUDIO_BECOMING_NOISY`). A call starting pauses it (`call.ts
   startCall`).
 
