@@ -7,7 +7,7 @@ import { customMarkup } from '../emojiComplete.ts';
 import { authorName, faceOf } from '../model.ts';
 import { clearReactions, modOf } from '../moderate.ts';
 import { addLook, hasMine, keyText, knownReactionContext, pickerFor, quickReactions, reactedAt, reactionContext, reactionScope, reactionTip, reactorsFor, replacing, toggleReaction, whenText, whenTitle, type Picked } from '../reactions.ts';
-import { api, db, isSelfIdentity, pref, rev, setPrefs } from '../state.ts';
+import { api, db, isSelfIdentity, metaRev, pref, rev, setPrefs } from '../state.ts';
 import { phone, useLayer } from '../phone.ts';
 import { historyOnMenu, openHistory } from '../messageHistory.ts';
 import { Avatar } from './bits.tsx';
@@ -30,6 +30,7 @@ export function Glyph({ k, emoji, size = 18 }: { k: string; emoji?: P.CustomEmoj
 // ------------------------------------------------------------------ pills
 
 function Pill({ m, r }: { m: P.MessageView; r: P.ReactionView }) {
+  metaRev.value; // who reacted, by name, and which of them is you
   const mine = hasMine(r);
   const ref = useRef<HTMLButtonElement>(null);
   // A right-click or a long press opens the message's reactions, from the start, with a way to all of its history.
@@ -72,6 +73,7 @@ function pillTip(m: P.MessageView, r: P.ReactionView, mine: boolean) {
 const compact = (n: number) => (n < 1000 ? String(n) : n < 10_000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(n / 1000)}k`);
 
 export function ReactionBar({ m }: { m: P.MessageView }) {
+  metaRev.value; // what the account here may react with (reactionScope)
   if (!m.reactions.length) return null;
   return (
     <div class="reactions">
@@ -211,6 +213,8 @@ const inTextKey = (key: string) => /^\S+:\d+$/.test(key);
  * bottom. On a network that keeps one reaction per person, that bottom line also says which of yours a pick replaces.
  */
 /** `inline`: in the phone's panel (ui/panel/), where it stays open for another and draws no sheet of its own. */
+// redraws: your frequent emoji are read as it opens, and stay where they are while it is open, so none moves under
+// the pointer; the reaction context comes in by its own state.
 function Picker({ target, anchor, onClose, inline }: { target: Target; anchor: DOMRect | null; onClose: () => void; inline?: boolean }) {
   const m = target.kind === 'react' ? target.m : null;
   const network = m ? m.network : (target as Extract<Target, { kind: 'insert' }>).network;
@@ -592,6 +596,7 @@ function turns(past: P.ReactionTakenBack[]): string[] {
 }
 
 function Reactors({ m, reactionKey, style, anchor, onClose }: { m: P.MessageView; reactionKey: string; style: P.ReactionStyle; anchor: DOMRect; onClose: () => void }) {
+  metaRev.value; // names and pictures
   const r = m.reactions.find((x) => x.key === reactionKey && x.style === style);
   // What the message already says draws at once; the hub's answer adds who took theirs back, and the names behind a total.
   const [v, setV] = useState<P.MessageReactorsView>({ count: r?.count ?? 0, identityIds: r?.identityIds ?? [], at: r?.at, seenAt: r?.seenAt, takenBack: [], identities: [] });

@@ -3,7 +3,7 @@ import type { ComponentChildren, Ref } from 'preact';
 import { useState } from 'preact/hooks';
 import { retention } from '../history.ts';
 import { allCommunities, communitiesOf, convLabel, convTitle, netName, people, visibleConv } from '../model.ts';
-import { db } from '../state.ts';
+import { db, metaRev } from '../state.ts';
 import { Avatar, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { countAt } from '../clicklog.ts';
@@ -153,6 +153,7 @@ export function SearchBox({
   class?: string;
   enterkeyhint?: string;
 }) {
+  metaRev.value; // the names its suggestions list
   const [open, setOpen] = useState(false);
   const [caret, setCaret] = useState(value.length);
   const [sel, setSel] = useState(-1);

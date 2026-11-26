@@ -7,7 +7,7 @@ import { NETWORK_META, sendLaterProblem } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { authorName, convTitle, plainBody } from '../model.ts';
 import { cancelScheduled, editScheduled, fromLocalInput, laterChoices, loadSaved, loadScheduled, scheduled, sendScheduledNow, toLocalInput, unsaveOnNetwork, whenWords } from '../sending.ts';
-import { db, go } from '../state.ts';
+import { db, go, metaRev } from '../state.ts';
 import { Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import type { SendPanel } from './SendExtras.tsx';
@@ -89,6 +89,7 @@ function ScheduledList({ conversationId, onClose }: { conversationId?: string; o
 }
 
 function ScheduledRow({ v, showPlace, editing, onEdit, onOpen }: { v: P.ScheduledSendView; showPlace: boolean; editing: boolean; onEdit: (on: boolean) => void; onOpen: () => void }) {
+  metaRev.value; // the place's name and the account's label
   const c = db.conversations.get(v.conversationId);
   const acc = db.accounts.get(v.accountId);
   const [body, setBody] = useState(v.body);
@@ -165,6 +166,7 @@ function ScheduledRow({ v, showPlace, editing, onEdit, onOpen }: { v: P.Schedule
 // ------------------------------------------------------------------ saved on Discord
 
 function SavedList({ onClose }: { onClose: () => void }) {
+  metaRev.value; // authors' and places' names
   const [page, setPage] = useState<P.SavedPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {

@@ -6,7 +6,7 @@ import { GLYPH } from '../brand.ts';
 import { linkParts } from '../links.ts';
 import { hueOf, initials } from '../format.ts';
 import { annotateAccounts, netColor, netName, usualAccount } from '../model.ts';
-import { db, go } from '../state.ts';
+import { db, go, metaRev } from '../state.ts';
 import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -55,6 +55,7 @@ export const dotsLook = (network: P.Network, accountIds: string[]) =>
     .join('|');
 
 export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
+  metaRev.value; // an account's colour, label or the network's usual account change without the ids changing
   const accs = dotted(network, accountIds, force);
   if (!accs.length) return null;
   return (

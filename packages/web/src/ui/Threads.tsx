@@ -9,7 +9,7 @@ import { NETWORK_META, namedTags, POST_TAGS_MAX, postProblem, THREAD_NAME_MAX, T
 import { useEffect, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import { authorName, convTitle, effectiveLevel, netName, plainBody, resolvedTopic, ruleIcon, threadsOf, threadWords, topicForum, unreadOf } from '../model.ts';
-import { api, db, isSelfIdentity, rev, toast } from '../state.ts';
+import { api, db, isSelfIdentity, metaRev, rev, toast } from '../state.ts';
 import { ableAccount, followThread, threadDialog, threadMuteChoices, threadNotify, type ThreadDialog } from '../threads.ts';
 import { uploadFile } from '../upload.ts';
 import { Count, Empty, Modal } from './bits.tsx';
@@ -370,6 +370,7 @@ export function ThreadsLayer() {
 
 /** A thread's About card: following and how it notifies, archiving and locking where you may. */
 export function ThreadCard({ c, view, onDone }: { c: P.ConversationView; view: P.AboutView; onDone: (v: P.AboutView) => void }) {
+  metaRev.value; // whether an account that can follow it is connected
   const t = view.thread!;
   const [busy, setBusy] = useState(false);
   const follow = !!ableAccount(c, 'followThreads');

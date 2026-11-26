@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from 'preact/hooks';
 import { appsFor, can, forms } from '../../apps.ts';
+import { metaRev } from '../../state.ts';
 
 type Chunk = typeof import('./Apps.tsx');
 let chunk: Chunk | null = null;
@@ -28,6 +29,7 @@ function useChunk(want: boolean): Chunk | null {
 
 /** The composer's slash commands, over its box. */
 export function SlashCommandsLazy({ ta, convId, accountId, text }: { ta: { current: HTMLTextAreaElement | null }; convId: string; accountId?: string; text: string }) {
+  metaRev.value; // the accounts here and what they can do
   const c = useChunk(text.startsWith('/') && can(convId, 'interactCommands', accountId));
   return c ? <c.SlashCommands ta={ta} convId={convId} accountId={accountId} text={text} /> : null;
 }

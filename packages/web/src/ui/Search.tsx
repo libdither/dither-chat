@@ -4,7 +4,7 @@ import type { ComponentType } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { authorName, communitiesOf, convLabel, faceOf, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
-import { api, back, db, go, mailRev, openMessage, openProfile, rev } from '../state.ts';
+import { api, back, db, go, mailRev, metaRev, openMessage, openProfile, rev } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -98,6 +98,7 @@ function dateLabel(q: string): string | null {
 }
 
 /** A name to search by (From, In): what Ctrl+K would jump to for it, or what was typed. */
+// redraws: what it offers is read once as it opens (a memo), and it is open only while you pick.
 function NamePick({ kinds, placeholder, pick }: { kinds: JumpTarget['kind'][]; placeholder: string; pick: (v: string) => void }) {
   const [t, setT] = useState('');
   const all = useMemo(() => jumpTargets().filter((j) => kinds.includes(j.kind)), []);
@@ -137,6 +138,7 @@ type Chip = 'from' | 'in' | 'date' | 'network' | 'more' | 'sort';
  * a picker; a set chip shows its value and an × that clears it. They edit operators in the text, as typing them would.
  */
 function FilterBar({ q, set }: { q: string; set: (q: string) => void }) {
+  metaRev.value; // the names on its chips, and your accounts' networks
   const [open, setOpen] = useState<Chip | null>(null);
   const bar = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {

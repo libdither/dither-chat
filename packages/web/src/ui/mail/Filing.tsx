@@ -131,6 +131,7 @@ const liftClick = (e: MouseEvent) => {
 
 /** Around each thread row: swipes, selection, the menu. */
 export const FilingRow: RowWrapper = ({ thread: t, children }) => {
+  mailRev.value; // what the account may do (`acc`) changes without the thread changing
   const picking = selected.value.size > 0;
   const on = selected.value.has(t.id);
   const fg = useRef<HTMLDivElement>(null);

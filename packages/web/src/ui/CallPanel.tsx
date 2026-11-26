@@ -10,7 +10,7 @@ import { modVerb, NETWORK_META, stageMoveFits, VOLUME_MAX } from '@dither-chat/p
 import { useEffect, useState } from 'preact/hooks';
 import { type ActiveCall, askSounds, callCan, callName as name, callNetwork, callRole, callStageCan, isCallSelf, playSound, roomOnPage, setPersonVolume, stageAction, watchStream } from '../call.ts';
 import { convTitle } from '../model.ts';
-import { api, db, go, toast } from '../state.ts';
+import { api, db, go, metaRev, toast } from '../state.ts';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
 import { groups, type MenuEntry, openMenu } from './ContextMenu.tsx';
@@ -123,6 +123,7 @@ function personMenu(call: ActiveCall, p: P.CallParticipant, about: P.AboutView |
 }
 
 function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParticipant; about: P.AboutView | null; setAbout: (v: P.AboutView) => void }) {
+  metaRev.value; // names, pictures and the account's abilities change without `p` changing
   const who = name(p.id);
   const states = [
     p.speaking ? 'speaking' : '',
@@ -161,6 +162,7 @@ function Person({ call, p, about, setAbout }: { call: ActiveCall; p: P.CallParti
 
 /** A stage: its topic, what you are there, and Speak or Move to the audience (your hand is on the dock's bar). */
 function StageBar({ call }: { call: ActiveCall }) {
+  metaRev.value; // which identity is the account's own can change without `call` changing
   const role = callRole(call) ?? 'audience';
   return (
     <div class="call-stage">
@@ -175,6 +177,7 @@ function StageBar({ call }: { call: ActiveCall }) {
   );
 }
 
+// redraws: it reads only the network of the call's account, which never changes for that account.
 function Sounds({ call }: { call: ActiveCall }) {
   const [open, setOpen] = useState(false);
   const s = call.sounds;
@@ -208,6 +211,7 @@ function Sounds({ call }: { call: ActiveCall }) {
 
 /** The dock's open body. */
 export function CallPanel({ call }: { call: ActiveCall }) {
+  metaRev.value; // the chat's name and the account's abilities change without `call` changing
   const [about, setAbout] = useState<P.AboutView | null>(null);
   const fetched = useCallAbout(call);
   const view = about ?? fetched;

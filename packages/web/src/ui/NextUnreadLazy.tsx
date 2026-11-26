@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from 'preact/hooks';
 import { layerCount } from '../phone.ts';
-import { db, route } from '../state.ts';
+import { db, metaRev, route } from '../state.ts';
 
 type Parts = typeof import('./NextUnread.tsx');
 let parts: Parts | null = null;
@@ -73,6 +73,7 @@ export function NextUnreadKey() {
  * chunk loads only on a thread's page or a stream, once at the bottom.
  */
 export function NextUnreadBar(p: { at: string; stream?: boolean; bottom: boolean }) {
+  metaRev.value; // the conversation may come after the bar first draws
   const [m, setM] = useState(parts);
   useEffect(() => {
     if (!p.stream) return;

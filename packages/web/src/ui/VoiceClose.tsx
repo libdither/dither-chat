@@ -9,7 +9,7 @@ import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { communitiesOf, convTitle, identityName, netName } from '../model.ts';
-import { api, db, go, isSelfIdentity, openProfile, rev } from '../state.ts';
+import { api, db, go, isSelfIdentity, metaRev, openProfile, rev } from '../state.ts';
 import { changed } from '../versions.ts';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Card } from './ProfileShell.tsx';
@@ -172,6 +172,7 @@ function why(t: Tie, short = false): string {
 
 /** The list: how many are friends, then a row a person with what counted and how strong the tie is. Null with nobody. */
 export function PeopleInCommon({ ties, shown = 8 }: { ties: Tie[]; shown?: number }) {
+  metaRev.value; // names and pictures change without `ties` changing
   const [all, setAll] = useState(false);
   if (!ties.length) return null;
   const friends = ties.filter((t) => t.friendOn.length).length;

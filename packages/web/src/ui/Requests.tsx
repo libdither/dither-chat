@@ -14,7 +14,7 @@ import { ago } from '../format.ts';
 import { directsOf, identityName, netName } from '../model.ts';
 import { CONNECTION_KINDS, CONNECTION_TITLE, connectionLine, linkKind, linksLine, type Connection } from '../connections.ts';
 import { accountLine, ANSWER_LABEL, canRemove, FOLLOW_NETWORKS, groupRequests, linkRows, linkSinceLine, messageRequestNote, nameMatches, relation, removeNote, removeQuestion, requestLine, requestsRow, sentence, waitingOnYou, sortLinkRows, talkedLine, targetMembers, type LinkSort } from '../requests.ts';
-import { api, applyEvents, db, go, openDirect, openProfile, rev, toast } from '../state.ts';
+import { api, applyEvents, db, go, metaRev, openDirect, openProfile, rev, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
 import { Avatar, Empty, Menu, Modal, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -209,6 +209,7 @@ function RequestCard({ r, focused }: { r: P.RequestView; focused: boolean }) {
  * answered, besides landing somewhere.
  */
 function Answers({ r, name, after, message }: { r: P.RequestView; name: string; after?: (answer: P.RequestAnswer, res: P.AddResultView) => void; message?: boolean }) {
+  metaRev.value; // the account, and whether it is online to message from
   const [busy, setBusy] = useState<P.RequestAnswer | 'message' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [check, setCheck] = useState<P.AddResultView | null>(null);
@@ -337,6 +338,7 @@ const CONNECT_ICON = { friend: 'userPlus', follow: 'plus', contact: 'userPlus' }
  * Nothing where no account can. `onChanged`: the network's new word on how you stand, for the page to show.
  */
 export function ConnectActions({ identities, abouts, onChanged }: { identities: P.IdentityView[]; abouts: Record<string, P.PersonAboutView | undefined>; onChanged: (about: P.PersonAboutView) => void }) {
+  rev.value; // requests (`db.requests`) move only `rev`, and accounts
   const [busy, setBusy] = useState<string | null>(null);
   const [check, setCheck] = useState<{ network: P.Network; res: P.AddResultView } | null>(null);
   // The network's words before "Accept anyway" or "Add anyway", and what sends it again with confirm.
@@ -470,6 +472,7 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
  * Unblock, Remove contact, Unfollow. `onDone`: the hub's answer, once it went through.
  */
 function RemoveDialog({ identityId, accountId, relationship, onClose, onDone }: { identityId: string; accountId: string; relationship: P.LinkRelationship; onClose: () => void; onDone: (res: P.AddResultView) => void }) {
+  metaRev.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const i = db.identities.get(identityId);
@@ -565,6 +568,7 @@ function CancelSent({ c, onClose }: { c: P.ConversationView; onClose: () => void
  * yours, with Cancel in its menu. `convs`: the conversation, or every chat of a person's (the one sending first).
  */
 export function RequestSentMark({ convs }: { convs: P.ConversationView[] }) {
+  metaRev.value; // the account and their name
   const [cancel, setCancel] = useState<P.ConversationView | null>(null);
   const c = sentOn(convs);
   if (!c && !cancel) return null;
@@ -624,6 +628,7 @@ export function RequestSentMark({ convs }: { convs: P.ConversationView[] }) {
 
 /** Over the message box, while you write through an account whose friend request they haven't accepted yet. */
 export function RequestSentNote({ c }: { c: P.ConversationView | undefined }) {
+  metaRev.value; // the account's label
   // The conversation as it was when Cancel was pressed: its request goes once the dialog has done it.
   const [cancel, setCancel] = useState<P.ConversationView | null>(null);
   const p = c?.pending;
@@ -658,6 +663,7 @@ export function RequestSentNote({ c }: { c: P.ConversationView | undefined }) {
  * `onEnded`: one ended, for the page to show.
  */
 export function ProfileConnections({ identities, list, onEnded }: { identities: P.IdentityView[]; list: Connection[]; onEnded: (identityId: string, accountId: string) => void }) {
+  metaRev.value; // accounts' labels and their names
   const [ending, setEnding] = useState<{ identityId: string; accountId: string; relationship: P.LinkRelationship } | null>(null);
   if (!list.length) return null;
   // With several accounts of theirs, each row says which one it is about, as a route's label does: theirs ⇄ yours.

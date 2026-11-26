@@ -6,6 +6,7 @@
  */
 import { type ActiveCall, callControls, callRole, leaveCall, micLevel, mutedTalking, setCamera, setDeafened, setMuted, setScreen, stageAction } from '../call.ts';
 import type { CallControl, CallControlKind } from '../callmarks.ts';
+import { metaRev } from '../state.ts';
 import { Icon } from './icons.tsx';
 
 const ICON: Partial<Record<CallControlKind, (c: CallControl) => string>> = {
@@ -61,6 +62,7 @@ function run(call: ActiveCall, c: CallControl) {
  * audience as words. `only`: just these kinds, in the usual order. `track`: a prefix for each button's data-track.
  */
 export function CallControls({ call, only, track }: { call: ActiveCall; only?: readonly CallControlKind[]; track?: string }) {
+  metaRev.value; // the account's abilities and which identity is it change without `call` changing
   const list = callControls(call).filter((c) => !only || only.includes(c.kind));
   return (
     <>

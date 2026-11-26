@@ -1547,6 +1547,7 @@ function pickFrom(e: MouseEvent, byId: Map<string, P.MessageView>, stream: Strea
  * click opening it alone; or, back among a room's own messages, the room's name.
  */
 const ThreadHead = memo(function ThreadHead({ conv, onOpen }: { conv: P.ConversationView | undefined; onOpen: (convId: string) => void }) {
+  metaRev.value; // the thread's or room's name
   if (counting) rendered('ThreadHead');
   if (!conv) return <div class="stream-head" />;
   if (conv.shape !== 'thread')
@@ -1601,6 +1602,7 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   clearReply: () => void;
   disabledReason?: string | null;
 }) {
+  metaRev.value; // which accounts are connected, and what they can send
   const conv = db.conversations.get(targets.convId);
   const accs = (conv?.vantages ?? []).map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a);
   const sender = accs.find((a) => a.id === targets.accountId) ?? accs.find((a) => a.status === 'online') ?? accs[0];
@@ -2454,6 +2456,7 @@ const loadStream = () =>
   ));
 
 function StreamLazy({ c, onBack, focus }: { c: P.ConversationView; onBack?: () => void; focus?: string }) {
+  metaRev.value; // whether the channel has threads yet, for its switch
   const [m, setM] = useState(streamParts);
   useEffect(() => {
     if (!m) loadStream().then(setM, () => {});
@@ -2502,6 +2505,8 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
  * messages go through until another route is picked. The list under the name filters to one route without leaving.
  * `msg`: a message to open at, in the interleaved timeline when paging back reaches it, else in its route alone.
  */
+// redraws: it reads only these chats, requests and accounts, and directsOf gives a new `directs` when any of those
+// changes (model.ts placesMemo).
 function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView; directs: P.ConversationView[]; at?: P.ConversationView; onBack?: () => void; msg?: string }) {
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const unreadAt = useMemo(() => firstUnread(directs), [person.id]);

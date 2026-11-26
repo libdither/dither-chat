@@ -591,6 +591,7 @@ const FILTER_MENU = 'Show in the inbox';
  * a surprise. Mail is there with a mail account.
  */
 function InboxFilterButton({ filter }: { filter: InboxFilter }) {
+  mailRev.value; // Mail is a choice once a mail account is there
   const choices = INBOX_FILTERS.filter((f) => f.id !== 'mail' || db.mail.accounts.size > 0 || filter === 'mail');
   const on = INBOX_FILTERS.find((f) => f.id === filter)!;
   const open = (e: MouseEvent) => {
@@ -1059,6 +1060,7 @@ const ChannelHead = memo(function ChannelHead({ c, folded, active, depth, onOpen
  * conversation only when it is this one or a thread shown here, so opening another channel draws two rows, not the
  * list, and opening a thread draws that thread's row and the one left; a fold draws only its own channel.
  */
+// redraws: threadWords reads only the channel's own kind and network, and the store replaces `c` when they change.
 const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded, active, depth, onOpen, alsoIn, dots = true, unread = 0, badge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; more?: number; folded?: boolean; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; unread?: number; badge?: number }) {
   const words = folded === undefined ? null : threadWords(c);
   return (
@@ -1301,6 +1303,7 @@ function ShelfRow({ list, n, open }: { list: string; n: number; open: boolean })
 
 const spacesDrop = arrangeDrop(dropPlace);
 function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean }) {
+  rev.value; // its count changes with each message and read, not `e`
   const label = placeLabel(e.key);
   const folderId = e.kind === 'folder' ? e.folder.id : undefined;
   const props = dragProps({

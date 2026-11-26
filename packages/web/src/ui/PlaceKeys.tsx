@@ -9,7 +9,7 @@ import { POST_NETWORKS } from '@dither-chat/protocol';
 import { countKey } from '../clicklog.ts';
 import { calendarOn } from '../plans.ts';
 import { G_WAIT_MS, PLACES, readKey, type Place } from '../placekeys.ts';
-import { db, go, type Route } from '../state.ts';
+import { db, go, metaRev, type Route } from '../state.ts';
 
 /** Whether the Feed is offered: an account with posts (X, Mastodon, Reddit, Lemmy, Substack, Bluesky, LessWrong), or its notifications already held. */
 export const feedOn = () => [...db.accounts.values()].some((a) => POST_NETWORKS.includes(a.network)) || [...db.conversations.values()].some((c) => c.variant === 'feed');
@@ -79,6 +79,7 @@ export function listenPlaceKeys(win: Window): () => void {
 
 /** The listener on the app's window, and the card a G brings up. */
 export function PlaceKeys() {
+  metaRev.value; // whether the Feed is offered follows the accounts
   useEffect(() => listenPlaceKeys(window), []);
   if (!waiting.value) return null;
   return (
