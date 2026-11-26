@@ -87,7 +87,7 @@ const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE
  * SQLITE_IOERR_*), or no memory: the same event goes in once that passes, so it is held, never skipped. On most of
  * these SQLite may roll the whole transaction back by itself, so nothing after it in the batch is applied either.
  */
-export function heldFor(e: unknown): string | null {
+function heldFor(e: unknown): string | null {
   const code = (e as { code?: unknown } | null)?.code;
   if (typeof code !== 'string') return null;
   if (code === 'SQLITE_BUSY') return 'the database is locked';
