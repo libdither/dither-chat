@@ -1188,8 +1188,10 @@ CREATE TABLE IF NOT EXISTS attn_answer (
   answer          TEXT NOT NULL,             -- P.AttnAnswer
   source          TEXT NOT NULL,             -- P.AttnSource
   scope           TEXT,                      -- Louder / Quieter: 'person' | 'chat'; null: this kind of message
-  checkin_id      TEXT,
+  checkin_id      TEXT,                      -- the check-in (before the feed) or feed item it answers
   band            TEXT,                      -- the loudness band it had (shadow or live)
+  parts           TEXT,                      -- feed: JSON, the parts it was wrong about (the answer moves only those)
+  chance          REAL,                      -- feed: the chance its card was drawn with
   sounded         INTEGER NOT NULL DEFAULT 0, -- it sounded, as it was actually sent
   why_asked       INTEGER NOT NULL DEFAULT 0, -- the app was told to ask why
   reason          TEXT,                      -- P.WhyReason
@@ -1201,10 +1203,10 @@ CREATE TABLE IF NOT EXISTS attn_answer (
 );
 CREATE INDEX IF NOT EXISTS attn_answer_at ON attn_answer(at);
 CREATE INDEX IF NOT EXISTS attn_answer_conv ON attn_answer(conversation_id, at);
+CREATE INDEX IF NOT EXISTS attn_answer_author ON attn_answer(author, at);
 
--- Check-in questions (checkin.ts): up to three a day by your setting, waiting on the Notification calibration page
--- (at most QUEUE_CAP open, none older than EXPIRE_AFTER), half picked at random (with the chance each had, for the
--- scorecard's weighting) and half where the model is least sure.
+-- Check-in questions, before the calibration feed took their place (2026-11): kept for the scorecard's days and the
+-- answers that name them. Half were picked at random (with the chance each had) and half where the model was least sure.
 CREATE TABLE IF NOT EXISTS checkin (
   id          TEXT PRIMARY KEY,
   side        TEXT NOT NULL CHECK (side IN ('sounded', 'quiet', 'foryou')),
@@ -1224,11 +1226,41 @@ CREATE TABLE IF NOT EXISTS checkin (
 CREATE INDEX IF NOT EXISTS checkin_created ON checkin(created_at);
 CREATE INDEX IF NOT EXISTS checkin_message ON checkin(message_id);
 
--- Held for the next look (loudlearn.ts, DITHER_ATTENTION=on): one bundle when you next open the app, unlock the phone
--- (Android app) or at the times you set.
-CREATE TABLE IF NOT EXISTS next_look (
-  message_id      TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
-  conversation_id TEXT NOT NULL,
-  held_at         INTEGER NOT NULL,
-  quiet           INTEGER NOT NULL DEFAULT 0  -- held by quiet hours: it would have sounded
+-- The calibration feed (feed.ts, docs/notifications.md "The calibration feed"): each message that reached you, once
+-- what you did with it is known, scored and drawn as a card, a row or hidden as sure, with the chance it was drawn
+-- with (answers are weighted back by it). What you answered, the chances before and after, the parts you said it was
+-- wrong about, and when a surprising answer comes back once.
+CREATE TABLE IF NOT EXISTS cal_item (
+  id              TEXT PRIMARY KEY,
+  message_id      TEXT NOT NULL UNIQUE,
+  conversation_id TEXT,
+  author          TEXT,                      -- the person (else identity) who wrote it
+  kind            TEXT NOT NULL CHECK (kind IN ('card', 'row', 'sure')),
+  sure_shown      INTEGER NOT NULL DEFAULT 0, -- sure, but shown at random (one in twenty), as a row
+  chance          REAL NOT NULL,             -- the chance it was drawn as it was
+  score           REAL NOT NULL,             -- worth asking, when drawn
+  surprise        REAL NOT NULL,             -- bits
+  unsure          REAL NOT NULL,
+  p               TEXT NOT NULL,             -- JSON [sound, show, inbox]: the model's chances when drawn
+  u               TEXT NOT NULL,             -- JSON: how unsure each is
+  loud            REAL NOT NULL,             -- its loudness then
+  loud_base       REAL,                      -- its loudness worked out again just before your answer was learned
+  did             TEXT NOT NULL,             -- sound | show | inbox: what was done
+  you             TEXT,                      -- sound | show | inbox: what you did
+  you_what        TEXT,
+  held            INTEGER NOT NULL DEFAULT 0, -- a sound held back
+  answers         INTEGER NOT NULL DEFAULT 0, -- answers about its person or chat, when drawn
+  drawn_at        INTEGER NOT NULL,
+  message_ts      INTEGER NOT NULL,
+  answer          TEXT,                      -- sound | show | inbox
+  answer_id       TEXT,                      -- its attn_answer
+  answered_at     INTEGER,
+  before          TEXT,
+  after           TEXT,                      -- JSON: the chances once the answer was learned
+  parts           TEXT,                      -- JSON: the parts you said it was wrong about
+  returns_at      INTEGER,                   -- a surprising answer comes back once, then
+  settled         TEXT,                      -- keep | once | undo
+  skipped         INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS cal_item_drawn ON cal_item(drawn_at);
+CREATE INDEX IF NOT EXISTS cal_item_ts ON cal_item(message_ts);

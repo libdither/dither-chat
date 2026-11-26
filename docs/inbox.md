@@ -332,11 +332,12 @@ the list: [notifications.md](notifications.md)) counts too (`Attention.input`):
   [notifications.md](notifications.md#one-scale-loudness)) the importance is its loudness over 100 instead: how loud
   it is now, with a person owed a reply already in it. The learned order and its exploring stay as they are.
 
-**The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (next look and above)
+**The loudness edge.** A row whose latest message the page holds with a loudness of 30 or more (Show and above)
 has a thin bar on its left while it is unread, stronger the louder it was (`loudness.ts` `loudByConv`, `loudEdge`).
 
-**Notification calibration.** While questions about notifications wait, a quiet row under Requests and Notices
-counts them and opens their page ([notifications.md](notifications.md#check-ins)); nothing is asked in the list itself.
+**Notification calibration.** While cards about notifications wait, a quiet row under Requests and Notices counts
+them and opens their feed ([notifications.md](notifications.md#the-calibration-feed)); nothing is asked in the list
+itself.
 
 **Seen.** All three last until you read the conversation, or swipe its notification away on the phone: the app
 reports the swipe as `dismissed` ([activity.md](activity.md)), a dismissal at or after that message is read as
@@ -522,7 +523,7 @@ in the order on screen, a DM as its person, then the rest by the latest message.
 | `GET /api/attention/:conversationId` | everything about one score: the formula's parts, noise, relationship, reply rate, usual reply time; `learned`: the model's open and send chances and points, and the sampled points the inbox sorts by while exploring |
 | `GET /api/attention/needs-reply` | `?days=60`: how the "needs a reply" chances held up (`NeedsReplyCalibration`): by day, in bins, against the table's |
 | `GET /api/attention/report` | the weekly report of what attention cost (`AttentionReport`, [scorecard.md](scorecard.md#the-weekly-report)): sounds a day, stale pushes, checks with nothing new, people waiting on you, waits, breadth, at most one drifting person |
-| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
+| `GET /api/attention/model` | the learned order: its mode, when it last learned and from how many opens, whether a refit is due or under way (`due`, `refitting`), its prior, what it learned as changes to weights on named features, the examination curve (fitted, the guess, and how often the list was on screen down to each row), and exploring (`explore`) |
 | `GET /api/attention/waiting` | `{ waiting }`: whether scores are still to come out of what already happened (a conversation to send, to fold, or stale and waiting out its 5 s). It sends what changed first, so false also means nothing is left to go out; scripts/verify-response.ts waits for false after each click |
 | `POST /api/attention/rebuild` | `{ conversations?: string[] }`: fold these, or all, again from the start |
 | `POST /api/messages/:id/reply-mark` | `{ mark: 'none' \| 'needs' \| null, surface?, device? }` on a message from someone else: set, change or take back a mark (null) → `{ mark, marked }`, the messages it touched (other routes included) |

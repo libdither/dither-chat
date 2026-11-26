@@ -109,21 +109,26 @@ no budget: the counts are kept and shown as they are.
 
 ## The loudness scale
 
-From the check-ins ([notifications.md](notifications.md#check-ins)), counting only the half picked at random and
-weighting each answer by one over the chance it had of being asked (inverse propensity), so the rates hold for
-everything that sounded or stayed quiet, not just what was asked:
+From the calibration feed's cards ([notifications.md](notifications.md#the-calibration-feed)), and before
+2026-11-25 the check-ins' random half, weighting each answer by one over the chance it had of being drawn (inverse
+propensity), so the rates lean less towards what was worth asking. A card is drawn in proportion to how worth asking it
+is, so each has a chance well above nothing and the weights stay honest, but only over notifications worth asking
+about at all (those over 0.5): the rates say how the model does where it is unsure or surprised, not across every
+sound. A feed answer counts as the old ones did: Sound on one that sounded as worth it, Show or Inbox on it as could
+have waited, Sound on one that did not as wish I'd known sooner, Show or Inbox on it as fine.
 
 - `attn.worth`: of the sounds, the share worth it; `attn.worth_shadow`, the same for those the scale alone would have
   sounded.
 - `attn.could_wait`, `attn.shouldnt`: of the sounds, could have waited, shouldn't have reached you.
 - `attn.missed`: of the quiet ones, wish I'd known sooner.
-- `attn.asked`: questions shown that day (with how many were answered and skipped).
-- `foryou.worth`: of For you's asked cards, glad I saw this.
+- `attn.asked`: cards drawn that day (with how many were answered and skipped).
+- `foryou.worth`: of For you's asked cards, glad I saw this (until 2026-11-25, when For you stopped asking).
 
 And the scale beside the tiers, while it runs in shadow: `shadow.sounds` (messages loud enough to sound),
 `shadow.agree` (the share in the same band as the tier), and of the messages you answered within 30 minutes, the share
-the scale put at show or louder (`shadow.quick_show`) against the share the tiers made an alert or a Conversation
-(`shadow.quick_show_live`). `SCORE_VERSION` 4 scores the days kept again with these.
+the scale put at show or louder, 30 and up (`shadow.quick_show`) against the share the tiers made an alert or a Conversation
+(`shadow.quick_show_live`). `SCORE_VERSION` 5 scores the days kept again with Show from 30 (the next look's
+stretch, 30 to 55, now shows; it also agrees with a list row in `shadow.agree`).
 
 ## The weekly report
 

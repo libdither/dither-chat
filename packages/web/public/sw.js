@@ -371,8 +371,7 @@ async function show(d) {
   // A call ringing you (docs/calls.md "Ringing"): one per call, with Answer and Decline, kept up until it is handled.
   const ring = d.call && typeof d.call.id === 'string' ? d.call : null;
   if (ring) return showRing(d, ring);
-  // The next look's bundle (docs/notifications.md, "Next look") is one notification, each new one in the last's place.
-  const tag = cal ? `calendar:${cal.eventKey}` : d.nextLook ? 'next-look' : d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
+  const tag = cal ? `calendar:${cal.eventKey}` : d.conversationId ?? (d.requestId ? `request:${d.requestId}` : d.inbox ? 'dither-inbox' : 'dither');
   const look = await looks(d);
   // Its tier (docs/notifications.md): an alert, a Conversation or a list row. A hub from before the tiers says only
   // `level`: 'quiet' for what is silent, else an alert.

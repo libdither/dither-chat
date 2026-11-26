@@ -29,7 +29,7 @@ const parse = <T>(s: unknown): T | null => {
 const hasTable = (db: Database, name: string) => !!db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name);
 
 /** The notification that carried a message: its own, else a later one of its chat whose lines show it. */
-function carrier(db: Database, messageId: string, conversationId: string | null, ts: number): Row | null {
+export function carrier(db: Database, messageId: string, conversationId: string | null, ts: number): Row | null {
   const own = db.query('SELECT * FROM notification WHERE message_id = ? ORDER BY sent_at LIMIT 1').get(messageId) as Row | null;
   if (own || !conversationId) return own;
   // A line in a later push of the same chat (one notification per conversation): the first whose lines reach it.

@@ -10,7 +10,6 @@ import android.app.RemoteInput
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.LocusId
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
@@ -57,10 +56,12 @@ object Notifications {
      * and the scale, so the sounds set on them stay.
      */
     const val MESSAGES = "messages"
-    /** Shown now, silent (a Conversation under the tiers): in the shade and on the lock screen, without sound or vibration. */
-    const val QUIET = "messages-quiet"
-    /** The next look's bundle: what could wait, together, when you unlock the phone or open the app, or at set times. */
-    const val NEXT_LOOK = "next-look"
+    /**
+     * Show (a Conversation under the tiers, docs/notifications.md "One scale"): minimized, in the shade only, with no
+     * sound, vibration, status-bar icon or lock-screen card. A new id: Android never lowers a channel's importance once
+     * it is made, so the old "messages-quiet" (low) is deleted instead (OLD_CHANNELS).
+     */
+    const val QUIET = "messages-shade"
     /** The ranked list's rows: silent too, with a channel of their own so they can be turned off alone. */
     const val LIST = "list"
     const val CALLS = "calls"
@@ -70,6 +71,10 @@ object Notifications {
     const val UPLOADS = "uploads"
     const val REPLY = "reply"
     private const val ID = 1
+    /** Channels this app made once and no longer uses: the old silent channel, and the next look's bundle. */
+    private val OLD_CHANNELS = listOf("messages-quiet", "next-look")
+    /** Every Show conversation is in this group, under one summary whose tag this is too: several fold into one row. */
+    private const val SHADE_GROUP = "dither-shade"
     /** Every list row is in this group, under one summary whose tag this is too. */
     private const val LIST_GROUP = "dither-list"
     /** The list shows this many rows at most. */
@@ -99,8 +104,7 @@ object Notifications {
         // A channel that is there already keeps the sound and importance its owner set: only its name follows.
         nm(c).createNotificationChannels(listOf(
             NotificationChannel(MESSAGES, "Sound", NotificationManager.IMPORTANCE_HIGH),
-            NotificationChannel(QUIET, "Shown now (silent)", NotificationManager.IMPORTANCE_LOW),
-            NotificationChannel(NEXT_LOOK, "Next look (silent)", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
+            NotificationChannel(QUIET, "Show (silent, in the shade)", NotificationManager.IMPORTANCE_MIN),
             NotificationChannel(LIST, "Ranked list (silent)", NotificationManager.IMPORTANCE_LOW),
             NotificationChannel(CALLS, "Ongoing call", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
             NotificationChannel(PLAYING, "Playing", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
@@ -113,6 +117,7 @@ object Notifications {
             },
             NotificationChannel(UPLOADS, "History uploads", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         ))
+        for (id in OLD_CHANNELS) if (nm(c).getNotificationChannel(id) != null) nm(c).deleteNotificationChannel(id)
     }
 
     fun open(c: Context, hash: String?, code: Int): PendingIntent =
@@ -120,7 +125,6 @@ object Notifications {
 
     fun show(c: Context, d: JSONObject) {
         channels(c)
-        Unlock.listen(c)
         // Read on some device: its notification goes, quietly, and that is no outcome of the notification's own.
         // Only what was read: a newer message that came after the read stays (`upTo`, docs/notifications.md).
         d.optString("clear").ifEmpty { null }?.let { return clear(c, it, if (d.opt("upTo") is Number) d.getLong("upTo") else null) }
@@ -154,7 +158,7 @@ object Notifications {
         val marks = marksOf(d, tier)
         // Pictures come from the hub: off the thread the push arrived on.
         Thread {
-            val shown = if (tier == "digest" && d.optJSONObject("nextLook") == null) {
+            val shown = if (tier == "digest") {
                 listRow(app, conv ?: request?.let { "request:$it" } ?: "inbox", d, hash, nid, device, marks)
             } else if (notice != null) {
                 // Not a conversation: no shortcut, no Conversations section. One plain notification per group (tagged
@@ -164,10 +168,6 @@ object Notifications {
                 true
             } else if (conv != null) {
                 conversation(app, conv, d, tier, hash, replyTo, canReply, nid, device, marks)
-                true
-            } else if (d.optJSONObject("nextLook") != null) {
-                // One notification, each new bundle in the last one's place; a tap opens the inbox.
-                post(app, NEXT_LOOK, title, d.optString("body"), "/inbox$n", nid = nid, device = device, quiet = true, keep = true, channel = NEXT_LOOK)
                 true
             } else {
                 val tag = request?.let { "request:$it" } ?: if (inbox) DIGEST else "dither"
@@ -189,7 +189,7 @@ object Notifications {
         val locked = c.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked
         val screenOn = c.getSystemService(PowerManager::class.java)?.isInteractive
         val alert = tier == "push" && d.optBoolean("alert", true)
-        val list = tier == "digest" && d.optJSONObject("nextLook") == null
+        val list = tier == "digest"
         val surface = when {
             list -> "list_row"
             locked == true -> "lock"
@@ -400,18 +400,56 @@ object Notifications {
             .setAutoCancel(true)
             // A burst updates the text without sounding again.
             .setOnlyAlertOnce(!alert)
-            // A group of its own, which never gets a summary: Android shows such a notification as a row by itself,
-            // and does not gather it into a bundle of its own making as it does those without any group.
-            .setGroup(sid)
+            // One that sounds: a group of its own, which never gets a summary, so Android shows it as a row by itself and
+            // does not gather it into a bundle of its own making as it does those without any group. Show ones fold
+            // together under one summary (foldShade): the bundle is how they look, not when they come.
+            .setGroup(if (tier == "quiet") SHADE_GROUP else sid)
         // Not even a new one may sound: a notification in a group that leaves alerting to the group's summary is
-        // muted, and this group has none. setSilent (Android 12+) does exactly this; this also works on 10 and 11.
-        if (!alert) b.setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
+        // muted, and neither summary ever alerts. setSilent (Android 12+) does exactly this; this also works on 10 and 11.
+        if (!alert || tier == "quiet") b.setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
         b.addExtras(Bundle().apply {
             newest(d)?.let { putLong(TS, it) }
             putBoolean(KEEP, d.optBoolean("keep"))
         })
         actions(c, b, conv, nid, device, marks, canReply, replyTo, list = false)
         nm(c).notify(conv, ID, b.build())
+        foldShade(c, added = conv.takeIf { tier == "quiet" }, removed = conv.takeIf { tier != "quiet" }, title = chat.name)
+    }
+
+    /**
+     * The Show conversations' summary, which folds them into one row of the shade: how many chats, and their names.
+     * It never sounds. Cancelling a summary cancels its children, so it goes only once none is left. The system adds
+     * and removes notifications asynchronously, so the one just posted or cancelled is taken from `added` / `removed`.
+     */
+    private fun foldShade(c: Context, added: String? = null, removed: String? = null, title: CharSequence? = null) {
+        val titles = LinkedHashMap<String, CharSequence>()
+        for (s in nm(c).activeNotifications) {
+            val n = s.notification
+            if (s.id != ID || n.group != SHADE_GROUP || n.flags and Notification.FLAG_GROUP_SUMMARY != 0) continue
+            titles[s.tag ?: continue] = n.extras.getCharSequence(Notification.EXTRA_TITLE) ?: ""
+        }
+        added?.let { titles[it] = title ?: titles[it] ?: "" }
+        removed?.let { titles.remove(it) }
+        if (titles.isEmpty()) {
+            if (removed != null) nm(c).cancel(SHADE_GROUP, ID)
+            return
+        }
+        val inbox = Notification.InboxStyle()
+        titles.values.take(6).forEach { inbox.addLine(it) }
+        if (titles.size > 6) inbox.setSummaryText("+${titles.size - 6} more")
+        val b = Notification.Builder(c, QUIET)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(c.getColor(R.color.accent))
+            .setContentTitle(if (titles.size == 1) "1 chat" else "${titles.size} chats")
+            .setContentText(titles.values.joinToString(", "))
+            .setStyle(inbox)
+            .setContentIntent(open(c, "/inbox", SHADE_GROUP.hashCode()))
+            .setAutoCancel(true)
+            .setGroup(SHADE_GROUP)
+            .setGroupSummary(true)
+            .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
+            .setOnlyAlertOnce(true)
+        nm(c).notify(SHADE_GROUP, ID, b.build())
     }
 
     /**
@@ -664,7 +702,10 @@ object Notifications {
     fun clear(c: Context, chat: String, upTo: Long? = null) {
         val active = nm(c).activeNotifications
         val shown = active.firstOrNull { it.tag == chat && it.id == ID }?.notification
-        if (shown == null || (!shown.extras.getBoolean(KEEP) && !trim(c, chat, shown, upTo))) nm(c).cancel(chat, ID)
+        if (shown == null || (!shown.extras.getBoolean(KEEP) && !trim(c, chat, shown, upTo))) {
+            nm(c).cancel(chat, ID)
+            if (shown?.group == SHADE_GROUP) foldShade(c, removed = chat)
+        }
         val row = active.firstOrNull { it.tag == "list:$chat" && it.id == ID }?.notification
         if (row == null || !trimRow(c, "list:$chat", row, upTo)) unlist(c, chat)
     }
@@ -1023,32 +1064,5 @@ class VoteReceiver : BroadcastReceiver() {
                 done.finish()
             }
         }.start()
-    }
-}
-
-/**
- * The phone unlocked: a look (docs/notifications.md, "Next look"), so the hub sends what was held for it. Android
- * delivers this only to a receiver registered while the app runs, so it is registered when a push or the app starts
- * the process, and stays for as long as the process does. At most one a few minutes.
- */
-object Unlock {
-    private var listening = false
-    private var last = 0L
-    private const val EVERY_MS = 3 * 60_000L
-
-    @Synchronized
-    fun listen(c: Context) {
-        if (listening) return
-        listening = true
-        val app = c.applicationContext
-        val r = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, intent: Intent) {
-                val now = System.currentTimeMillis()
-                if (now - last < EVERY_MS) return
-                last = now
-                Thread { runCatching { Hub.request(app, "POST", "/api/loudness/look", JSONObject().put("why", "unlock")) } }.start()
-            }
-        }
-        runCatching { if (android.os.Build.VERSION.SDK_INT >= 33) app.registerReceiver(r, IntentFilter(Intent.ACTION_USER_PRESENT), Context.RECEIVER_NOT_EXPORTED) else app.registerReceiver(r, IntentFilter(Intent.ACTION_USER_PRESENT)) }.onFailure { listening = false }
     }
 }

@@ -1,4 +1,3 @@
-import { calibrationStats } from './checkinstats.ts';
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
@@ -685,11 +684,6 @@ export class HubServer {
     for (const s of this.extra) s.stop(true);
   }
 
-  /** Called when you look (the app opened, the phone unlocked): the next look's bundle goes (main.ts). */
-  onLook: ((why: 'open' | 'unlock') => void) | null = null;
-  /** How many messages wait for the next look. */
-  nextLookHeld: (() => number) | null = null;
-
   private async loudRoute(path: string, method: string, body: <T>() => Promise<T>): Promise<Response | null> {
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
     const L = this.opts.loud;
@@ -698,40 +692,47 @@ export class HubServer {
     const ok = (x: unknown = { ok: true }) => Response.json(x);
     let m: RegExpMatchArray | null;
     try {
-      if (path === '/api/loudness/state' && method === 'GET') return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      if (path === '/api/loudness/state' && method === 'GET') return ok(L.view());
       if (path === '/api/loudness/prefs' && method === 'PUT') {
         L.setPrefs(await body<Partial<P.AttentionPrefs>>());
-        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+        return ok(L.view());
       }
-      // The app opened (or came back) and asks how many questions wait, for the Notification calibration row: a look,
-      // so the next look's bundle is let go.
-      if (path === '/api/loudness/checkins/count' && method === 'GET') {
-        this.onLook?.('open');
-        L.checkins.fill(L.prefs());
-        return ok({ pending: L.checkins.pendingCount() });
+      // The inbox's Notification calibration row: how many cards and past answers wait on the feed.
+      if (path === '/api/loudness/feed/count' && method === 'GET') {
+        L.feed.fill(L.prefs());
+        return ok({ pending: L.feed.pendingCount() });
       }
-      // The Notification calibration page: what waits, each with where you came across it.
-      if (path === '/api/loudness/checkins' && method === 'GET') {
-        this.onLook?.('open');
-        return ok(L.checkins.due(L.prefs()));
-      }
-      if (path === '/api/loudness/calibration' && method === 'GET') return ok(calibrationStats(s.db));
-      if ((m = path.match(/^\/api\/loudness\/checkins\/([\w-]+)$/)) && method === 'POST') {
-        const b = await body<{ answer?: unknown; skip?: unknown }>();
-        const r = L.checkin(m[1], b.skip === true ? null : typeof b.answer === 'string' ? b.answer : null);
+      // The calibration feed (feed.ts): cards, rows, past answers back, and the sure ones apart.
+      if (path === '/api/loudness/feed' && method === 'GET') return ok(L.feed.view(L.prefs()));
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)$/)) && method === 'POST') {
+        const b = await body<{ answer?: unknown }>();
+        const r = L.feedAnswer(m[1], b.answer as P.CalAnswer);
         this.flush();
         return ok(r);
       }
-      if (path === '/api/loudness/ask-less' && method === 'POST') {
-        L.checkins.askLess();
-        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/parts$/)) && method === 'POST') {
+        const b = await body<{ parts?: unknown }>();
+        if (!Array.isArray(b.parts)) return bad('Say parts: a list');
+        return ok(L.feedParts(m[1], b.parts as P.CalPart[]));
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/settle$/)) && method === 'POST') {
+        const b = await body<{ settle?: unknown }>();
+        if (b.settle !== 'keep' && b.settle !== 'once' && b.settle !== 'undo') return bad('Say settle: keep, once or undo');
+        L.feedSettle(m[1], b.settle);
+        this.flush();
+        return ok();
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/skip$/)) && method === 'POST') {
+        const b = await body<{ skip?: unknown }>();
+        L.feed.skip(m[1], b.skip !== false);
+        return ok();
       }
       if (path === '/api/loudness/answers' && method === 'POST') {
         const b = await body<Partial<P.AttnAnswerBody>>();
         const answers: P.AttnAnswer[] = ['worth', 'could_wait', 'shouldnt', 'sooner', 'fine', 'louder', 'quieter'];
-        const sources: P.AttnSource[] = ['checkin', 'sheet', 'notification', 'followup'];
+        const sources: P.AttnSource[] = ['sheet', 'notification', 'followup'];
         if (typeof b.messageId !== 'string' || !answers.includes(b.answer as P.AttnAnswer)) return bad(`Say messageId and answer: one of ${answers.join(', ')}`);
-        const r = L.answer({ messageId: b.messageId, answer: b.answer as P.AttnAnswer, source: sources.includes(b.source as P.AttnSource) ? (b.source as P.AttnSource) : 'sheet', ...(b.scope === 'person' || b.scope === 'chat' ? { scope: b.scope } : {}), ...(typeof b.checkinId === 'string' ? { checkinId: b.checkinId } : {}) });
+        const r = L.answer({ messageId: b.messageId, answer: b.answer as P.AttnAnswer, source: sources.includes(b.source as P.AttnSource) ? (b.source as P.AttnSource) : 'sheet', ...(b.scope === 'person' || b.scope === 'chat' ? { scope: b.scope } : {}) });
         this.flush();
         return ok(r);
       }
@@ -740,17 +741,11 @@ export class HubServer {
         if (typeof b.answerId !== 'string') return bad('Say answerId');
         return ok(await L.why({ answerId: b.answerId, ...(typeof b.reason === 'string' ? { reason: b.reason as P.WhyReason } : {}), ...(typeof b.wait === 'string' ? { wait: b.wait as P.WhyWait } : {}), ...(typeof b.text === 'string' ? { text: b.text } : {}), ...(typeof b.until === 'number' ? { until: b.until } : {}) }));
       }
-      // The Android app saw the phone unlocked: a look.
-      if (path === '/api/loudness/look' && method === 'POST') {
-        const b = await body<{ why?: unknown }>();
-        this.onLook?.(b.why === 'unlock' ? 'unlock' : 'open');
-        return ok();
-      }
       if (path === '/api/loudness/forget' && method === 'POST') {
         const b = await body<{ key?: unknown; rejected?: unknown }>();
         if (typeof b.key !== 'string' || typeof b.rejected !== 'boolean') return bad('Say key and rejected: true or false');
         L.forget(b.key, b.rejected);
-        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+        return ok(L.view());
       }
       // The Why sheet: a message's loudness, whole, with its reasons.
       if ((m = path.match(/^\/api\/messages\/([\w-]+)\/loudness$/)) && method === 'GET') {
