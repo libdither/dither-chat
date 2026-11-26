@@ -81,6 +81,19 @@ interface CallSink {
 
 /** Another connection held the database past busy_timeout (SQLITE_BUSY). */
 const isBusy = (e: unknown) => (e as { code?: string } | null)?.code === 'SQLITE_BUSY';
+/**
+ * Why a write failed for a reason outside the event itself, or null for a fault of the event's own (a bad record).
+ * Locked (SQLITE_BUSY), the disk full (SQLITE_FULL), a file that could not be opened or written (SQLITE_CANTOPEN,
+ * SQLITE_IOERR_*), or no memory: the same event goes in once that passes, so it is held, never skipped. On most of
+ * these SQLite may roll the whole transaction back by itself, so nothing after it in the batch is applied either.
+ */
+export function heldFor(e: unknown): string | null {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code !== 'string') return null;
+  if (code === 'SQLITE_BUSY') return 'the database is locked';
+  if (code === 'SQLITE_FULL' || code === 'SQLITE_NOMEM' || code === 'SQLITE_CANTOPEN' || code.startsWith('SQLITE_IOERR')) return `the database could not be written (${(e as Error).message})`;
+  return null;
+}
 /** Adapter events applied in one transaction, and between turns of the event loop when a batch is long. */
 export const EVENTS_STEP = 32;
 /** How long held events wait before they are tried again, and how many times in a row. */
@@ -420,7 +433,7 @@ export class Supervisor {
     try {
       timedWrite(`adapter events (${events.length})`, () => this.store.db.transaction(() => {
         for (let i = 0; i < events.length; i++) {
-          let r: 'busy' | void;
+          let r: { held: string } | void;
           try {
             r = this.handle(accountId, events[i]);
           } catch (e) {
@@ -428,8 +441,9 @@ export class Supervisor {
             jobFailed('adapter event', e, { account: accountId, event: events[i].t });
             continue;
           }
-          if (r === 'busy') {
+          if (r) {
             busyAt = i;
+            why = r.held;
             return;
           }
         }
@@ -645,8 +659,8 @@ export class Supervisor {
     return n;
   }
 
-  /** One event. 'busy': the database was locked and nothing of it was applied. */
-  protected handle(accountId: string, ev: P.AdapterEvent): 'busy' | void {
+  /** One event. `held`: the database could not take it for now (locked, disk full) and nothing of it was applied. */
+  protected handle(accountId: string, ev: P.AdapterEvent): { held: string } | void {
     if (ev.t === 'reply') {
       const p = this.pending.get(ev.id);
       if (!p) return;
@@ -673,7 +687,8 @@ export class Supervisor {
       // One transaction: on a throw, nothing of the event is in.
       fresh = this.store.ingest(acc, ev);
     } catch (e) {
-      if (isBusy(e)) return 'busy';
+      const held = heldFor(e);
+      if (held) return { held };
       console.error(`[${accountId}] ingest ${ev.t} failed:`, e);
       jobFailed('ingest', e, { account: accountId, event: ev.t });
       return;
