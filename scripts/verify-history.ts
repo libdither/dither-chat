@@ -1,6 +1,6 @@
 /**
  * Message history (docs/history.md), end to end against a demo hub in headless Chromium: a deleted and a disappeared
- * message kept as collapsed lines that open; an edited message's earlier versions, the words its last edit put in
+ * message kept as one short grey line each, saying how long it stayed and when it went, that a click opens and folds; an edited message's earlier versions, the words its last edit put in
  * underlined and opening its edits, and its history as one list, latest at the bottom; a pinned message marked, a
  * reaction taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
  * role given; a person's Activity section with their status changing and their presence over time; hiding kept messages completely from Settings; a network turned off; and
@@ -29,15 +29,23 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
 const put = (body: unknown) => fetch(`${hub}/api/retention`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: hub }, body: JSON.stringify(body) }).then((r) => r.json()) as Promise<any>;
 
 const { page: p, close } = await launch();
-const lines = () => p.eval<string[]>(`[...document.querySelectorAll('.msg-gone .msg-gone-mark')].map((b) => b.textContent.trim())`);
+const lines = () => p.eval<string[]>(`[...document.querySelectorAll('.msg-gone')].map((g) => g.dataset.how + ' ' + g.querySelector('.msg-gone-mark').textContent.trim())`);
 try {
   await p.size(1280, 900);
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(500);
   const gone = await lines();
-  check(gone.some((l) => l.startsWith('Deleted')) && gone.some((l) => l.startsWith('Disappeared')), 'deleted and disappeared messages marked as such', gone);
-  check((await p.eval<string>(`[...document.querySelectorAll('.msg-gone')].map((g) => g.innerText).join('\\n')`)).includes('wrong chat lol, ignore this'), 'shown in full, what it said with it');
+  const mark = /^(deleted|disappeared) (\d+ (s|min|days?)|\d+h) later · (just now|\d+[mhd] ago)$/;
+  check(gone.some((l) => l.startsWith('deleted')) && gone.some((l) => l.startsWith('disappeared')) && gone.every((l) => mark.test(l)), 'deleted and disappeared messages each say how long they stayed and when they went', gone);
+  const wrong = `[...document.querySelectorAll('.msg-gone')].find((g) => g.innerText.includes('wrong chat lol, ignore this'))`;
+  check(await p.eval<boolean>(`!!(${wrong}) && (${wrong}).getBoundingClientRect().height < 30`), 'one short line, with what it said');
+  await p.eval(`(${wrong}).click()`);
+  await p.until(`(${wrong}).classList.contains('open') && getComputedStyle((${wrong}).querySelector('.msg-gone-text')).whiteSpace === 'normal'`, 3000);
+  check(true, 'a click opens it in place');
+  await p.eval(`(${wrong}).click()`);
+  await p.until(`!(${wrong}).classList.contains('open')`, 3000);
+  check(true, 'another click folds it again');
   if (shots) await p.shot(`${shots}/history-chat.png`);
 
   // Priya's message: what the edit put in is underlined in the chat.
@@ -172,7 +180,7 @@ try {
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(400);
   const after = await lines();
-  check(!after.some((l) => l.startsWith('Deleted')) && after.some((l) => l.startsWith('Disappeared')), 'the deleted one is now a plain “Message deleted”; the disappeared one stays', after);
+  check(!after.some((l) => l.startsWith('deleted')) && after.some((l) => l.startsWith('disappeared')), 'the deleted one is now a plain “Message deleted”; the disappeared one stays', after);
   check(!p.errors.length, 'no page errors', p.errors);
 } finally {
   await close();

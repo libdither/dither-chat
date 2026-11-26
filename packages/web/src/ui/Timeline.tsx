@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { clock, dayLabel, fullTime, gap, sameDay, since } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
@@ -508,21 +508,46 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
 }
 
 /**
- * A deleted or disappeared message the hub kept (docs/history.md): shown in full, as it was, with a quiet mark of
- * how and when it went.
+ * A deleted or disappeared message the hub kept (docs/history.md): one short line in grey, so the eye passes over it.
+ * The name, the words cut at the edge, and how long it stayed and when it went ("2 min later · 1h ago"). A click
+ * (a tap) opens it in place, files and all; another folds it. A mention of you keeps a faint amber.
  */
-function Gone({ m, layout }: { m: P.MessageView; layout: PictureLayout }) {
-  // Its "5m ago" moves on with the list, as it did when every change drew every message.
+function GoneLine({ m, name, picture, layout, highlight, menuProps }: { m: P.MessageView; name: string; picture: string | null | undefined; layout: PictureLayout; highlight: boolean; menuProps: Record<string, unknown> }) {
+  // Its "1h ago" moves on with the list.
   rev.value;
-  const how = m.gone!.how === 'disappeared' ? 'Disappeared' : 'Deleted';
+  const [open, setOpen] = useState(false);
+  const g = m.gone!;
+  const how = g.how === 'disappeared' ? 'Disappeared' : 'Deleted';
   const shown = { ...m, deleted: false };
+  const files = m.attachments.length;
+  const later = gap(g.at - m.ts);
+  const went = since(g.at);
+  const toggle = () => setOpen((o) => !o);
   return (
-    <div class="msg-gone open">
-      <Body m={shown} />
-      <Attachments m={shown} layout={layout} />
-      <span class="msg-gone-mark" title={`${how} ${fullTime(m.gone!.at)}`}>
-        <Icon name={m.gone!.how === 'disappeared' ? 'clock' : 'trash'} size={11} />
-        {how} <span class="msg-gone-when">· {ago(m.gone!.at)}</span>
+    <div
+      class={`msg msg-gone ${open ? 'open' : ''} ${m.mentionsSelf ? 'to-you' : ''} ${highlight ? 'flash' : ''}`}
+      id={`m-${m.id}`}
+      data-how={g.how}
+      role="button"
+      tabindex={0}
+      aria-expanded={open}
+      aria-label={open ? undefined : `${how} message from ${name}, ${later} after it was sent, ${went === 'now' ? 'just now' : `${went} ago`}`}
+      // Open, a link, a file or a spoiler does its own thing; anywhere else folds it again.
+      onClick={(e) => !(open && (e.target as HTMLElement).closest?.('a, button, [data-att], .spoiler, video, audio')) && toggle()}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle())}
+      {...menuProps}
+    >
+      <span class="msg-gone-face">
+        <Avatar id={m.authorId || m.id} name={name} url={picture} size={18} />
+      </span>
+      <span class="msg-gone-who">{name}</span>
+      <div class="msg-gone-text">
+        {m.body ? <Body m={shown} /> : <span class="msg-gone-files">{files === 1 ? 'a file' : `${files} files`}</span>}
+        {open && <Attachments m={shown} layout={layout} />}
+      </div>
+      <span class="msg-gone-mark" title={`${how} ${fullTime(g.at)}`}>
+        <Icon name={g.how === 'disappeared' ? 'clock' : 'trash'} size={10} />
+        {later} later · {went === 'now' ? 'just now' : `${went} ago`}
       </span>
     </div>
   );
@@ -778,6 +803,9 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       </div>
     );
 
+  // A deleted or disappeared message the hub kept: one short grey line the eye passes over (docs/history.md).
+  if (m.deleted && m.gone?.kept && !mail) return <GoneLine m={m} name={name} picture={picture} layout={pictures} highlight={highlight} menuProps={menuProps} />;
+
   // On a touch screen, the chip that switches a run of two or more pictures: on the run's first row (`chipRun`), or on
   // a message with several pictures of its own.
   const chipOn = chipRun ?? (!run && !absorbed && m.attachments.length > 1 ? [m] : undefined);
@@ -850,8 +878,6 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
         )}
         {mail ? (
           <MailWords m={m} quoteAbove={quoteAbove} />
-        ) : m.deleted && m.gone?.kept ? (
-          <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
             <RichHead m={m} />

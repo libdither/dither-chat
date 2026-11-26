@@ -2810,6 +2810,9 @@ class DemoAdapter implements InprocAdapter {
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-del` });
     msg(`${climb.nativeId}~h-gone`, S.alice, 60, 'door code for the gym is 4471');
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-gone`, reason: 'expired' });
+    // A mention of you, taken back two minutes after it was sent.
+    msg(`${climb.nativeId}~h-ping`, S.sam, 62, `<@${this.self.nativeId}> can you bring the spare rope tonight? mine is still drying from the weekend`, { mentionsSelf: true });
+    emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-ping` });
     // A pin, a reaction taken back, a role, a status, and your message read.
     msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
     emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
