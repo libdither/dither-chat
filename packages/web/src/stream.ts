@@ -6,8 +6,9 @@
  * Which channels have one, the view each opens on, and the switch between the stream and the thread cards (or the
  * channel's own messages) are here; the page is Timeline.tsx's StreamPane.
  */
+import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { db, pref, setPrefs } from './state.ts';
+import { db, pref, route, setPrefs } from './state.ts';
 
 /** The stream; the thread cards (ui/Threads.tsx ForumView); the channel's own messages alone. */
 export type ChannelView = 'stream' | 'cards' | 'own';
@@ -29,15 +30,40 @@ export function channelViews(c: P.ConversationView | null | undefined): ChannelV
   return posts(c) ? ['cards', 'stream'] : ['own', 'stream'];
 }
 
-/** The view a channel shows on this device: the one picked here, else the one it opens on. */
+/**
+ * A view shown for this visit only, not kept: the sidebar's "N more topics" opens the channel on its cards, and the
+ * next visit opens on the channel's own view again. It ends on leaving the channel for anything but one of its
+ * threads (back from a topic comes back to the cards), or on a pick in the switch.
+ */
+const viewOnce = signal<{ channel: string; view: ChannelView } | null>(null);
+
+/** Show a channel's cards for this visit, where it has them; false where it has none (a Discord text channel). */
+export function showCardsOnce(c: P.ConversationView): boolean {
+  if (!channelViews(c)?.includes('cards')) return false;
+  viewOnce.value = { channel: c.id, view: 'cards' };
+  return true;
+}
+
+effect(() => {
+  const r = route.value;
+  const here = 'conv' in r ? r.conv : undefined;
+  const once = viewOnce.peek();
+  if (!once || here === once.channel || (here && db.conversations.get(here)?.parentId === once.channel)) return;
+  viewOnce.value = null;
+});
+
+/** The view a channel shows on this device: one shown for this visit, else the one picked here, else the one it opens on. */
 export function channelView(c: P.ConversationView | null | undefined): ChannelView {
   const vs = channelViews(c);
   if (!vs) return c && posts(c) ? 'cards' : 'own';
+  const once = viewOnce.value;
+  if (once?.channel === c!.id && vs.includes(once.view)) return once.view;
   const v = pref('channelViews')?.[c!.id];
   return v && vs.includes(v) ? v : vs[0];
 }
 
 export function setChannelView(channelId: string, v: ChannelView) {
+  if (viewOnce.peek()?.channel === channelId) viewOnce.value = null;
   setPrefs({ channelViews: { ...pref('channelViews'), [channelId]: v } });
 }
 

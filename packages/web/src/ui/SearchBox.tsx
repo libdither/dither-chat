@@ -131,6 +131,8 @@ export function SearchBox({
   onDown,
   busy,
   onFocusBox,
+  onBlurBox,
+  hint,
   ...rest
 }: {
   value: string;
@@ -144,6 +146,10 @@ export function SearchBox({
   busy?: boolean;
   /** The box was focused (the phone's inbox box opens the search page from here). */
   onFocusBox?: () => void;
+  /** The box lost the cursor (the inbox's box lets go of what it handed to the search page). */
+  onBlurBox?: () => void;
+  /** A key that opens this box, shown at its end while it is empty: a computer's inbox box shows Ctrl K. */
+  hint?: string;
   class?: string;
   enterkeyhint?: string;
 }) {
@@ -191,7 +197,7 @@ export function SearchBox({
         enterkeyhint={(rest.enterkeyhint ?? 'search') as any}
         value={value}
         onFocus={(e) => (setOpen(true), track(e), onFocusBox?.())}
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onBlur={() => (setTimeout(() => setOpen(false), 120), onBlurBox?.())}
         onClick={track}
         onKeyUp={track}
         onInput={(e) => {
@@ -215,6 +221,7 @@ export function SearchBox({
           }
         }}
       />
+      {hint && !value && <kbd class="search-hint" aria-hidden="true">{hint}</kbd>}
       {busy && <span class="search-spin" aria-hidden="true" />}
       {open && items.length > 0 && (
         <div class="search-suggest" role="listbox" onMouseDown={(e) => e.preventDefault()}>

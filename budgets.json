@@ -253,7 +253,7 @@
     "js/src/ui/rich/Rich.tsx.gzip": { "measured": 3380, "budget": 3406 },
     "js/src/ui/Scorecard.tsx.bytes": { "measured": 5902, "budget": 6021 },
     "js/src/ui/Scorecard.tsx.gzip": { "measured": 2585, "budget": 2633 },
-    "js/src/ui/Search.tsx.bytes": { "measured": 18950, "budget": 19304, "reason": "Search as you type (docs/search.md \"In the app\"): search's page loads as a chunk of its own when first opened, with its tabs, filter chips, Jump to and top matches, so startup does not carry them" },
+    "js/src/ui/Search.tsx.bytes": { "measured": 19381, "budget": 19769, "reason": "Search: the page's box takes what the inbox's box was still sending when it takes the cursor, so fast typing loses no letter (docs/search.md \"In the app\"); before that, search as you type in a chunk of its own" },
     "js/src/ui/Search.tsx.gzip": { "measured": 7231, "budget": 7300, "reason": "Search: a chat picked after in: becomes the In chip, not its id in the box (docs/search.md \"In the app\"); before that, search as you type with its tabs, filter chips, Jump to and top matches" },
     "js/src/ui/SendLists.tsx.bytes": { "measured": 6877, "budget": 7004 },
     "js/src/ui/SendLists.tsx.gzip": { "measured": 2485, "budget": 2526 },
