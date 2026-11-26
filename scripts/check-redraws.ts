@@ -150,6 +150,16 @@ const label = (f: Fn) => {
   return `${n} (${relative(SRC, sf.fileName)}:${sf.getLineAndCharacterOfPosition(f.getStart()).line + 1})`;
 };
 
+/** The function of `const x = computed(() => …)`, for `x.value`. */
+function followed(e: ts.Expression): Fn | undefined {
+  const d = declOf(e);
+  if (!d || !ours(d.getSourceFile()) || !ts.isVariableDeclaration(d) || !d.initializer) return undefined;
+  const init = d.initializer;
+  if (!ts.isCallExpression(init) || init.expression.getText() !== 'computed') return undefined;
+  const f = init.arguments[0];
+  return f && isFn(f) ? f : undefined;
+}
+
 /**
  * What `fn` reads while it runs: its own body, the callbacks it runs at once (`.map`), the functions it calls, and the
  * components it draws that Preact never skips (they draw when it does).
@@ -197,6 +207,9 @@ function readsOf(fn: Fn): Reads {
       const e = n.expression;
       if (named(declOf(ts.isCallExpression(e) ? e.expression : e), ts.isCallExpression(e) ? VERSION_FNS : VERSIONS))
         out.version = true;
+      // A computed of ours that reads a change signal moves when it does, and only when its value changes with it.
+      const f = followed(e);
+      if (f && readsOf(f).version) out.version = true;
     }
     // <Child …/>: one Preact never skips draws when this one does, so what it reads is this one's to watch.
     if (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) {
