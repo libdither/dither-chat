@@ -134,7 +134,7 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
       <ViewSwitch c={c} shows="stream" />
       {c.pending && <LinkBanner c={c} />}
       <Timeline tkey={tkey} convIds={ids} onReply={onReply} firstUnreadTs={null} focus={focus} stream={opts} />
-      <TypingBar convIds={ids} lead={<TopicChip c={c} value={target} newName={newName} own={own} canNew={canNew} onPick={pick} onNew={setNewName} />} />
+      <TypingBar convIds={ids} tkey={tkey} lead={<TopicChip c={c} value={target} newName={newName} own={own} canNew={canNew} onPick={pick} onNew={setNewName} />} />
       <Composer
         targets={{ convId: newName === null && to ? to.id : c.id }}
         draft={`stream:${c.id}`}
