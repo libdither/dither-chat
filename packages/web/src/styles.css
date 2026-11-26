@@ -18997,6 +18997,7 @@ h1:hover > .pair-nick-edit,
   .pf-cols {
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     gap: 10px;
   }
   .pf-main,
