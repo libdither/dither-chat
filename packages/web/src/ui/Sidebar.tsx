@@ -1051,7 +1051,13 @@ const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded,
   );
 });
 
+/**
+ * A server's (or a section's) channels and their threads. It reads `rev` itself: its parent passes the same props each
+ * time, and Preact does not draw a child again whose props are all the same, so a count read on another device would
+ * otherwise stay as it was until something else moved.
+ */
 function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
+  rev.value;
   if (seen.has(spaceId)) return null;
   const nextSeen = new Set(seen).add(spaceId);
   const kids = spaceChildren(spaceId);
