@@ -8,7 +8,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { ago, bytes } from '../../format.ts';
 import { askFilesAccess, device, deviceFile, listFiles, asFile, type DeviceFile } from '../../device.ts';
 import { authorName, convTitle } from '../../model.ts';
-import { db, isSelfIdentity } from '../../state.ts';
+import { db, isSelfIdentity, metaRev } from '../../state.ts';
 import { Icon } from '../icons.tsx';
 import { useHubFiles, type HubFile } from './hubfiles.ts';
 import type { PanelCtx, Picks } from './Panel.tsx';
@@ -157,6 +157,7 @@ function Recent({ picks, open }: { picks: Picks; open: (path: string) => void })
 }
 
 function Chats({ query, picks, title = 'In your chats' }: { query: string; picks: Picks; title?: string }) {
+  metaRev.value; // who sent each file and its chat's name (HubRow)
   const hub = useHubFiles(query, ['file', 'audio', 'video']);
   return (
     <>

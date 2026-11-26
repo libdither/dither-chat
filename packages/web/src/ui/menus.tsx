@@ -18,7 +18,7 @@ import { desk, openLink } from '../desk.ts';
 import { asLabel, downloadsAs, hubMedia } from '../download.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
-import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, metaRev, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, openHistory } from '../messageHistory.ts';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
@@ -93,6 +93,7 @@ function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => vo
 }
 
 function MessageHead({ m }: { m: P.MessageView }) {
+  metaRev.value; // the author's name and picture, and the accounts' labels
   const self = isSelfIdentity(m.authorId);
   const name = self ? 'You' : authorName(m.authorId);
   const author = m.authorId ? db.identities.get(m.authorId) : null;

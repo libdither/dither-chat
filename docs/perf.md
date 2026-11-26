@@ -1459,6 +1459,11 @@ signal, because its props change whenever what it reads does, says why in a comm
 it. It reads a change signal at all, not the right one: one that reads `metaRev` and shows unread counts passes,
 though counts move only `rev`.
 
+A component in a long list that shows a little of what `metaRev` covers would draw on every rule, status or name that
+moves it. It reads a `computed` instead that follows the change signal and gives, as a string, only what it shows:
+a computed tells what reads it only when its value changes. AccountDots reads `dotsSource` (ui/bits.tsx), and a mail
+row's swipes `filingSource` (ui/mail/Filing.tsx). The check counts such a computed as a change signal.
+
 ## Every click (2026-11-20)
 
 `scripts/verify-response.ts` (CI's `response` job, in four parts) builds the app without minifying, so components

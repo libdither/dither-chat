@@ -16,7 +16,7 @@ import { communitiesOf, convTitle, faceOf, inboxKeyOf } from '../model.ts';
 import { PANE_DEFAULT, paneWidths } from '../panes.ts';
 import { useLayer } from '../phone.ts';
 import { callIn } from '../ringing.ts';
-import { db, go } from '../state.ts';
+import { db, go, metaRev } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
@@ -52,6 +52,7 @@ function ConvFace({ c, size }: { c: P.ConversationView; size: number }) {
 
 /** Whose face the bar shows: whoever talks (call.ts featuredSpeaker), else a few of the others (or the chat's picture) with the call's phase. */
 function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
+  metaRev.value; // names and pictures change without `call` changing
   const lead = featuredSpeaker.value;
   const talker = lead ? call.participants.find((p) => p.id === lead) : undefined;
   if (talker) return <CallAvatar {...callMarks(call, talker)} size={32} />;
@@ -78,6 +79,7 @@ function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
  * from where a thumb rests. `now` ticks once a second (CallDock).
  */
 export function CallBar({ call, now }: { call: ActiveCall; now: number }) {
+  metaRev.value; // the chat's name changes without `call` changing
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   const status = callStatus(call, now);

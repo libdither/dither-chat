@@ -13,7 +13,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { appsFor, claimSends, closeForm, commandsOf, forms, interactions, picksOf, run, sendForm, stateWords } from '../../apps.ts';
 import { renderMarkdown } from '../../markdown.ts';
 import { phone } from '../../phone.ts';
-import { api, db, toast } from '../../state.ts';
+import { api, db, metaRev, toast } from '../../state.ts';
 import { Modal } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
 import './apps.css';
@@ -500,6 +500,7 @@ function FormField({ f, conv, value, set }: { f: P.ModalFieldFact; conv: P.AppMo
 
 /** A form a bot opened: its fields as it gave them, checked as they are filled in, sent once. */
 function FormDialog({ f }: { f: P.AppModalView }) {
+  metaRev.value; // the channel's name
   const start = (): Record<string, P.ModalValue> => {
     const v: Record<string, P.ModalValue> = {};
     for (const x of f.fields) {

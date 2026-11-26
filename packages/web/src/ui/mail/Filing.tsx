@@ -10,6 +10,7 @@
  */
 import { isMailThread } from '../../mail/chats.ts';
 import type * as P from '@dither-chat/protocol';
+import { computed } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, rubber } from '../../gesture.ts';
 import { archivedInAll } from '../../mail/filing.ts';
@@ -24,6 +25,17 @@ import { countKey } from '../../clicklog.ts';
 import { noteRowRead } from '../../activity.ts';
 
 const acc = (t: P.MailThreadView) => db.mail.accounts.get(t.accountId);
+/**
+ * What a row's swipes are offered from, as a string: each mail account's writes and its mailboxes' roles. It follows
+ * `mailRev`, and the rows draw again only when it changes, not for every thread that moves (docs/perf.md "What
+ * redraws").
+ */
+const filingSource = computed(() => {
+  mailRev.value;
+  const accs = [...db.mail.accounts.values()].map((a) => `${a.id} ${a.level} ${a.writes ?? ''} ${a.ops?.unsupported ?? ''}`);
+  const boxes = [...db.mail.mailboxes.values()].map((b) => `${b.id} ${b.accountId} ${b.role ?? ''}`);
+  return `${accs.join('|')}#${boxes.join('|')}`;
+});
 const inInbox = (t: P.MailThreadView) => t.roles.includes('inbox');
 const only = (t: P.MailThreadView, role: string) => t.roles.length > 0 && t.roles.every((r) => r === role || r === 'sent' || r === 'drafts');
 /** Filing it there is offered: the mailbox is there, and the account makes that kind of move (archive, trash, junk). */
@@ -131,6 +143,7 @@ const liftClick = (e: MouseEvent) => {
 
 /** Around each thread row: swipes, selection, the menu. */
 export const FilingRow: RowWrapper = ({ thread: t, children }) => {
+  filingSource.value; // what the account may do (`acc`) changes without the thread changing
   const picking = selected.value.size > 0;
   const on = selected.value.has(t.id);
   const fg = useRef<HTMLDivElement>(null);

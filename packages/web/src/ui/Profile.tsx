@@ -16,7 +16,7 @@ import { composeTo } from '../mail/people.ts';
 import { senderLine } from '../mail/model.ts';
 import { countText, countTitle } from '../msgcount.ts';
 import { communitiesOf, convLabel, convTitle, directsOf, externalProfile, identityName, kindLabel, netName, bioText, plainBody, rootCommunity } from '../model.ts';
-import { api, db, go, isSelfIdentity, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, metaRev, openMessage, openProfile, rev, setRule, toast } from '../state.ts';
 import { messageSomeone } from './Palette.tsx';
 import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
@@ -158,6 +158,7 @@ function HandleChip({ i }: { i: P.IdentityView }) {
  * network, split. Its bio is in About, with the others'.
  */
 function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+  metaRev.value; // its name, which a nickname changes
   const [naming, setNaming] = useState(false);
   const [editing, setEditing] = useState(false);
   const menu = () => menuOf(() => setNaming(true));
@@ -241,6 +242,7 @@ const andList = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0
  * only that network's; and each row's networks at its end. Someone on two networks is one row, with both.
  */
 function FriendsCard({ said, of, mutual }: { said: P.PersonAboutView[]; of: (a: P.PersonAboutView) => string[] | undefined; mutual?: boolean }) {
+  metaRev.value; // who is you, and who is the same person
   const [only, setOnly] = useState<P.Network | null>(null);
   const byNet = new Map<P.Network, string[]>();
   for (const a of said) {
@@ -359,6 +361,7 @@ function useProfile(personId?: string, identityId?: string) {
 
 /** Your own bio on one network, and a way to change it, within the network's limit. */
 function OwnBio({ identity, about, account, label, onSaved }: { identity: P.IdentityView; about?: P.PersonAboutView; account: P.AccountView; label: boolean; onSaved: (a: P.PersonAboutView) => void }) {
+  metaRev.value; // the names its mentions show
   const st = (identity.network === 'signal' || identity.network === 'whatsapp') && identity.status;
   const bio = (st && (!about || st.at > about.fetchedAt) ? st.text : about?.bio) ?? '';
   const [draft, setDraft] = useState<string | null>(null);

@@ -7,9 +7,10 @@ import type * as P from '@dither-chat/protocol';
 import { MUTE_TIMERS, muteTimerLabel, NETWORK_META } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { canMuteOnNetwork, canUnmute, networkMuteLine } from '../nativemute.ts';
-import { api, db } from '../state.ts';
+import { api, db, metaRev } from '../state.ts';
 
 export function NetworkMute({ kind, id, network, accountIds, mute }: { kind: 'conversation' | 'space'; id: string; network: P.Network; accountIds: string[]; mute: P.NativeMute | null | undefined }) {
+  metaRev.value; // whether its accounts can mute
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!canMuteOnNetwork(accountIds.map((a) => db.accounts.get(a)))) return null;

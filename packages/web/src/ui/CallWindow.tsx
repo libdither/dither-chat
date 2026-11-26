@@ -14,7 +14,7 @@ import { type ActiveCall, callMedia, callName, featuredSpeaker, isCallSelf } fro
 import { BADGE_WORDS } from '../callmarks.ts';
 import { areaOf, autoChoices, type Bounds, clampDock, clampFloat, defaultFloat, fitHeight, layoutTiles, nearestCorner, PAD, type Arrange, type Corner, type LayoutTile, type MeMode, type Place, placeFor, type Rect } from '../callLayout.ts';
 import { phone } from '../phone.ts';
-import { db } from '../state.ts';
+import { db, metaRev } from '../state.ts';
 import { callOpen } from './CallBar.tsx';
 import { CallAvatar, CallBadgeMark, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
@@ -81,6 +81,7 @@ let dragEnded = false;
 type Drag = { kind: 'move' | 'resize' | 'split' | 'inset' };
 
 export function CallWindow({ call }: { call: ActiveCall }) {
+  metaRev.value; // names, and which identity is the account's own, change without `call` changing
   const media = callMedia.value;
   const tiles = tilesOf(call, media);
   const saved = winChoices.value;
@@ -597,6 +598,7 @@ interface TileProps {
  * A click or Enter shows it big and back; F puts the window full screen.
  */
 function Tile(props: TileProps) {
+  metaRev.value; // names and pictures change without `tile` changing
   const { call, tile, rect } = props;
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {

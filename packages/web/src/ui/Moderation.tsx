@@ -10,7 +10,7 @@ import { modVerb, spanLabel } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { identityName, netName } from '../model.ts';
-import { api, db, go, isSelfIdentity, openProfile, toast } from '../state.ts';
+import { api, db, go, isSelfIdentity, metaRev, openProfile, toast } from '../state.ts';
 import type { MenuEntry } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { Card } from './ProfileShell.tsx';
@@ -107,6 +107,7 @@ export function memberEntries(view: P.AboutView, member: Member, done: (v: P.Abo
 
 /** The banned (unban), those asking to join, ending a group, and what is left to the network's own app. */
 export function ModerationCard({ view, onDone }: { view: P.AboutView; onDone: (v: P.AboutView) => void }) {
+  metaRev.value; // the place's name and members' names
   const m = view.moderation!;
   const [bans, setBans] = useState<P.BansView | null>(null);
   const [loading, setLoading] = useState(false);
@@ -222,6 +223,7 @@ export function LabelCard({ view, onDone }: { view: P.AboutView; onDone: (v: P.A
  * device is a choice of its own, with its own confirm. Shown in place of the plain confirm.
  */
 export function LeaveCard({ kind, id, name, view, onCancel }: { kind: Kind; id: string; name: string; view: P.AboutView; onCancel: () => void }) {
+  metaRev.value; // who is you, and members' names
   const l = view.leaving!;
   const others = (view.members?.list ?? []).filter((m) => !isSelfIdentity(m.identityId));
   const [next, setNext] = useState<string>('');

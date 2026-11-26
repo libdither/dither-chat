@@ -7,7 +7,7 @@ import type * as P from '@dither-chat/protocol';
 import { threadNameProblem } from '@dither-chat/protocol';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { convTitle, resolvedTopic, threadsOf, threadWords } from '../model.ts';
-import { db } from '../state.ts';
+import { db, metaRev } from '../state.ts';
 import { Icon } from './icons.tsx';
 
 /** How many threads the card lists at once: a Zulip channel has a thousand; the name box finds the rest. */
@@ -26,6 +26,7 @@ export function TopicChip({ c, value, newName, own, canNew, onPick, onNew }: {
   onPick: (convId: string) => void;
   onNew: (name: string) => void;
 }) {
+  metaRev.value; // threads' names, and threads started elsewhere
   const words = threadWords(c);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');

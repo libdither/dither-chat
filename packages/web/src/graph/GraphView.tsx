@@ -8,7 +8,7 @@ import { signal, type Signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convTitle, netName } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, toast, type Route } from '../state.ts';
+import { api, db, go, metaRev, toast, type Route } from '../state.ts';
 import { Avatar, Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { HeadOrb } from '../ui/Offline.tsx';
@@ -141,6 +141,7 @@ function Sparse({ graph }: { graph: P.PeopleGraph }) {
 }
 
 function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) {
+  metaRev.value; // your accounts and groups' names; the graph itself comes with `graph`
   const ix = useMemo(() => index(graph), [graph]);
   const [f, setF] = useState<Filters>(loadFilters);
   // How much you have talked with each person, by month: asked for after the graph, as it takes the hub a while.

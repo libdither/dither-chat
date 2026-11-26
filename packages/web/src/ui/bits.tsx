@@ -1,4 +1,5 @@
 import { createPortal, type ComponentChildren } from 'preact';
+import { computed } from '@preact/signals';
 import { memo } from './memo.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
@@ -6,7 +7,7 @@ import { GLYPH } from '../brand.ts';
 import { linkParts } from '../links.ts';
 import { hueOf, initials } from '../format.ts';
 import { annotateAccounts, netColor, netName, usualAccount } from '../model.ts';
-import { db, go } from '../state.ts';
+import { db, go, metaRev } from '../state.ts';
 import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
@@ -54,7 +55,20 @@ export const dotsLook = (network: P.Network, accountIds: string[]) =>
     .map((a) => `${a.color} ${a.label}`)
     .join('|');
 
+/**
+ * What every AccountDots draws from, as a string: whether each network's chats are annotated, its usual account, and
+ * each account's colour and label. It follows `metaRev`, and the dots draw again only when it changes, not for every
+ * name, rule or status that moves `metaRev` (docs/perf.md "What redraws").
+ */
+const dotsSource = computed(() => {
+  metaRev.value;
+  const accs = [...db.accounts.values()];
+  const nets = [...new Set(accs.map((a) => a.network))].map((n) => `${n} ${annotateAccounts(n)} ${usualAccount(n)}`);
+  return `${nets.join('|')}#${accs.map((a) => `${a.id} ${a.color} ${a.label}`).join('|')}`;
+});
+
 export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
+  dotsSource.value;
   const accs = dotted(network, accountIds, force);
   if (!accs.length) return null;
   return (

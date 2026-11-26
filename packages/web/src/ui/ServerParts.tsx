@@ -10,7 +10,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
 import { convTitle, identityName } from '../model.ts';
 import { calledOff, gateReady, repeatText } from '../servers.ts';
-import { api, db, go, toast } from '../state.ts';
+import { api, db, go, metaRev, toast } from '../state.ts';
 import { EditableText, Locked } from './About.tsx';
 import { Icon } from './icons.tsx';
 import { Card } from './ProfileShell.tsx';
@@ -30,6 +30,7 @@ const STATUS_TEXT: Partial<Record<P.EventStatus, string>> = { active: 'Happening
 
 /** A server's scheduled events, soonest first, with Interested. */
 export function EventsCard({ spaceId, accountId, id, onCount }: { spaceId: string; accountId?: string | null; id?: string; onCount?: (n: number) => void }) {
+  metaRev.value; // channels' names (eventWhere)
   const [view, setView] = useState<P.SpaceEventsView | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

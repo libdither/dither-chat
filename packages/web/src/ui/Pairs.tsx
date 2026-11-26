@@ -18,7 +18,7 @@ import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, tagT
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, pref, setPrefs, timelineKey, timelines } from '../state.ts';
+import { api, db, go, isSelfIdentity, metaRev, pref, setPrefs, timelineKey, timelines } from '../state.ts';
 import { Avatar, Count, FromChips, Menu, NetBadge, NetGlyph } from './bits.tsx';
 import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
@@ -286,6 +286,7 @@ export function SendAsLead({ c, accounts, value, onPick }: { c: P.ConversationVi
  * box (ui/Typing.tsx): "To Kit on Signal".
  */
 export function PairLead({ person, directs, focus, onFocus }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
+  metaRev.value; // names on both sides
   const keys = directs.map(routeKey);
   const pairs = directs.map(pairOf);
   const cur = pairOf(focus);
@@ -409,6 +410,7 @@ interface ListRow {
  * route messages go to says "sending". `view`: 'all' or the route's conversation. `focus`: where messages go now.
  */
 export function PairDropdown({ person, directs, focus, view: v, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view: string; onPick: (view: string) => void }) {
+  metaRev.value; // names: counts and times come with a new `directs`
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   // The header clips what overflows it, so the card is placed on the page, under the line.

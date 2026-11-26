@@ -14,7 +14,7 @@ import { historyOf, type HistoryFocus } from '../messageHistory.ts';
 import { identityName, plainBody } from '../model.ts';
 import { phone, useLayer } from '../phone.ts';
 import { whenTitle } from '../reactions.ts';
-import { api, db, isSelfIdentity, rev } from '../state.ts';
+import { api, db, isSelfIdentity, metaRev, rev } from '../state.ts';
 import { wordDiff, type Part } from '../wordDiff.ts';
 import { Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -180,6 +180,7 @@ function Time({ at, seen, from }: { at: number; seen?: boolean; from?: number })
 }
 
 function Row({ it, glyph, m, face }: { it: HistoryItem; glyph: (key: string) => preact.JSX.Element; m: P.MessageView; face: number }) {
+  metaRev.value; // who did each thing, by name
   const [open, setOpen] = useState(false);
   switch (it.kind) {
     case 'sent':

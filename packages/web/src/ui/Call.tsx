@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { type ActiveCall, activeCall, callName, callStatus, canCall, canRing, featuredSpeaker, leaveCall, roomOnPage, startCall } from '../call.ts';
 import { roomCall } from './CallRoomLazy.tsx';
 import { callIn } from '../ringing.ts';
-import { db, pref, rev } from '../state.ts';
+import { db, metaRev, pref, rev } from '../state.ts';
 import { convTitle } from '../model.ts';
 import { CallControls } from './CallControls.tsx';
 import { Icon } from './icons.tsx';
@@ -109,6 +109,7 @@ export function CallDock({ bar }: { bar: boolean }) {
  * back. `hidden`: the call window carries the buttons (a phone), so the strip is not drawn; it keeps the call's state.
  */
 function Dock({ call, now, open, Panel, overBar, hidden }: { call: ActiveCall; now: number; open: boolean; Panel: PanelParts['CallPanel'] | null; overBar?: boolean; hidden?: boolean }) {
+  metaRev.value; // the chat's and people's names change without `call` changing
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   // Whoever talks, the featured one (the latest to start, call.ts featuredSpeaker) first.
