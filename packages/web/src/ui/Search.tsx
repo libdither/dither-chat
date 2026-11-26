@@ -4,7 +4,7 @@ import type { ComponentType } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { authorName, communitiesOf, convLabel, faceOf, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
-import { api, back, db, go, mailRev, openMessage, openProfile, rev } from '../state.ts';
+import { api, back, db, go, mailRev, openMessage, openProfile, rev, route } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -614,6 +614,15 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
   useEffect(() => {
     const el = box.current;
     if (!el) return;
+    // The inbox's box may have sent more keys since this drew (Sidebar.tsx): take the latest at once, before the next
+    // key lands here on top of an older draft.
+    const r = route.value;
+    if (r.view === 'search' && !r.conv && r.q !== sent.current) {
+      const latest = scopeOf(r.q) ? setSearchOp(r.q, 'in', null) : r.q;
+      sent.current = r.q;
+      el.value = latest;
+      setDraft(latest);
+    }
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
   }, [focusAsked]);
