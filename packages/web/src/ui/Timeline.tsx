@@ -1660,11 +1660,13 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   const textNow = useRef(text);
   textNow.current = text;
   const edit = editing.value?.conversationId === targets.convId ? editing.value : null;
-  // A half-written message waits for you in its own conversation.
+  // A half-written message waits for you in its own conversation. An edit of another one ends; an edit of this one
+  // stays: Edit on a page that is not the message's own (a person's page, a folder) opens the message's chat, and its
+  // box, new or moved there, takes the edit.
   useEffect(() => {
     const draft = localStorage.getItem(draftKey) ?? '';
     setText(draft);
-    editing.value = null;
+    if (editing.value?.conversationId !== targets.convId) editing.value = null;
     // Opening a chat puts you in its box, ready to type; not on a phone, where that throws up the keyboard.
     const el = ta.current;
     const busy = document.activeElement instanceof HTMLInputElement || (document.activeElement instanceof HTMLTextAreaElement && document.activeElement !== el);
@@ -1676,11 +1678,18 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
     }
     return composerDone;
   }, [draftKey]);
+  // The edit whose words the box holds. Those words are never sent as a new message: an edit that ends other than by
+  // Send or Esc (the box moved to another thread, the edit dropped) puts the draft back.
+  const editShown = useRef<string | null>(null);
   useEffect(() => {
     if (edit) {
       // An edit the hub refused comes back with what you wrote.
       setText(editDrafts.get(edit.id) ?? edit.body);
+      editShown.current = edit.id;
       ta.current?.focus();
+    } else if (editShown.current) {
+      editShown.current = null;
+      setText(localStorage.getItem(draftKey) ?? '');
     }
   }, [edit]);
   const type = (v: string) => {
@@ -2498,8 +2507,9 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   const unreadAt = useMemo(() => firstUnread(directs), [person.id]);
   useEffect(() => setReply(null), [person.id]);
   useEffect(() => void loadChat(person.id), [person.id]);
-  // Where a message goes: the route of the message you are replying to, else the route in use (Pairs.tsx).
-  const focus = (reply && directs.find((d) => d.id === reply.conversationId)) || focusedPair(person.id, directs, at?.id);
+  // Where a message goes: the route of the message you are editing or replying to, else the route in use (Pairs.tsx).
+  const ed = editing.value;
+  const focus = (ed && directs.find((d) => d.id === ed.conversationId)) || (reply && directs.find((d) => d.id === reply.conversationId)) || focusedPair(person.id, directs, at?.id);
   useEffect(() => void (!isMailPlace(focus.id) && reactionContext(focus.id)), [focus.id]);
   // Showing one route's history follows the route you send through, so switching it in the message box switches both.
   const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
