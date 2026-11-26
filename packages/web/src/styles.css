@@ -12895,20 +12895,96 @@ a.pf-link:hover {
 
 /* ------------------------------------------------------------------ message history (docs/history.md) */
 
-.msg-gone {
-  margin-top: 0;
+/* A kept deleted or disappeared message: one short line, well below the faintest text, that the eye passes over. Its
+   name, its words cut at the edge, and how long it stayed and when it went at the end. A click opens it in place. */
+.msg.msg-gone {
+  --gone: color-mix(in oklab, var(--text) 34%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--text) 22%, var(--bg-center));
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 16px 2px 0;
+  font-size: 12.5px;
+  color: var(--gone);
+  cursor: pointer;
+  min-width: 0;
 }
-/* A kept deleted or disappeared message: in full, with how and when it went in a quiet line under it. */
+/* A mention of you: the whole line in a faint amber, and a faint amber ground. */
+.msg.msg-gone.to-you {
+  --gone: color-mix(in oklab, var(--mention-text) 45%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--mention-text) 30%, var(--bg-center));
+  background: color-mix(in oklab, var(--mention-border) 6%, transparent);
+}
+.msg-gone-face {
+  flex: none;
+  align-self: center;
+  width: 56px;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 4px;
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+.msg-gone-who {
+  flex: none;
+  font-weight: 500;
+}
+.msg-gone-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.msg-gone:not(.open) .msg-gone-text {
+  pointer-events: none;
+}
+/* Folded, the words run on one line: what would be a block of its own flows inline. */
+.msg-gone:not(.open) .msg-gone-text :is(.msg-body, .msg-body *) {
+  display: inline;
+  white-space: nowrap;
+}
+.msg-gone .msg-gone-text .msg-body,
+.msg-gone .msg-gone-text .msg-body :is(a, code, .mention) {
+  color: inherit;
+  background: none;
+  font-size: inherit;
+}
+.msg-gone .msg-gone-text .mention {
+  box-shadow: inset 0 0 0 1px var(--gone-2);
+}
+.msg-gone .msg-gone-text :is(img.emoji, .jumbo img) {
+  height: 1.2em;
+  width: auto;
+  opacity: 0.5;
+}
+.msg-gone.open {
+  align-items: flex-start;
+}
+.msg-gone.open .msg-gone-face {
+  align-self: flex-start;
+}
+.msg-gone.open .msg-gone-text {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+.msg-gone.open .atts {
+  opacity: 0.5;
+}
 .msg-gone-mark {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 3px;
   font-size: 11px;
-  color: var(--text-faint);
+  white-space: nowrap;
+  color: var(--gone-2);
 }
-.msg-gone-when {
-  opacity: 0.8;
+.msg-gone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 button.msg-edited.link {
   font-size: 10px;
