@@ -1,6 +1,6 @@
 /**
- * Screenshots of a profile's Voice and Close to cards, and the graph's Why card and Voice together weight, on the demo (docs/profile.md "Voice",
- * "Close to"): start a hub with `bun run hub -- --demo --adversarial --data <temp dir> --port <port>`, then
+ * Screenshots of a profile's Voice card and In common's People (who they are tied to), and the graph's Why card and Voice
+ * together weight, on the demo (docs/profile.md "Voice", "People in common"): start a hub with `bun run hub -- --demo --adversarial --data <temp dir> --port <port>`, then
  *
  *   bun scripts/shots-voice.ts http://127.0.0.1:PORT /tmp/shots
  *
@@ -34,12 +34,12 @@ try {
     await p.size(w, h, mobile);
     await p.goto(`${hub}/#/${mara.personId ? `p/${mara.personId}` : `i/${mara.id}`}`);
     await p.until(`!!document.querySelector('.pf-voice-h')`, 20000);
-    await p.until(`[...document.querySelectorAll('.card, section')].some((e) => /Close to/.test(e.textContent))`, 20000).catch(() => {});
+    await p.until(`!!document.querySelector('.pf-common .pf-tie')`, 20000).catch(() => {});
     await Bun.sleep(500);
     await p.eval(`[...document.querySelectorAll('h2, h3')].find((e) => e.textContent.trim().startsWith('Voice'))?.scrollIntoView({ block: 'start' })`);
     await Bun.sleep(300);
     await p.shot(`${shots}/${name}-voice.png`);
-    await p.eval(`[...document.querySelectorAll('h2, h3')].find((e) => e.textContent.trim().startsWith('Close to'))?.scrollIntoView({ block: 'start' })`);
+    await p.eval(`document.querySelector('.pf-common')?.scrollIntoView({ block: 'start' })`);
     await Bun.sleep(300);
     await p.shot(`${shots}/${name}-close.png`);
   }

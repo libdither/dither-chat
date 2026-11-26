@@ -1,12 +1,13 @@
 /**
  * Profile pages (docs/profile.md), end to end against a demo hub in headless Chromium: the name at the top of a DM
  * opens the person's page; what the networks say about them (bio, status, pronouns, friend), servers in common with
- * their nickname and roles there, group chats, mutual friends and recent messages, each with a picture; the actions
+ * their nickname and roles there, group chats, the friends you share (In common's People) and recent messages (Between
+ * you), each with a picture; the actions
  * from their menu in the hero; your own page listing your friends once each, with your own bio editable on each
  * network whose adapter can change it (never Matrix, never someone else's); and the page on a phone.
  *
  * Mail (hub mail/people.ts): someone you wrote to by email is a person of their own, never merged by name; their page
- * has a Mail card that opens the thread (whose sender opens their page) and all mail with them, says who else has
+ * has their mail in Between you, which opens the thread (whose sender opens their page) and all mail with them, says who else has
  * their name, and asks nothing of a network; the merge search finds people by address; a merge carries the mail to
  * the merged person, and a split takes it back. On a desktop in the dark theme and a phone in the light one.
  *
@@ -56,7 +57,7 @@ const theme = async (name: string, hash: string) => {
 const typeInto = (sel: string, v: string) =>
   p.eval(`(() => { const t = document.querySelector(${JSON.stringify(sel)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(t, ${JSON.stringify(v)}); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 
-/** People by email: the Mail card, its links, the merge hint and search, and a merge that carries the mail. */
+/** People by email: their mail in Between you, its links, the merge hint and search, and a merge that carries the mail. */
 async function mailPeople() {
   // Mail syncs once the hub is up: its people come with it.
   let mail: any = null;
@@ -74,25 +75,26 @@ async function mailPeople() {
     await p.size(w, h, w < 500);
     await theme(name, page);
     await settled();
-    const card = await p.eval<string>(`document.querySelector('.pf-mail')?.innerText ?? ''`);
-    check(card.includes('Re: Lease renewal') && card.includes('All mail with Alice Chen'), `${tag}: their page has a Mail card with the thread and all mail with them`, card.split('\n'));
+    const card = await p.eval<string>(`document.querySelector('.pf-between-card')?.innerText ?? ''`);
+    check(card.includes('Re: Lease renewal') && card.includes('All mail') && (await p.eval<number>(`document.querySelectorAll('.pf-between-card .pf-mail-row').length`)) >= 2, `${tag}: their page has their mail in Between you, the threads and all mail with them`, card.split('\n'));
     const hint = await p.eval<string>(`[...document.querySelectorAll('.pf-hint')].map((e) => e.innerText).join(' | ')`);
     check(/Alice Chen on [^|]*Discord/.test(hint), `${tag}: the hint names the other Alice Chen and where she is`, hint);
     const quiet = await p.eval<{ banner: boolean; recent: boolean; stale: string }>(
-      `({ banner: !!document.querySelector('.pf-banner-note'), recent: [...document.querySelectorAll('.pf-card h3')].some((h) => h.textContent.startsWith('Recent messages')), stale: [...document.querySelectorAll('.pf-stale')].map((e) => e.innerText).join(' ') })`,
+      `({ banner: !!document.querySelector('.pf-banner-note'), recent: document.querySelectorAll('.pf-between-card .pf-msg:not(.pf-mail-row)').length + document.querySelectorAll('.pf-between-card .chip-btn').length, stale: [...document.querySelectorAll('.pf-stale')].map((e) => e.innerText).join(' ') })`,
     );
-    check(!quiet.banner && !quiet.recent && !quiet.stale, `${tag}: no chat banner, no empty Recent messages, nothing asked of a network`, quiet);
+    check(!quiet.banner && !quiet.recent && !quiet.stale, `${tag}: no chat banner, no messages or Messages chip beside the mail, nothing asked of a network`, quiet);
     const fit = await p.eval<{ sw: number; w: number }>(`({ sw: document.querySelector('.pf-scroll').scrollWidth, w: document.querySelector('.pf-scroll').clientWidth })`);
     check(fit.sw <= fit.w + 1, `${tag}: it fits the width`, fit);
     if (shots) await p.shot(`${shots}/profile-mail-${w < 500 ? 'phone' : 'desktop'}.png`);
   }
 
   // The thread opens as a chat of its own (docs/mail.md "Mail as chats"), and its sender's name opens theirs. The demo
-  // has two threads with her (the newest is hers alone); the lease one ends with Jo's message.
+  // has several threads with her; the lease one ends with Jo's message.
   await p.eval(`[...document.querySelectorAll('.pf-mail-row')].find((r) => r.innerText.includes('Re: Lease renewal'))?.setAttribute('data-pick', '')`);
   await click('.pf-mail-row[data-pick]');
   await p.until(`location.hash.startsWith('#/inbox/c/mth_') && !!document.querySelector('.mail-thread-head') && !!document.querySelector('.msg-author')`, 8000);
-  check((await text('.mail-thread-head .mail-subject')) === 'Re: Lease renewal', 'a Mail card row opens the thread', await text('.mail-thread-head .mail-subject'));
+  // The thread's head drops the "Re:" (docs/mail.md "Mail as chats").
+  check((await text('.mail-thread-head .mail-subject')).replace(/^Re: /, '') === 'Lease renewal', 'a mail row in Between you opens the thread', await text('.mail-thread-head .mail-subject'));
   await p.eval(`[...document.querySelectorAll('.msg-author')].at(-1).setAttribute('data-pick-author', '')`);
   await click('[data-pick-author]');
   await settled();
@@ -101,17 +103,18 @@ async function mailPeople() {
   await p.size(1360, 900);
   await p.goto(`${hub}/${page}`);
   await settled();
+  const threads = await p.eval<number>(`document.querySelectorAll('.pf-between-card .pf-mail-row').length`);
   await click('.pf-mail-all');
   await p.until(`!!document.querySelector('.mail-list .mail-row')`, 8000);
   const list = await p.eval<{ label: string; rows: number }>(`({ label: document.querySelector('.mail-list')?.getAttribute('aria-label') ?? '', rows: document.querySelectorAll('.mail-list .mail-row').length })`);
-  check(list.label === 'Mail with Alice Chen' && list.rows === 2 && decodeURIComponent(await p.eval<string>('location.hash')).includes(`w:${mail.personId}`), 'all mail with them lists their threads', list);
+  check(list.label === 'Mail with Alice Chen' && list.rows === threads && decodeURIComponent(await p.eval<string>('location.hash')).includes(`w:${mail.personId}`), 'all mail with them lists their threads', list);
 
   // On the other Alice's page: the hint says who, and merging carries the mail.
   await p.goto(`${hub}/#/p/${alice.id}`);
   await settled();
   const hint = await p.eval<string>(`[...document.querySelectorAll('.pf-hint')].map((e) => e.innerText).join(' | ')`);
   check(hint.includes('Alice Chen <alice.chen@example.org>'), 'the hint shows the address that may be her', hint);
-  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail')`)), 'before a merge her page has no mail');
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail-row')`)), 'before a merge her page has no mail');
   // The merge search finds people by address.
   await click('.pf-action[title="Merge another identity in"]');
   await p.until(`!!document.querySelector('.merge-box input')`, 3000);
@@ -123,9 +126,12 @@ async function mailPeople() {
   await typeInto('.merge-box input', 'alice.chen@');
   await p.until(`document.querySelectorAll('.merge-box .link-row').length === 1`, 4000).catch(() => {});
   await p.eval(`document.querySelector('.merge-box .link-row').click()`);
-  await p.until(`!!document.querySelector('.pf-mail')`, 8000).catch(() => {});
+  await p.until(`!!document.querySelector('.pf-between-card .chip-btn')`, 8000).catch(() => {});
+  // Her messages and her mail in one list: the Mail chip shows only the mail.
+  await p.eval(`[...document.querySelectorAll('.pf-between-card .chip-btn')].find((b) => b.textContent.startsWith('Mail'))?.click()`);
+  await Bun.sleep(150);
   const merged = await p.eval<{ mail: string; hash: string; accounts: string }>(
-    `({ mail: document.querySelector('.pf-mail')?.innerText ?? '', hash: location.hash, accounts: [...document.querySelectorAll('.pf-identity, .pf-acct')].map((e) => e.innerText).join(' | ') })`,
+    `({ mail: [...document.querySelectorAll('.pf-between-card .pf-mail-row')].map((e) => e.innerText).join(' | '), hash: location.hash, accounts: [...document.querySelectorAll('.pf-acct')].map((e) => e.innerText).join(' | ') })`,
   );
   check(merged.hash === `#/p/${alice.id}` && merged.mail.includes('Re: Lease renewal') && merged.accounts.includes('alice.chen@example.org'), 'merged in, her mail comes with her address', merged);
   if (shots) await p.shot(`${shots}/profile-mail-merged.png`);
@@ -133,8 +139,8 @@ async function mailPeople() {
   await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes('alice.chen@example.org')).querySelector('.pf-acct-edit-btn').click()`);
   await p.until(`[...document.querySelectorAll('.pf-acct-edit .btn')].some((b) => b.textContent.trim() === 'Split Into Its Own Person')`, 3000).catch(() => {});
   await p.eval(`[...document.querySelectorAll('.pf-acct-edit .btn')].find((b) => b.textContent.trim() === 'Split Into Its Own Person').click()`);
-  await p.until(`!document.querySelector('.pf-mail')`, 8000).catch(() => {});
-  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail')`)), 'split again, the mail goes back with the address');
+  await p.until(`!document.querySelector('.pf-mail-row')`, 8000).catch(() => {});
+  check(!(await p.eval<boolean>(`!!document.querySelector('.pf-mail-row')`)), 'split again, the mail goes back with the address');
 }
 
 try {
@@ -161,10 +167,11 @@ try {
   check(common.includes('libdither') && common.includes('as alice (testing)') && common.includes('Testers'), 'a server in common, with their nickname and role there', common.split('\n').slice(0, 6));
   const groupIcons = await p.eval<number>(`[...document.querySelectorAll('.pf-card .pf-row')].filter((r) => r.querySelector('.avatar')).length`);
   check(groupIcons >= 3, 'group chats and recent messages each have a picture', groupIcons);
-  const mutual = await card('Mutual friends');
-  check(['Ravi', 'Jordan', 'Theo'].every((n) => mutual.includes(n)) && mutual.includes('on Discord'), 'mutual friends, saying they are Discord’s', mutual.split('\n'));
+  const ties = await p.eval<{ name: string; title: string }[]>(`[...document.querySelectorAll('.pf-common .pf-tie')].map((r) => ({ name: r.querySelector('b').textContent, title: r.title }))`);
+  const friendsIn = ties.filter((t) => t.title.includes('friends on Discord')).map((t) => t.name);
+  check(['Ravi', 'Jordan', 'Theo'].every((n) => friendsIn.includes(n)) && common.includes('3 friends in common'), 'In common: the friends you share, saying they are Discord’s, among the people they talk with', ties);
   const recent = await p.eval<number>(`document.querySelectorAll('.pf-msg').length`);
-  check(recent > 3, 'recent messages', recent);
+  check(recent > 3 && (await card('Between you')).includes('Direct message'), 'recent messages, in Between you', recent);
   if (shots) await p.shot(`${shots}/profile-person.png`);
 
   // Their menu's actions live in the hero.
@@ -215,10 +222,10 @@ try {
   await p.until(`!document.querySelector('.pf-acct[data-chosen]') && document.querySelectorAll('.pf-acct[data-main]').length === 1`, 5000).catch(() => {});
   check(!(await p.eval<boolean>(`!!document.querySelector('.pf-acct[data-chosen]')`)) && (await text('.pf-acct-note')).includes('for now'), 'pressed again, the hub chooses her main account again, and the card says so', await text('.pf-acct-note'));
 
-  // A mutual friend's name opens theirs.
-  await click('.pf-person');
+  // A friend in common opens theirs.
+  await click('.pf-common .pf-tie');
   await settled();
-  check((await p.eval<string>('location.hash')).startsWith('#/p/') && !(await text('.pf-title h1')).startsWith('Alice'), 'a mutual friend opens their profile', await text('.pf-title h1'));
+  check((await p.eval<string>('location.hash')).startsWith('#/p/') && !(await text('.pf-title h1')).startsWith('Alice'), 'someone in common opens their profile', await text('.pf-title h1'));
 
   // Your own page: your friends, each person once.
   await p.goto(`${hub}/#/p/per_self`);
