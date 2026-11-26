@@ -3,11 +3,16 @@
  * stream's box sends to when you have not said (docs/threads.md "The channel stream").
  */
 import { expect, mock, test } from 'bun:test';
+import { signal, type Signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { db, stateMock } from './fixtures/state.ts';
 
-mock.module('../src/state.ts', stateMock);
-const { channelView, channelViews, chipDefault, headBefore, setChannelView, streamConvIds, viewLabel } = await import('../src/stream.ts');
+// The page's address, as a signal: a view shown for one visit ends when it moves away. One for the whole process: a
+// rerun of this file keeps the stream.ts it loaded first, which watches the first run's.
+const g = globalThis as { streamTestRoute?: Signal<{ view: string; conv?: string }> };
+const route = (g.streamTestRoute ??= signal({ view: 'inbox' }));
+mock.module('../src/state.ts', () => ({ ...stateMock(), route }));
+const { channelView, channelViews, chipDefault, headBefore, setChannelView, showCardsOnce, streamConvIds, viewLabel } = await import('../src/stream.ts');
 
 const conv = (id: string, extra: Partial<P.ConversationView>): P.ConversationView => ({ id, network: 'discord', shape: 'channel', variant: 'text', parentId: null, name: id, lastMessageAt: 0, ...extra }) as unknown as P.ConversationView;
 const msg = (conversationId: string) => ({ conversationId }) as P.MessageView;
@@ -74,4 +79,33 @@ test("the box's thread: the one picked, else the newest message's, else the late
   expect(chipDefault({ channel: 'r', own: true, messages: [msg('r1'), msg('r')], threads: [{ id: 'r1', lastMessageAt: 5 }] })).toBe('r');
   expect(chipDefault({ channel: 'r', own: true, picked: 'r', messages: [msg('r1')], threads: [{ id: 'r1', lastMessageAt: 5 }] })).toBe('r');
   expect(chipDefault({ channel: 'r', own: true, messages: [], threads: [] })).toBe('r');
+});
+
+test('"N more topics" shows the cards for this visit only: back from a topic keeps them, leaving or the switch ends them', () => {
+  const z2 = conv('z2', { network: 'zulip', variant: 'forum' });
+  const topic = conv('z2t', { network: 'zulip', shape: 'thread', parentId: 'z2' });
+  db.conversations.set(topic.id, topic);
+  try {
+    route.value = { view: 'conv', conv: 'z2' };
+    expect(channelView(z2)).toBe('stream');
+    expect(showCardsOnce(z2)).toBe(true);
+    expect(channelView(z2)).toBe('cards');
+    // A topic opened from the cards, and back.
+    route.value = { view: 'conv', conv: 'z2t' };
+    route.value = { view: 'conv', conv: 'z2' };
+    expect(channelView(z2)).toBe('cards');
+    // Somewhere else, then the channel again: its stream, and nothing was kept.
+    route.value = { view: 'inbox' };
+    route.value = { view: 'conv', conv: 'z2' };
+    expect(channelView(z2)).toBe('stream');
+    expect(showCardsOnce(z2)).toBe(true);
+    setChannelView('z2', 'stream');
+    expect(channelView(z2)).toBe('stream');
+    // A Discord text channel has no cards: the sidebar opens its thread browser instead.
+    expect(showCardsOnce(text)).toBe(false);
+    expect(channelView(text)).not.toBe('cards');
+  } finally {
+    db.conversations.delete(topic.id);
+    route.value = { view: 'inbox' };
+  }
 });

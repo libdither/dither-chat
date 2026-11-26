@@ -64,6 +64,7 @@ import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from '../pairpick.ts';
 import { chatKey } from '../chatroutes.ts';
 import { threadDialog } from '../threads.ts';
+import { showCardsOnce } from '../stream.ts';
 import { subThreads } from '../channelrows.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
@@ -967,10 +968,14 @@ const ThreadRow = memo(function ThreadRow({ t, active, depth, onOpen }: { t: P.C
   );
 });
 
-/** "N more": a forum's page is its thread cards; another channel has no such page, so its thread browser opens too. */
+/**
+ * "N more": the channel opens on its thread cards for this visit (stream.ts showCardsOnce), though it opens on its
+ * stream otherwise (a Zulip channel, a Matrix room); a channel with no cards (a Discord text channel) opens its thread
+ * browser too.
+ */
 function moreThreads(c: P.ConversationView, onOpen: (c: P.ConversationView) => void) {
   onOpen(c);
-  if (c.variant !== 'forum' && c.variant !== 'media') threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
+  if (!showCardsOnce(c)) threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
 }
 
 /** The pref('collapsed') key of a channel whose threads are folded away, on this device. */
