@@ -1,6 +1,6 @@
 /**
  * Search, end to end against a demo hub in headless Chromium: the box's operator suggestions (people with pictures),
- * picking one by keyboard, results as you type with no Enter, a misspelt search corrected, Jump to (Ctrl+K's matches),
+ * picking one by keyboard, results as you type with no Enter, a misspelt search corrected on Enter, Jump to (Ctrl+K's matches),
  * top matches above the newest, hits grouped by conversation with context, the tabs and filter chips, recent searches,
  * walking the results with the arrow keys, Ctrl+F in a chat, the inbox box narrowing the inbox in place (fast typing,
  * the newest messages, Full results, a phone), and more results loading on scroll.
@@ -96,14 +96,21 @@ try {
 
   await clearBox();
   await closeList();
-  await type('hackaton');
+  await type('hackath');
   await p.until(`document.querySelectorAll('.search-hit').length > 0`, 8000);
-  check((await hash()).includes('q=hackaton'), 'results come as you type, with no Enter', await hash());
-  check(!(await recentSearches()).includes('hackaton'), 'a search typed is not yet a recent one');
-  // Enter keeps it among the recent searches (so does opening a result).
+  check((await hash()).includes('q=hackath'), 'results come as you type, with no Enter', await hash());
+  check(!(await recentSearches()).includes('hackath'), 'a search typed is not yet a recent one');
+  await clearBox();
+  await closeList();
+  // As you type (typing=1) a word the index lacks finds nothing yet: corrections and inside words wait for Enter.
+  await type('hackaton');
+  await p.until(`location.hash.includes('q=hackaton') && !!document.querySelector('.search-results .empty')`, 8000).catch(() => {});
+  check((await p.eval<number>(`document.querySelectorAll('.search-hit').length`)) === 0 && !(await p.eval<boolean>(`!!document.querySelector('.search-note')`)), 'as you type, a misspelt word is not corrected yet');
+  // Enter searches in full, and keeps it among the recent searches (so does opening a result).
   await key('Enter');
+  await p.until(`!!document.querySelector('.search-note')`, 8000).catch(() => {});
   const note = await p.eval<string>(`document.querySelector('.search-note')?.textContent ?? ''`);
-  check(note.includes('hackathon'), 'a misspelt word is corrected, and says so', note);
+  check(note.includes('hackathon'), 'Enter corrects a misspelt word, and says so', note);
 
   await clearBox();
   await type('the');
