@@ -4,6 +4,8 @@
   z-index: 900;
   width: 328px;
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 10px 12px 8px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
@@ -13,6 +15,10 @@
   font-size: 12.5px;
   line-height: 1.35;
   opacity: 0;
+}
+/* Wider while the world map is open, so its cities are far enough apart to point at. */
+.their-day.zoning {
+  width: 470px;
 }
 .their-day.shown {
   opacity: 1;
@@ -159,19 +165,17 @@
   gap: 4px 14px;
   margin-top: 6px;
 }
-.td-zone {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
+.td-zone-btn {
+  display: inline-flex;
   align-items: center;
-  width: 100%;
-}
-.td-zone select {
-  max-width: 100%;
-  background: var(--bg-input);
-  color: var(--text);
+  gap: 5px;
+  padding: 2px 8px 2px 6px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 3px 6px;
+  border-radius: 999px;
+  color: var(--accent);
   font-size: 12px;
+}
+.td-zone-btn:hover,
+.td-zone-btn[aria-expanded='true'] {
+  background: var(--accent-soft);
 }

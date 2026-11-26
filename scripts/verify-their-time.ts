@@ -136,9 +136,16 @@ try {
   // A zone set by hand replaces the guess.
   await click(...(Object.values(await point(`[data-probe="mika"] .msg-their-time`)) as [number, number]));
   await p.until(`!!document.querySelector('.their-day.shown .td-bar')`, 15_000);
-  await p.eval(`[...document.querySelectorAll('.their-day .link-btn')].find((b) => b.textContent === 'Set time zone').click()`);
-  await p.until(`!!document.querySelector('.their-day .td-zone select')`, 5_000);
-  await p.eval(`(() => { const s = document.querySelector('.their-day .td-zone select'); s.value = 'Asia/Seoul'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await p.eval(`document.querySelector('.their-day .td-zone-btn').click()`);
+  await p.until(`!!document.querySelector('.their-day .zm-map .zm-city')`, 10_000);
+  await shot('zone-map');
+  // Found by a search, picked, then kept with Set.
+  await p.eval(`(() => { const s = document.querySelector('.their-day .zm-search'); s.value = 'seoul'; s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await p.until(`document.querySelector('.their-day .zm-matches button')?.textContent.includes('Asia/Seoul')`, 5_000);
+  await p.eval(`document.querySelector('.their-day .zm-matches button').click()`);
+  await p.until(`document.querySelector('.their-day .zm-set')?.textContent === 'Set to Seoul'`, 5_000);
+  await shot('zone-picked');
+  await p.eval(`document.querySelector('.their-day .zm-set').click()`);
   await p.until(`/set by you/.test(document.querySelector('.their-day')?.innerText ?? '')`, 10_000);
   await p.until(`!document.querySelector('[data-probe="mika"] .msg-their-time')?.textContent?.includes('~')`, 10_000);
   check(true, "a zone set by hand shows as hers, without the '~'");

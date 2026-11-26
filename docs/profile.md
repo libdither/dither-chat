@@ -446,6 +446,13 @@ the gaps of 3 to 20 hours that cover the middle of their quietest six hours, eac
 absolute deviation), said from 7 nights. `GET /api/people/:id/day?tz=<your zone>` answers a `TheirDayView`, in their
 zone where it is known, else in yours. `PUT /api/people/:id/zone {zone}` sets or clears (`null`) a zone by hand.
 
+**Setting their zone**: the card's globe button (Set time zone, or the zone's city once one is named) opens a world map
+(ui/ZoneMap.tsx, a chunk of its own, loaded when it opens) with each zone's main city as a dot and night shaded where
+it is night now. The cities on the same clock as the one pointed at or picked are lit, and before that those on the
+guessed clock, so a guess of UTC+9 shows where they might be. Pointing shows the nearest city with its time and UTC
+offset; a click or a tap picks it, a search finds any zone this browser knows, and Set keeps it. The map is Natural
+Earth's 1:110m land and tzdata's zone1970.tab, made into ui/zonemap-data.ts by scripts/gen-zone-map.ts.
+
 DITHER_DEMO_SCENARIO=clocks adds a Discord group of friends abroad with six weeks of messages and reactions on their own hours
 (Tokyo, Berlin, and one in Chicago), and a direct chat with each whose last message, yours, waits on them; with `zulip`
 too, the Zulip people's zones come from their profiles. scripts/verify-their-time.ts checks it all in a browser set to
