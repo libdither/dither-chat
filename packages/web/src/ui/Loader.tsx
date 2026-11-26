@@ -4,6 +4,7 @@
  * cell by cell in Bayer order. Used while the app starts (and by index.html before the script runs: the same sphere,
  * still), and for anything that takes longer than a moment.
  */
+import type { ReadonlySignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { bootFill, bootStatus, type FirstLoad } from '../firstload.ts';
 
@@ -136,7 +137,9 @@ function BootScreen({ status, slow, fill }: { status: string; slow?: string | nu
 }
 
 /** The start screen while the app connects and loads, with a hint once it has taken a while. */
-export function Boot({ connected, load }: { connected: boolean; load: FirstLoad }) {
+/** `load` is the signal, read here: its steps (and each chunk downloaded) redraw this screen, not App. */
+export function Boot({ connected, load: first }: { connected: boolean; load: ReadonlySignal<FirstLoad> }) {
+  const load = first.value;
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setSlow(true), 8000);

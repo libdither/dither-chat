@@ -431,7 +431,7 @@ export function App() {
 
   if (!loaded.value)
     return (
-      <Boot connected={connected.value} load={firstLoad.value} />
+      <Boot connected={connected.value} load={firstLoad} />
     );
 
   const full = r.view === 'directory' || r.view === 'calendar';
