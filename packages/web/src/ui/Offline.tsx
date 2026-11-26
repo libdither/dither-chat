@@ -9,11 +9,14 @@ import { createPortal } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { stamp } from '../format.ts';
 import { phone, useLayer } from '../phone.ts';
-import { connected, offlineSince, pending, tryNow, unreachable } from '../state.ts';
+import { connected, offlineSince, pending, restarting, tryNow, unreachable } from '../state.ts';
 import { DitherOrb } from './Loader.tsx';
 
-/** Out of reach for a while, or a send is waiting for the hub. Short drops are not shown (state.ts NOTICE_AFTER). */
-export const offline = computed(() => unreachable.value || (!connected.value && pending.value.some((x) => x.queued)));
+/**
+ * Out of reach for a while, or a send is waiting for the hub. Short drops are not shown (state.ts NOTICE_AFTER), nor a
+ * hub restarting that said so (state.ts `restarting`): the inbox's status line counts that down instead.
+ */
+export const offline = computed(() => !restarting.value && (unreachable.value || (!connected.value && pending.value.some((x) => x.queued))));
 
 /** The orb whose popover is open, which it hangs from. */
 const popFrom = signal<HTMLElement | null>(null);

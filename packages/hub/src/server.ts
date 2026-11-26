@@ -3,6 +3,7 @@ import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
+import { codeBuild } from './restarts.ts';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
@@ -424,6 +425,8 @@ export class HubServer {
   readonly auth: Auth;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
+  /** The hub's code (its git commit), read once: a page back after a restart says "updated" when it changed (restarts.ts). */
+  readonly build = codeBuild(resolve(import.meta.dir, '../../..'));
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
   private sends = new Map<string, { at: number; done: Promise<Response> }>();
   /** Messages a viewed receipt was asked for (once each; viewed). */
@@ -859,7 +862,7 @@ export class HubServer {
   }
 
   private syncContext() {
-    return { store: this.store, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot };
+    return { store: this.store, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot, build: this.build };
   }
 
   /**
@@ -883,6 +886,18 @@ export class HubServer {
     else ws.send(text);
     s.set({ bytes: text.length });
     s.end();
+  }
+
+  /**
+   * The stop has begun (main.ts): every page hears it before its socket closes, so it says "restarting" at once and
+   * tries every second (docs/sync.md "Restarts"). Not journaled: a page that was not there has nothing to catch up on.
+   */
+  sayStopping(usualMs: number | undefined) {
+    const frame = JSON.stringify([{ t: 'stopping', ...(usualMs !== undefined ? { usualMs } : {}) } satisfies P.ClientEvent]);
+    for (const c of this.clients)
+      try {
+        c.send(frame);
+      } catch {}
   }
 
   /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
@@ -1245,7 +1260,7 @@ export class HubServer {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
       const calendar = this.opts.calendar?.link();
-      return ok({ ...s.bootstrap({ edgesInConversations: url.searchParams.get('edges') === 'spaces' }), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap({ edgesInConversations: url.searchParams.get('edges') === 'spaces' }), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot, ...(this.build ? { build: this.build } : {}) } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
     if (path === '/api/plans' && method === 'GET') {

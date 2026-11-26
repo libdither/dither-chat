@@ -1493,9 +1493,10 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         ) : off && t?.loading ? (
           <div class="older-wait">Messages load when the hub is back</div>
         ) : (
-          t?.loading && (msgs.length ? <Loading inline label="Loading older messages" /> : <Loading label="Loading messages…" />)
+          // Older messages spin where they will come; an open says so in the line over the message box (OpenBar.tsx),
+          // over what this device kept or an empty pane, nothing spinning in the middle.
+          t?.loading && t.older && msgs.length > 0 && <Loading inline label="Loading older messages" />
         )}
-        {!t && <Loading label="Loading messages…" />}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
         {/* Not yet sent: after the newest, so only while the newest is drawn. */}
@@ -2337,7 +2338,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
         <MailThreadHeader c={c} onBack={onBack} />
         <BackBar place={c.id} />
         <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
-        <TypingBar convIds={[c.id]} lead={<MailThreadLead c={c} tkey={timelineKey('c', c.id)} />} />
+        <TypingBar convIds={[c.id]} tkey={timelineKey('c', c.id)} lead={<MailThreadLead c={c} tkey={timelineKey('c', c.id)} />} />
         <Composer targets={{ convId: c.id }} placeholder={threadPlaceholder(c.id)} reply={reply} clearReply={() => setReply(null)} disabledReason={composerBlocker(c)} post={mailPost(c.id, timelineKey('c', c.id), reply)} />
       </section>
     );
@@ -2390,6 +2391,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       )}
       <TypingBar
         convIds={[c.id]}
+        tkey={timelineKey('c', c.id)}
         lead={
           !held &&
           (accounts.length > 1 ? (
@@ -2541,6 +2543,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
       <TypingBar
         convIds={shown.map((d) => d.id)}
+        tkey={tkey}
         lead={
           !held && (
             <>

@@ -59,6 +59,8 @@ export async function compress(req: Request, res: Response | undefined): Promise
   const body = new Uint8Array(enc === 'zstd' ? await zstdAt(raw, 3) : Bun.gzipSync(raw, { level: 4 }));
   headers.set('content-encoding', enc);
   headers.delete('content-length');
+  // What the client reads once unpacked, which no other header says: a first start counts its bootstrap against it.
+  headers.set('x-uncompressed-length', String(raw.byteLength));
   return new Response(body, { status: res.status, headers });
 }
 

@@ -2,7 +2,8 @@ import { computed, effect, signal, type ReadonlySignal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, fileBatches, LIVE_PROTOCOL, LIVE_RESUME, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
-import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { cachedTimeline, copyAt, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { waitDone, waitOn } from './waits.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
@@ -458,6 +459,9 @@ export function applyEvents(events: P.ClientEvent[]) {
         void bootstrap();
         void loadPlans();
         break;
+      case 'stopping':
+        hubStopping(ev.usualMs);
+        break;
       // The calendar's plans and whether it answers (plans.ts): signals of their own, nothing in `db`.
       case 'plans':
       case 'calendar':
@@ -599,7 +603,11 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     if (t.glance && !o.glance) {
       t.glance = false;
       touchTimeline(key);
-      if (key.startsWith('c:')) void fromNetwork(t, key.slice(2)).then(() => timelineChanged(key));
+      if (key.startsWith('c:')) {
+        const id = key.slice(2);
+        waitOn(key, 'network', { network: db.conversations.get(id)?.network, steps: ['network'] });
+        void fromNetwork(t, id).then(() => (waitDone(key), timelineChanged(key)));
+      }
     }
     return;
   }
@@ -624,8 +632,20 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   }
   if (older && !t.hasMore) return;
   t.loading = true;
-  timelineChanged(key);
+  t.older = older;
   const [kind, id] = key.split(':') as ['c' | 'p' | 'k', string];
+  // Opening it, step by step, for the bar over the message box (waits.ts): the hub, then the network's latest where
+  // the hub asks it. A look ahead (a glance) or older messages are not an open.
+  const opening = !older && !o.glance;
+  // The network's step ends on its own, after this open's page is shown.
+  let behind = false;
+  let finished = false;
+  if (opening) {
+    const network = kind === 'c' && !isMailPlace(id) ? db.conversations.get(id)?.network : kind === 'k' && ownMessages(id) ? db.conversations.get(id)?.network : undefined;
+    const linked = ws?.readyState === WebSocket.OPEN;
+    waitOn(key, linked ? 'hub' : 'link', { network, steps: [...(linked ? [] : ['link' as const]), 'hub', ...(network ? ['network' as const] : [])] });
+  }
+  timelineChanged(key);
   // A person's timeline and a channel's stream span conversations, where two messages can share a time: their cursor
   // names the message too.
   const oldest = older ? t.messages[0] : undefined;
@@ -637,6 +657,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     // After the socket, so nothing can fall between this page and the live events.
     if (!older) {
       await socketOpen();
+      if (opening) waitOn(key, 'hub');
       t.fetchedAt = Date.now();
     }
     // A kept copy needs only what changed since it was kept: messages after its newest, and edits inside it.
@@ -680,22 +701,30 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
       // Large Discord servers push live messages only for channels open in the client, so what is stored may be
       // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing. A glance asks only
       // when nothing is stored.
+      if (opening) waitOn(key, 'network');
       if (got && t.glance) t.hasMore = true;
       else if (got) {
         t.hasMore = true;
-        void fromNetwork(t, id).then(() => timelineChanged(key));
+        behind = true;
+        void fromNetwork(t, id).then(() => (waitDone(key), timelineChanged(key)));
       } else t.hasMore = await fromNetwork(t, id);
     } else if (kind === 'k' && ownMessages(id)) {
       // A Matrix room's stream: the room's own latest from the network, as the room alone asks (above), then the
       // stream's own page again, so what is held stays one unbroken span of every thread. Its threads' come with the
       // room's sync; a Zulip channel has none of its own.
       if (older && !t.hasMore) t.hasMore = await streamFromNetwork(t, id, t.messages[0]);
-      else if (!older && !t.glance) void streamFromNetwork(t, id).then(() => timelineChanged(key));
+      else if (opening) {
+        waitOn(key, 'network');
+        behind = true;
+        void streamFromNetwork(t, id).then(() => (waitDone(key), timelineChanged(key)));
+      }
     }
+    finished = true;
   } catch (e) {
     // The page did not come (the network, most likely): the timeline keeps what it shows and catches up later.
     console.warn('timeline not loaded', key, e);
   } finally {
+    if (opening && !behind) waitDone(key, finished);
     t.loading = false;
     settle();
     timelineChanged(key);
@@ -1345,6 +1374,31 @@ function placeFailed(e: Error) {
 export const unreachable = signal(false);
 /** How long a drop goes unmentioned. */
 const NOTICE_AFTER = 4000;
+
+/**
+ * The hub said it is stopping (a `stopping` frame, docs/sync.md "Restarts"): since when, how long its restarts usually
+ * take, and the code it ran, to tell an update from the same code again once it is back. While set the app tries every
+ * second and does not call it offline; it gives up on that after RESTART_LONGEST, or four usual restarts if longer.
+ */
+export const restarting = signal<{ at: number; usualMs?: number; build?: string } | null>(null);
+const RESTART_LONGEST = 2 * 60_000;
+let restartTimer: ReturnType<typeof setTimeout> | undefined;
+/** When the next try to reach the hub goes, while it is out of reach and waiting to try; null otherwise. */
+export const nextTry = signal<number | null>(null);
+/** Since when a catch-up with the hub has been under way (the socket's, a sync, a bootstrap over a copy); null when none. */
+export const catchingUp = signal<number | null>(null);
+/**
+ * The last catch-up that finished: when, how long it took, how many new messages from others it brought, and what it
+ * followed: the hub restarting on new code or the same, or this app's new version (ui/InboxStatus.tsx).
+ */
+export const caught = signal<{ at: number; took: number; fresh: number; after?: 'updated' | 'restarted' | 'app' } | null>(null);
+/**
+ * A start with nothing kept on this device, as its bootstrap comes (ui/Loader.tsx): reaching the hub, its bytes coming
+ * (`total` as the hub says it, unpacked), then the page setting it up, which has no bytes to count.
+ */
+export const firstLoad = signal<{ phase: 'reach' | 'download' | 'draw'; got: number; total: number | null }>({ phase: 'reach', got: 0, total: null });
+/** pwa.ts's mark that the reload is a new version the user asked for: said once it is caught up. */
+const APP_UPDATED = 'dither-chat:app-updated';
 /**
  * The heartbeat: a ping this often while in sight. A socket that does not answer within PONG_WAIT is raced against a
  * new one (probe); with neither the pong nor the new socket within SPARE_WAIT more, it is dead.
@@ -1390,13 +1444,26 @@ export const beforeSync = { wait: Promise.resolve() as Promise<unknown> };
 
 /** Since when the hub has not answered; null while it does. A start counts as not answering yet. */
 let downSince: number | null = Date.now();
-/** The same, for the notice's "Since 6:01 PM" (ui/Offline.tsx). */
-export const offlineSince = () => downSince;
+/** This page has reached the hub; before that, what it shows is as old as the snapshot it started from. */
+let everConnected = false;
+/** The time the copy shown was current, for counting what a catch-up brought that is new. */
+let catchFrom = 0;
+/**
+ * Since when what is shown has not been current: the last answer, or, before this page ever reached the hub, when its
+ * snapshot was written (`saved`). For the notice's "Since 6:01 PM" (ui/Offline.tsx) and the inbox's status line.
+ */
+export function offlineFrom(): { at: number; saved: boolean } | null {
+  if (downSince === null) return null;
+  return everConnected || !copyAt ? { at: downSince, saved: false } : { at: copyAt, saved: true };
+}
+export const offlineSince = () => offlineFrom()?.at ?? null;
 
 /** `since`: when the hub was last known to answer. Going down again while down keeps the first time. */
 function setConnected(v: boolean, since = Date.now()) {
   connected.value = v;
   if (v) {
+    catchFrom = everConnected ? (downSince ?? Date.now()) : copyAt;
+    everConnected = true;
     downSince = null;
     clearTimeout(noticeTimer);
     noticeTimer = undefined;
@@ -1444,6 +1511,10 @@ function release() {
 function bootstrap() {
   return serial(async () => {
     held ??= [];
+    // Nothing shown yet: the start screen counts its bytes. Over a copy: a catch-up like any other.
+    const first = !loaded.value;
+    if (!first) catchingUp.value ??= Date.now();
+    let done = false;
     const since = openedAt;
     const gen = socketGen;
     const early = takeEarly(gen);
@@ -1452,7 +1523,8 @@ function bootstrap() {
     const asked = early?.at ?? Date.now();
     try {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
-      const { res, text } = await hubFetch(BOOTSTRAP_PATH, { quiet: SYNC_QUIET, signal: link.signal, early });
+      const onBytes = first ? (got: number, total: number | null) => void (firstLoad.value = { phase: 'download', got, total }) : undefined;
+      const { res, text } = await hubFetch(BOOTSTRAP_PATH, { quiet: SYNC_QUIET, signal: link.signal, early, onBytes });
       if (res.status === 401) {
         let body: { setup?: boolean } | null = null;
         try {
@@ -1461,14 +1533,21 @@ function bootstrap() {
         if (isLoginRefusal(res.status, body)) return void needLogin(!!body?.setup);
       }
       if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
+      if (first) {
+        // Setting it up holds the page for a while, with no bytes left to count: the start screen says so first.
+        firstLoad.value = { ...firstLoad.value, phase: 'draw' };
+        await painted();
+      }
       const b = JSON.parse(text) as P.Bootstrap;
       // What pushes laid over the snapshot goes in the same task as the hub's state comes (arrived.ts).
       dropArrived();
       applyBootstrap(b);
       synced = !!b.sync && ws?.readyState === WebSocket.OPEN && gen === socketGen;
-      sawHub(b.boot);
+      sawHub(b.boot, b.build);
       freshFromHub();
       doneArrived(asked);
+      if (!first) caughtUp(0);
+      done = true;
       performance.mark('dither:fresh');
       for (const h of freshHooks) h();
       loadInbox().catch(() => {});
@@ -1483,10 +1562,14 @@ function bootstrap() {
       if (e instanceof TypeError) noAnswer(gen);
       else toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
     } finally {
+      if (!done && !first) catchingUp.value = null;
       release();
     }
   });
 }
+
+/** After the next frame is drawn, or a moment where none will be (a page out of sight draws none). */
+const painted = () => new Promise<void>((r) => (requestAnimationFrame(() => setTimeout(r)), setTimeout(r, 100)));
 
 /**
  * The socket's catch-up (`Resume`), or null: not one (an older hub), or not come within `every` of the socket opening,
@@ -1504,11 +1587,13 @@ function resumeAnswer(sr: Resume, every: number): Promise<P.SyncResponse | null>
 function resync() {
   return serial(async () => {
     held ??= [];
+    catchingUp.value ??= Date.now();
     const gen = socketGen;
     // A cold start resumes from the snapshot, once it is read; IndexedDB can be slow, but not this slow.
     await Promise.race([beforeSync.wait, new Promise((r) => setTimeout(r, 1500))]);
     const pos = db.sync;
-    if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void (release(), bootstrap());
+    // Nothing to catch up from: a bootstrap, which says what it is itself (the start screen, or a catch-up over a copy).
+    if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void ((catchingUp.value = null), release(), bootstrap());
     // A snapshot after all (index.html could not tell): the bootstrap it asked for is not wanted.
     takeEarly(gen)?.abort();
     // Timelines in memory are as current as `db`, or as their kept copy when it has not been caught up yet. One
@@ -1542,6 +1627,7 @@ function resync() {
         if (t.full) tls.length = 0;
       }
     } catch (e) {
+      catchingUp.value = null;
       release();
       // No answer (or given up): the next socket tries again. An answer that is an error (a hub without /api/sync)
       // means starting over.
@@ -1570,9 +1656,10 @@ function resync() {
     applyEvents(r.events);
     if (r.inbox) mergeInbox(r.inbox);
     synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;
-    sawHub(r.boot);
+    sawHub(r.boot, r.build);
     freshFromHub();
     doneArrived(asked);
+    caughtUp(r.events.reduce((n, e) => n + (e.t === 'message' && e.message.ts > catchFrom && !e.message.editedTs && !isSelfIdentity(e.message.authorId) ? 1 : 0), 0));
     // Which way the catch-up came, for verify-sync.ts.
     performance.mark('dither:fresh', { detail: { socket: onSocket } });
     for (const h of freshHooks) h();
@@ -1591,11 +1678,48 @@ function noAnswer(gen: number) {
   if (gen === socketGen && ws) dropped();
 }
 
-function sawHub(boot: string | undefined) {
+function sawHub(boot: string | undefined, build?: string) {
+  if (build) hubBuild = build;
   if (!boot) return;
   // A new hub process may have brought a new build: pwa.ts checks.
   if (hubBoot && boot !== hubBoot) window.dispatchEvent(new Event('dither:reconnected'));
   hubBoot = boot;
+}
+
+/** The hub's code as last synced (restarts.ts codeBuild): a restart onto other code is an update. */
+let hubBuild: string | null = null;
+
+/** A catch-up finished, with `fresh` new messages from others: what the inbox's status line says for a moment. */
+function caughtUp(fresh: number) {
+  const now = Date.now();
+  const r = restarting.value;
+  let after: 'updated' | 'restarted' | 'app' | undefined;
+  if (r) {
+    after = r.build && hubBuild && r.build !== hubBuild ? 'updated' : 'restarted';
+    clearTimeout(restartTimer);
+    restarting.value = null;
+  } else if (appUpdated()) after = 'app';
+  caught.value = { at: now, took: now - (catchingUp.value ?? now), fresh, after };
+  catchingUp.value = null;
+}
+
+/** pwa.ts marked this reload as the new version the user tapped for: once. */
+function appUpdated(): boolean {
+  try {
+    if (!sessionStorage.getItem(APP_UPDATED)) return false;
+    sessionStorage.removeItem(APP_UPDATED);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The hub said it is stopping: a restart to wait for, not a link lost (docs/sync.md "Restarts"). */
+function hubStopping(usualMs?: number) {
+  restarting.value = { at: Date.now(), usualMs, build: hubBuild ?? undefined };
+  clearTimeout(restartTimer);
+  // Not back after a long while: no longer a restart to wait for, but the hub out of reach as at any other time.
+  restartTimer = setTimeout(() => (restarting.value = null), Math.max(RESTART_LONGEST, 4 * (usualMs ?? 0)));
 }
 
 let openedAt = 0;
@@ -1691,6 +1815,7 @@ function takeEarly(gen: number): { res: Promise<Response>; abort: () => void; at
 
 export function connect() {
   clearTimeout(retry);
+  nextTry.value = null;
   const e = early;
   early = null;
   // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
@@ -1806,8 +1931,12 @@ function dropped(since = Date.now()) {
   resume?.settle(null);
   endRace();
   setConnected(false, since);
+  catchingUp.value = null;
   clearTimeout(retry);
-  retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
+  // A hub restarting is back in seconds: every second, rather than backing off past the moment it answers.
+  const wait = restarting.value ? 1000 : (backoff = Math.min(backoff * 2, 15_000));
+  retry = setTimeout(connect, wait);
+  nextTry.value = Date.now() + wait;
 }
 
 /** A socket no longer the app's: closed without a word to its handlers. */

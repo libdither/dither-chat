@@ -20,6 +20,11 @@ interface HubCall {
   signal?: AbortSignal;
   /** Told when the answer begins: its status and headers are here. */
   onAnswer?: () => void;
+  /**
+   * Told as the answer comes: bytes read so far, unpacked, out of the total the hub said (`x-uncompressed-length`, or
+   * the length of one sent unpacked), null where it did not. Read a piece at a time only where `quiet` or `signal` is set.
+   */
+  onBytes?: (got: number, total: number | null) => void;
   /** Asked for already (index.html's bootstrap, state.ts): its answer is read here, and `abort` gives it up. */
   early?: { res: Promise<Response>; abort: () => void };
 }
@@ -59,11 +64,17 @@ export async function hubFetch(path: string, init: HubCall & { headers?: Record<
     poke();
     const reader = res.body.getReader();
     const dec = new TextDecoder();
+    const h = res.headers;
+    const total = init.onBytes ? Number(h.get('x-uncompressed-length') ?? (h.get('content-encoding') ? NaN : h.get('content-length'))) || null : null;
+    let got = 0;
+    init.onBytes?.(0, total);
     let text = '';
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       text += dec.decode(value, { stream: true });
+      got += value.byteLength;
+      init.onBytes?.(got, total);
       poke();
     }
     return { res, text: text + dec.decode() };
