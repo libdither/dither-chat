@@ -96,6 +96,7 @@ import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
 import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
+import { SearchCalledOff, SearchThread, type SearchAsk } from './search-thread.ts';
 import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
 
 
@@ -221,6 +222,8 @@ interface ServerOpts {
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
   /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
   matches?: { file: string | null; jevUrl: string | null };
+  /** The database file: /api/search runs on a thread of its own with a read-only connection to it (search-thread.ts). None: on this thread. */
+  searchFile?: string | null;
   /** New live messages the hub made itself (a followed post's replies, follows.ts): triage decides them (main.ts). */
   onFresh?: (messageIds: string[]) => void;
   /** How often a followed post is read again (follows.ts FOLLOW unless told otherwise). */
@@ -291,23 +294,7 @@ export const validAdapterName = (a: unknown): a is string => typeof a === 'strin
 
 // ------------------------------------------------------------------ media
 
-export function mediaSigner(secret: string) {
-  // The same link signs the same way every time: a bootstrap signs every picture it names (15k on the live hub), so
-  // they are remembered rather than worked out again.
-  const signed = new Map<string, string>();
-  return (raw: string | null | undefined, accountId: string | null | undefined): string | null => {
-    if (!raw) return null;
-    if (raw.startsWith('data:')) return raw;
-    const key = `${raw}|${accountId ?? ''}`;
-    const hit = signed.get(key);
-    if (hit) return hit;
-    const sig = createHmac('sha256', secret).update(key).digest('base64url').slice(0, 16);
-    const out = `/media/${sig}/${Buffer.from(raw).toString('base64url')}${accountId ? `?a=${accountId}` : ''}`;
-    if (signed.size >= 100_000) signed.clear();
-    signed.set(key, out);
-    return out;
-  };
-}
+export { mediaSigner } from './mediasign.ts';
 
 /**
  * A request answered with 5xx, as a line of traces/errors.ndjson: the route's template, the status, and the answer's
@@ -390,6 +377,8 @@ export class HubServer {
   readonly matches: SameMatches;
   /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
   readonly closeness: Closeness;
+  /** Message search on its own thread, when the hub was given its database file (search-thread.ts). */
+  readonly searchThread: SearchThread | null;
   readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
@@ -490,6 +479,7 @@ export class HubServer {
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
+    this.searchThread = opts.searchFile ? new SearchThread({ store, file: opts.searchFile, secret: opts.secret, log: (l) => console.log(l) }) : null;
     // Its timer starts in start() with the others: a hub built and never started (a test's) runs nothing after its
     // store closes.
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
@@ -551,6 +541,7 @@ export class HubServer {
 
   start() {
     this.self.start();
+    this.searchThread?.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
       (req: Request, server: Server<WsData>) => {
@@ -685,6 +676,7 @@ export class HubServer {
     this.packer?.stop();
     this.imports.stop();
     this.matches.stop();
+    this.searchThread?.stop();
     this.collector.stop();
     // The last frame carries presence held for coalescing too, so the journal a clean stop closes has it.
     this.flush(true);
@@ -1448,7 +1440,18 @@ export class HubServer {
       const v = m[2] && method === 'POST' ? await this.netsearch.more(m[1]) : this.netsearch.view(m[1]);
       return v ? ok(v) : bad('that search is over; search again', 404);
     }
-    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
+    if (path === '/api/search') {
+      // typing=1: asked as you type, so without the slow fallbacks (docs/search.md, "How a search runs").
+      const ask: SearchAsk = { q: url.searchParams.get('q') ?? '', limit: Math.min(num('limit') ?? 40, 100), cursor: url.searchParams.get('cursor'), context: num('context') ?? 0, typing: url.searchParams.get('typing') === '1' };
+      if (!this.searchThread) return ok(s.search(ask.q, ask.limit, ask.cursor, ask.context, { typing: ask.typing }));
+      try {
+        // A newer search as you type from the same session takes the place of one still queued.
+        return ok(await this.searchThread.search(ask, { key: cookieOf(req) ?? bearerOf(req) ?? '', signal: req.signal }));
+      } catch (e) {
+        if (e instanceof SearchCalledOff) return bad(e.message, 409);
+        throw e;
+      }
+    }
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
       const page = s.messageContext(m[1], Math.min(num('around') ?? 30, 100));

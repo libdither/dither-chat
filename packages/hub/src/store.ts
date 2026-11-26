@@ -58,6 +58,12 @@ export interface AccountRow {
 
 type MediaSigner = (raw: string | null | undefined, accountId: string | null | undefined) => string | null;
 
+/** How a search is asked (Store.search): `typing`, as you type, skips the slow fallbacks; `people: false`, no people. */
+export interface SearchOptions {
+  typing?: boolean;
+  people?: boolean;
+}
+
 /** Objects touched since the last flush; the server turns these into ClientEvents. */
 class Dirty {
   accounts = new Set<string>();
@@ -310,9 +316,26 @@ export class Store {
   /** How long each step of opening the database took (startup.ts). */
   readonly opening: [string, number][];
 
-  constructor(path: string, readonly media: MediaSigner) {
+  /**
+   * A reader (`reader: true`): a read-only connection for search's own thread (search-worker.ts), opened on a database
+   * the hub has opened and migrated already. It writes nothing, so it takes none of the steps below; only what search
+   * reads works on it, and it asks for what it holds in memory again before each search (beforeRead).
+   */
+  readonly reader: boolean;
+
+  constructor(path: string, readonly media: MediaSigner, opts: { reader?: boolean } = {}) {
     const timer = stepTimer();
     this.opening = timer.out;
+    this.reader = !!opts.reader;
+    if (this.reader) {
+      this.db = new Database(path, { readonly: true, strict: true });
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
+      // Never used on a reader: both write as they start.
+      this.journal = null!;
+      this.presenceNow = null!;
+      this.beforeRead();
+      return;
+    }
     this.db = new Database(path, { create: true, strict: true });
     // Another process opening this database (a backup's VACUUM INTO, the sqlite3 shell) can hold a lock for a moment,
     // most often while it opens or closes. Without a wait every write in that moment fails (SQLITE_BUSY): 26 on the
@@ -807,6 +830,16 @@ export class Store {
     }
     for (const i of this.dirty.identities) if (!this.db.query('SELECT 1 FROM identity WHERE id = ?').get(i)) this.dirty.identities.delete(i);
     this.dirty.removed.push({ t: 'account.removed', id });
+  }
+
+  /**
+   * A reader's memory of the database, read again: the hub's thread may have changed it since (your accounts, what is
+   * kept, the time index filled in). The people list follows from what peopleChanged hands it.
+   */
+  beforeRead() {
+    this.refreshSelf();
+    this.retentionCache = null;
+    if (!this.searchTimeReady) this.searchTimeReady = !!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get();
   }
 
   private refreshSelf() {
@@ -3668,7 +3701,7 @@ export class Store {
    */
   private peopleList(): Map<string, { r: Row; hay: string }> {
     if (!this.people) whole(this.loadPeopleSteps());
-    const dirty = (this.db.query('SELECT id FROM people_dirty').all() as Row[]).map((r) => r.id as string);
+    const dirty = this.takePeopleDirty();
     if (dirty.length) {
       const one = this.db.query(`${Store.PEOPLE_SQL} WHERE i.id = ?`);
       for (const id of dirty) {
@@ -3676,15 +3709,54 @@ export class Store {
         if (r) this.people!.set(id, this.peopleEntry(r));
         else this.people!.delete(id);
       }
-      this.db.query('DELETE FROM people_dirty WHERE id IN (SELECT value FROM json_each(?))').run(JSON.stringify(dirty));
     }
     return this.people!;
   }
 
-  /** People search's list, 2000 identities to a slice. Run once after start (main.ts), so no search waits for it. */
+  /**
+   * Identities written since people search last looked. On the hub, people_dirty's rows, taken out; on a reader, which
+   * cannot write, what the hub handed it (peopleChanged).
+   */
+  private takePeopleDirty(): string[] {
+    if (this.reader) {
+      const ids = [...this.peopleHanded];
+      this.peopleHanded.clear();
+      return ids;
+    }
+    const dirty = (this.db.query('SELECT id FROM people_dirty').all() as Row[]).map((r) => r.id as string);
+    if (!dirty.length) return dirty;
+    this.db.query('DELETE FROM people_dirty WHERE id IN (SELECT value FROM json_each(?))').run(JSON.stringify(dirty));
+    if (this.peopleForReader) for (const id of dirty) this.peopleForReader.add(id);
+    return dirty;
+  }
+  /** Identities people search's thread has yet to hear of (peopleChanges); null until it first asks. */
+  private peopleForReader: Set<string> | null = null;
+  /** On a reader: identities the hub said were written, for the next search to read again. */
+  private peopleHanded = new Set<string>();
+
+  /**
+   * For search's thread (search-thread.ts): every identity written since it last asked, so its own people list reads
+   * them again. Taken out of people_dirty here, where the hub writes, so no write falls between a read and a delete.
+   */
+  peopleChanges(): string[] {
+    this.peopleForReader ??= new Set();
+    if (this.people) this.peopleList();
+    else this.takePeopleDirty();
+    const out = [...this.peopleForReader];
+    this.peopleForReader.clear();
+    return out;
+  }
+
+  /** On a reader: identities the hub wrote since (peopleChanges there). */
+  peopleChanged(ids: string[]) {
+    for (const id of ids) this.peopleHanded.add(id);
+  }
+
+  /** People search's list, 2000 identities to a slice. Run as search's thread starts (search-thread.ts), so no search waits for it. */
   *loadPeopleSteps(): Generator<number, void> {
     if (this.people) return;
-    this.db.exec('DELETE FROM people_dirty');
+    // Everything is read fresh: what was noted before is in the list already.
+    this.takePeopleDirty();
     const list = new Map<string, { r: Row; hay: string }>();
     const page = this.db.query(`${Store.PEOPLE_SQL} WHERE i.rowid > ? ORDER BY i.rowid LIMIT 2000`.replace('SELECT i.*', 'SELECT i.rowid AS rid, i.*'));
     for (let after = 0; ; ) {
@@ -3780,18 +3852,20 @@ export class Store {
 
   /**
    * Messages matching what was typed (docs/search.md). Nothing found as typed: inside words, then with misspelt words
-   * corrected. `context`: that many messages before and after each hit.
+   * corrected. `context`: that many messages before and after each hit. `typing`: asked as you type, so neither
+   * fallback (on a big hub they read every message, seconds for a word nothing has); Enter asks without it.
+   * `people: false` leaves out the people the words find.
    */
-  search(input: string, limit = 50, cursor: string | null = null, context = 0): P.SearchPage {
-    let page = this.searchOnce(input, limit, cursor);
-    const fixed = !page.hits.length && !cursor ? this.spellFix(input) : null;
-    const alt = fixed ? this.searchOnce(fixed, limit, null) : null;
+  search(input: string, limit = 50, cursor: string | null = null, context = 0, opts: SearchOptions = {}): P.SearchPage {
+    let page = this.searchOnce(input, limit, cursor, opts);
+    const fixed = !page.hits.length && !cursor && !opts.typing ? this.spellFix(input) : null;
+    const alt = fixed ? this.searchOnce(fixed, limit, null, opts) : null;
     if (alt?.hits.length) page = { ...alt, corrected: fixed!, people: page.people, identities: [...alt.identities, ...page.identities] };
     if (context > 0) this.surround(page, Math.min(context, 3));
     return page;
   }
 
-  private searchOnce(input: string, limit: number, cursor: string | null): P.SearchPage {
+  private searchOnce(input: string, limit: number, cursor: string | null, opts: SearchOptions): P.SearchPage {
     const q = parseSearch(input);
     const is = new Set(q.is);
     // Kept deleted and disappeared messages only when asked for, with adversarial features shown, and not when they are set to stay out of sight.
@@ -3842,6 +3916,8 @@ export class Store {
 
     // Tokens miss the middle of a word, and unspaced CJK text is one long token, so a hit in FTS is no proof there are no others.
     let substring = !!fts && (!!cursor?.endsWith(':s') || texts.some((t) => CJK.test(t)));
+    // Nothing in the index: inside words instead, but not as you type.
+    const fallBack = (n: number) => !n && !cursor && !opts.typing;
     const without = q.not.map(() => `m.body NOT LIKE ? ESCAPE '\\'`);
     const withoutArgs = q.not.map((t) => `%${likeEscape(t)}%`);
 
@@ -3855,13 +3931,13 @@ export class Store {
            WHERE search_time MATCH ? ${at !== null ? `AND s.rowid ${q.oldest ? '>' : '<'} ?` : ''} AND ${where.join(' AND ')} ORDER BY s.rowid ${dir} LIMIT ?`,
         )
         .all(fts, ...(at !== null ? [at] : []), ...args, take) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
-      substring = !rows.length && !cursor;
+      substring = fallBack(rows.length);
     } else if (fts && q.relevance && !substring) {
       // Best match: the newest matches ranked by how well, how lately and how close (rankMatches).
       rows = this.rankMatches(this.matchPool(fts, where, args, 2000), q)
         .slice(offset, offset + take)
         .map(({ r, why }) => ({ ...r, why, snip: markSnippet(r.body, texts) }));
-      substring = !rows.length && !cursor;
+      substring = fallBack(rows.length);
     } else if (fts && !substring) {
       rows = this.db
         .query(
@@ -3870,7 +3946,7 @@ export class Store {
         )
         .all(fts, ...args, take, offset) as Row[];
       // Better slow than empty.
-      substring = !rows.length && !cursor;
+      substring = fallBack(rows.length);
     } else if (!fts && (q.not.length || filtered)) {
       rows = (this.db.query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...where, ...without].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, ...withoutArgs, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, []) }));
     }
@@ -3889,7 +3965,7 @@ export class Store {
     const snips = new Map(page.map((r) => [r.id, r.snip as string]));
     const last = page[page.length - 1];
     const needle = [...q.phrases, ...q.terms].join(' ').trim();
-    const people = needle.length >= 2 ? this.findPeople(needle) : [];
+    const people = needle.length >= 2 && opts.people !== false ? this.findPeople(needle) : [];
     const whys = new Map(page.filter((r) => r.why).map((r) => [r.id, r.why as string]));
     // With no sort and more than a screen's worth: the best few above the newest.
     let top: P.SearchHit[] = [];

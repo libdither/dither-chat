@@ -581,7 +581,11 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
   const sent = useRef(q);
   const absorb = (p: P.SearchPage) => p.identities.forEach((i) => db.identities.set(i.id, i));
   const asked = TAB_HAS[tab] ? setSearchOp(q, 'has', TAB_HAS[tab]!) : q;
-  const ask = (query: string, cursor?: string) => api<P.SearchPage>(`/api/search?q=${encodeURIComponent(query)}&context=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+  // typing: sent as you type, so the hub skips the slow fallbacks (inside words, corrections) that Enter asks for.
+  const ask = (query: string, cursor?: string, typing = false) => api<P.SearchPage>(`/api/search?q=${encodeURIComponent(query)}&context=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${typing ? '&typing=1' : ''}`);
+  // The query the pause after the last key sent, and a count of Enters that ask again for what typing left empty.
+  const typedQ = useRef<string | null>(null);
+  const [entered, setEntered] = useState(0);
   useEffect(() => {
     if (q !== sent.current) (sent.current = q, setDraft(typed));
   }, [q]);
@@ -607,7 +611,7 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
   useEffect(() => {
     const next = full(draft);
     if (next === q) return;
-    pending.current = setTimeout(() => set(next), TYPE_PAUSE_MS);
+    pending.current = setTimeout(() => ((typedQ.current = next), set(next)), TYPE_PAUSE_MS);
     return () => clearTimeout(pending.current);
   }, [draft, scope?.id]);
   const focusAsked = focusSearch.value;
@@ -636,18 +640,22 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
     let live = true;
     setLoading(true);
     // What was found for the last query stays, dimmed, until this one's answer replaces it.
-    ask(asked)
+    ask(asked, undefined, typedQ.current === q)
       .then((p) => {
         if (!live) return;
         absorb(p);
         setPage(p);
         setHits(p.hits);
       })
+      // One a newer search replaced (the hub calls off a queued one as you type) is no longer wanted.
+      .catch((e) => {
+        if (live) throw e;
+      })
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
-  }, [asked]);
+  }, [asked, entered]);
   const [moreBusy, setMoreBusy] = useState(false);
   const asking = useRef<string | null>(null);
   const current = useRef(asked);
@@ -705,7 +713,11 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
           submit={(t) => {
             const next = full(t);
             rememberSearch(next);
+            // Enter searches in full: inside words and corrections too, when typing found nothing.
+            const again = typedQ.current === q && next === q && !!page && !page.hits.length;
+            typedQ.current = null;
             set(next);
+            if (again) setEntered((n) => n + 1);
           }}
         />
         <HeadOrb />
