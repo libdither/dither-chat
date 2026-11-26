@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS identity (
   UNIQUE (network, native_id)
 );
 CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
+-- A network saying two of its ids are one account (IdentityFact.sameAs: Partiful's chat id beside its user id). Kept so
+-- the two are put with one person once, when first said: a split you made afterwards stays split.
+CREATE TABLE IF NOT EXISTS identity_same (
+  identity_id TEXT PRIMARY KEY REFERENCES identity(id) ON DELETE CASCADE,
+  same_as     TEXT NOT NULL,                  -- the identity it is the same account as
+  at          INTEGER NOT NULL
+) WITHOUT ROWID;
 
 -- 3. places ------------------------------------------------------------------
 

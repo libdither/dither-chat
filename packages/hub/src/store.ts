@@ -409,9 +409,7 @@ export class Store {
       this.db.exec(`INSERT INTO message_fts (message_fts) VALUES ('rebuild'); INSERT INTO meta (key, value) VALUES ('fts_backfilled', '1');`);
       timer.step('search backfill');
     }
-    for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
-      this.selfIdentities.add(r.self_identity);
-    }
+    this.refreshSelf();
     // A database with no messages yet gets every one through the triggers: nothing to fill in.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get() && !this.db.query('SELECT 1 FROM message LIMIT 1').get())
       this.db.exec(`INSERT INTO meta (key, value) VALUES ('search_time_ready', '1')`);
@@ -847,6 +845,10 @@ export class Store {
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
     }
+    // Another id of yours on the same network (IdentityFact.sameAs: your Partiful chat id) is you too.
+    for (const r of this.db.query('SELECT s.identity_id FROM identity_same s JOIN account a ON a.self_identity = s.same_as').all() as Row[]) {
+      this.selfIdentities.add(r.identity_id);
+    }
   }
 
   isSelf(identityId: string | null) {
@@ -1212,7 +1214,48 @@ export class Store {
     } else if (changed && after.person_id) {
       this.refreshFace(after.person_id);
     }
+    if (typeof f.sameAs === 'string' && f.sameAs && f.sameAs !== f.nativeId && !f.isSelf) this.sameAccount(acc, id, f.sameAs);
     return id;
+  }
+
+  /**
+   * The network said this identity is the same account as another id of its own (IdentityFact.sameAs): the first time,
+   * the two go with one person (the other's, kept). Said again, nothing moves, so a split you made since stays.
+   */
+  private sameAccount(acc: AccountRow, id: string, nativeId: string) {
+    const other = hubId('idn', acc.network, nativeId);
+    if (this.db.query('SELECT 1 FROM identity_same WHERE identity_id = ? AND same_as = ?').get(id, other)) return;
+    this.db
+      .query('INSERT INTO identity (id, network, native_id, seen_via, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (network, native_id) DO NOTHING')
+      .run(other, acc.network, nativeId, acc.id, Date.now());
+    this.db.query('INSERT INTO identity_same (identity_id, same_as, at) VALUES (?, ?, ?) ON CONFLICT (identity_id) DO UPDATE SET same_as = excluded.same_as, at = excluded.at').run(id, other, Date.now());
+    const of = (i: string) => (this.db.query('SELECT person_id FROM identity WHERE id = ?').get(i) as Row | null)?.person_id as string | null;
+    if (this.isSelf(id)) return;
+    if (this.isSelf(other)) {
+      // Your own other id: you, with your own person, and your messages from it are yours.
+      this.selfIdentities.add(id);
+      this.presenceNow.forget(id);
+      this.dirty.identities.add(id);
+      const pid = of(other);
+      const was = of(id);
+      // A person it was given as a stranger (a direct chat's other side) goes into yours.
+      if (pid && was && was !== pid) this.mergePersons(pid, was);
+      else if (pid && !was) {
+        this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, id);
+        this.dirty.persons.add(pid);
+      }
+      return;
+    }
+    const into = of(other) ?? this.ensurePerson(other);
+    const from = of(id);
+    if (from === into) return;
+    if (from) return this.mergePersons(into, from);
+    this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(into, id);
+    this.refreshFace(into);
+    this.dirty.persons.add(into);
+    this.dirty.identities.add(id);
+    this.touchDirectsOf(into);
+    this.personsChanged?.([into]);
   }
 
   /** Your nickname or note went back to the network (server.ts pushes it through an account with 'contactNotes'). */
