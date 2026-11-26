@@ -924,6 +924,26 @@ button.inbox-status:hover {
   color: var(--text-faint);
   font-size: 13px;
 }
+/* The inbox narrowed by its box (docs/search.md "In the inbox"); what it finds beyond its rows is in ui/search.css. */
+.inbox-found-none {
+  padding-bottom: 4px;
+}
+/* Also drawn before search's chunk (and ui/search.css) is here: SearchLazy.tsx's InboxFoundLazy. */
+.inbox-found-note {
+  margin: 2px 12px 6px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.inbox-found-outside {
+  display: block;
+  margin: 4px 10px 2px;
+  font-size: 12.5px;
+}
+.search-box .search-clear {
+  flex: none;
+  margin-right: -4px;
+  color: var(--text-faint);
+}
 .cm-why {
   display: flex;
   flex-direction: column;

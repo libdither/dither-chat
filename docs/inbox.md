@@ -66,6 +66,9 @@ else by the latest message. A chat you had just answered no longer needed you, s
 far down, about 45 minutes after you last wrote. Now there is one order, and the chat you were just in stays near
 the top for a few hours ([You were here](#you-were-here)).
 
+Typing in the search box narrows the list in place, by name, with places not in the inbox and the newest messages
+under it ([search.md](search.md) "In the app", In the inbox).
+
 A filter button beside the search box opens a menu: **All**, **Direct messages** (DMs), **Groups** (the other
 chats: groups, rooms, notes to self), **Mail** (with a mail account: chats with mail in them). With a filter on, the button is tinted and
 says which (DMs, Groups, Mail). The choice is kept per device. Until 2026-11-09 these were chips under the search

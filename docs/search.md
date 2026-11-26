@@ -149,18 +149,29 @@ Case and accents fold on both sides: `zoe` finds Zoë. (`from:` is still `LIKE`,
 
 ## In the app
 
-- **As you type**: results come 150 ms after the last key (`TYPE_PAUSE_MS`), no Enter needed, without the inside-words
-  and corrected fallbacks, which Enter adds ("As you type and on Enter"); what was found for the
-  last words stays, dimmed, with a spinner in the box, until the new answer replaces it. On a computer the first
-  letter typed in the inbox's box opens the search page, which takes the cursor and the letter. Keys typed before it
-  has the cursor (the page still loading, or a fast typist) stay in the inbox's box, which hands the page all of it,
-  and empties once the page has the cursor. The box shows a Ctrl K chip at its end while it is empty and has room for
-  it; a narrower box ends its placeholder in "…". On a phone a tap on the inbox's box opens the search page with the
-  keyboard up. A search goes into Recent on Enter or when you open
-  one of its results, not at every key.
+- **As you type**: results come 150 ms after the last key (`TYPE_PAUSE_MS`), no Enter needed; what was found for the
+  last words stays, dimmed, with a spinner in the box, until the new answer replaces it. A search goes into Recent on
+  Enter or when you open one of its results, not at every key. As you type, the hub skips its slow fallbacks (`typing=1`:
+  the scan inside words and the spelling fix; "As you type and on Enter"); Enter and the full results page run them,
+  and Enter asks again in full when typing found nothing.
+- **In the inbox**: typing in the inbox's box narrows the inbox in place, on a computer and a phone alike; the cursor
+  stays in the box and no page opens (`inboxfilter.ts`, `ui/Sidebar.tsx`). At every key the rows left are those whose
+  names hold every word typed, each word starting a word of a name ("sa ri" finds Sam Rivera; in Japanese or Chinese,
+  anywhere in it): the chat's or channel's name, the person's names and handles on every network, the place it is in.
+  They keep the inbox's order. With a filter on (DMs, Groups, Mail) the narrowing stays inside it, and a line says how
+  many more rows hold the words with no filter. Operators (`from:`, `in:`, `has:` and the rest) ask for messages, not
+  a name: the rows make way for the messages. Under the rows (`InboxFound` in `ui/Search.tsx`): **Not in the inbox**,
+  places that hold the words by the same rule but have no row (a server's channels, a community, a folder, a hidden or
+  quiet chat), up to four, from what the app holds; then **Messages**, the newest three the hub finds
+  (`sort:newest&limit=3&typing=1`, asked 150 ms after the last key, a newer key giving up the older ask), with **Full
+  results**, which opens the search page with the words (so does Enter, and More messages). Up and Down walk the box,
+  the rows and what was found; Escape or the ✕ empties the box and gives the whole inbox back. The box keeps its words
+  while you move between pages, until emptied. It shows a Ctrl K chip at its end while it is empty and has room for
+  it; a narrower box ends its placeholder in "…". On a phone the search page opened from Full results starts without
+  the keyboard, to read; on a computer it takes the cursor.
 - **Loading**: the search page is a chunk of its own (`ui/Search.tsx`, its styles in `ui/search.css`), loaded the
-  first time it opens; focusing the inbox's box starts loading it, so it is usually there by the first key. Ctrl+F
-  and the box's focus signal stay in the startup bundle (`ui/SearchLazy.tsx`).
+  first time it opens or the first time the inbox's box takes the cursor, which also draws what the inbox finds beyond
+  its rows. Ctrl+F stays in the startup bundle (`ui/SearchLazy.tsx`).
 - **The box** (the search page and the inbox's) lists the operators when empty, under recent searches. Typing a word
   lists operators it starts; after `from:`, `in:` and the rest it lists values. Up and Down choose, Enter or Tab take
   (with a value half typed, the first is chosen already), Escape closes; with the list closed, Escape leaves search
