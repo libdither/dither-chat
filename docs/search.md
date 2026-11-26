@@ -122,8 +122,11 @@ Case and accents fold on both sides: `zoe` finds Zoë. (`from:` is still `LIKE`,
 
 - **As you type**: results come 150 ms after the last key (`TYPE_PAUSE_MS`), no Enter needed; what was found for the
   last words stays, dimmed, with a spinner in the box, until the new answer replaces it. On a computer the first
-  letter typed in the inbox's box opens the search page, which takes the cursor and the letter. On a phone a tap on
-  the inbox's box opens the search page with the keyboard up. A search goes into Recent on Enter or when you open
+  letter typed in the inbox's box opens the search page, which takes the cursor and the letter. Keys typed before it
+  has the cursor (the page still loading, or a fast typist) stay in the inbox's box, which hands the page all of it,
+  and empties once the page has the cursor. The box shows a Ctrl K chip at its end while it is empty and has room for
+  it; a narrower box ends its placeholder in "…". On a phone a tap on the inbox's box opens the search page with the
+  keyboard up. A search goes into Recent on Enter or when you open
   one of its results, not at every key.
 - **Loading**: the search page is a chunk of its own (`ui/Search.tsx`, its styles in `ui/search.css`), loaded the
   first time it opens; focusing the inbox's box starts loading it, so it is usually there by the first key. Ctrl+F

@@ -696,6 +696,8 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
   const rows = mail ? [] : shownInbox(filter);
   const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
+  /** The box has opened the search page and is handing it what is typed, until the page's box takes the cursor. */
+  const handing = useRef(false);
   const scroll = useRef<HTMLDivElement>(null);
   // A row and its ↩ button move as one (ReplyMark.tsx), and a channel row with the threads under it; anything else keyed by its own data-row.
   useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] [data-row])');
@@ -735,16 +737,23 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
           value={q}
           setValue={(t) => {
             // Results come as you type (docs/search.md): the first letter opens the search page, whose box takes the
-            // cursor and what was typed.
-            if (t.trim()) {
-              go({ view: 'search', q: t });
-              setQ('');
-            } else setQ(t);
+            // cursor. Until it has, keys still land here, so this box keeps the whole of what was typed and each key
+            // replaces the page's query with it; it lets go once the cursor has moved (a fast typist's keys between
+            // the two went missing when it emptied at the first).
+            setQ(t);
+            if (!handing.current && !t.trim()) return;
+            go({ view: 'search', q: t }, handing.current);
+            if (!handing.current) (handing.current = true), focusSearch.value++;
+          }}
+          onBlurBox={() => {
+            handing.current = false;
+            setQ('');
           }}
           // A phone opens the search page at the tap, keyboard and all, with what Ctrl+K would jump to as you type. A
           // computer starts loading the page (a chunk of its own), so it is there by the first key.
           onFocusBox={() => (phone.value ? (go({ view: 'search', q: '' }), focusSearch.value++) : preloadSearch())}
-          placeholder={phone.value || filter !== 'all' ? 'Search all messages' : 'Search all messages (Ctrl+K)'}
+          placeholder="Search all messages"
+          hint={phone.value || filter !== 'all' ? undefined : 'Ctrl K'}
           submit={(t) => {
             if (!t) return;
             rememberSearch(t);
