@@ -79,6 +79,24 @@
 .td-night-edge {
   fill: color-mix(in oklab, var(--text) 8%, transparent);
 }
+/* The chance they have answered by then (AnswerPart). */
+.td-chance {
+  fill: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.td-chance-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.td-guide {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+.td-answer b {
+  color: var(--text);
+  font-weight: 600;
+}
 /* Around in that hour; its solid part, wrote. */
 .td-col {
   fill: color-mix(in oklab, var(--accent) 35%, transparent);

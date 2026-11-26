@@ -3,7 +3,9 @@
  * (DITHER_DEMO_SCENARIO=zulip,clocks) in headless Chromium set to Chicago's time: a guessed clock shows with "~" beside
  * your time, a profile's zone without it (asked for in the background on Zulip), someone in your own zone shows none;
  * pointing at a time shows their usual day, in their time or yours, with Week; Escape closes it; a click keeps it open
- * and back closes it; a zone set by hand replaces the guess.
+ * and back closes it; a zone set by hand replaces the guess. In a direct chat whose last message is yours, the
+ * typing line says when they are likely to answer (docs/profile.md "When they answer"), and pointing at it shows the
+ * chance over the next day on their card.
  *
  *   bun run web:build && bun scripts/verify-their-time.ts [shots dir]
  * Starts its own hub on a free port with a throwaway data dir. DITHER_WEB_DIST serves another web build.
@@ -148,6 +150,23 @@ try {
   await p.until(`[...document.querySelectorAll('.msg-head')].some((h) => h.querySelector('.msg-author')?.textContent?.startsWith('Ada') && h.querySelector('.msg-their-time') && !h.querySelector('.msg-their-time').textContent.includes('~'))`, 30_000);
   check(true, "Ada's zone comes from her Zulip profile, asked for in the background, and shows without '~'");
   await shot('zulip');
+
+  // Your message waiting on Mika in your direct chat: when she is likely to answer, and the chance over the next day.
+  const mikaPerson = boot.persons.find((x: any) => x.name === 'Mika Sato')?.id;
+  const dm = boot.conversations.find((x: any) => x.shape === 'direct' && x.peerPersonId === mikaPerson)?.id;
+  check(!!dm, 'Mika has a direct chat with you', { mikaPerson: !!mikaPerson });
+  await p.goto(`${url}/#/inbox/c/${dm}`);
+  await p.until(`/^Answer|chance of an answer/.test(document.querySelector('.answer-note')?.textContent ?? '')`, 30_000);
+  const note = await p.eval<string>(`document.querySelector('.answer-note').textContent`);
+  check(/^Answer likely (by|any minute)|^\d+% chance of an answer/.test(note), 'the typing line says when she is likely to answer', note);
+  await shot('answer-note');
+  await point('.answer-note');
+  await p.until(`!!document.querySelector('.their-day.shown .td-chance')`, 15_000);
+  const ac = (await card()) ?? '';
+  check(/Your message from/.test(ac) && /of your messages to them/.test(ac), 'pointing at it shows the chance over the next day on her card', ac.split('\n').slice(0, 3));
+  await shot('answer-card');
+  await key('Escape');
+  await p.until(`!document.querySelector('.their-day')`, 5_000);
 
   // A phone: the time is a button to tap.
   await p.size(390, 800, true);

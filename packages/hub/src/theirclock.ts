@@ -439,6 +439,13 @@ export class Clocks {
     return { clock, frame: { theirs: !!clock, zone: zoneName(zone), offsetNow: offsetAt(zone, now) / MIN }, ...day, counts };
   }
 
+  /** Their identities, and when they were around from `from` on (theiranswer.ts). Null for you, or nobody by that id. */
+  timesOf(ref: string, from: number): { ids: string[]; times: number[] } | null {
+    const who = identitiesOf(this.d.db, ref);
+    if (!who || who.self) return null;
+    return { ids: who.ids, times: this.around(who.ids, from).times };
+  }
+
   /** Set their zone by hand, or clear it (null). False for an unknown person or zone. */
   pin(ref: string, zone: string | null): boolean {
     const who = identitiesOf(this.d.db, ref);

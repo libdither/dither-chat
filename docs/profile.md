@@ -447,8 +447,39 @@ absolute deviation), said from 7 nights. `GET /api/people/:id/day?tz=<your zone>
 zone where it is known, else in yours. `PUT /api/people/:id/zone {zone}` sets or clears (`null`) a zone by hand.
 
 DITHER_DEMO_SCENARIO=clocks adds a Discord group of friends abroad with six weeks of messages and reactions on their own hours
-(Tokyo, Berlin, and one in Chicago); with `zulip` too, the Zulip people's zones come from their profiles.
-scripts/verify-their-time.ts checks it all in a browser set to Chicago's time.
+(Tokyo, Berlin, and one in Chicago), and a direct chat with each whose last message, yours, waits on them; with `zulip`
+too, the Zulip people's zones come from their profiles. scripts/verify-their-time.ts checks it all in a browser set to
+Chicago's time.
+
+### When they answer
+
+In a chat with one person whose last message is yours, the end of the typing line says when they are likely to answer
+it: "Answer likely by 9:40 PM, 8 in 10 by tomorrow 1:10 AM" ("any minute" when that close; "35% chance of an answer
+within the week" when a half is not reached within it). Pointing at it, or a click, opens their card (above), led by
+the same line and the chance they have answered by each half hour of the next day, their usual quiet hours shaded,
+with lines at a half and 8 in 10. Any other card of theirs says it in a line, for your waiting message or for one sent
+now. Nothing shows until they have had 3 of your messages (ui/Typing.tsx AnswerNote, web theiranswer.ts).
+
+**How** (hub theiranswer.ts): your turns are the first of each run of your messages in your direct chats with them,
+on any network together (yours on Signal, answered on Discord, counts), back two years; a turn is answered by their
+next message, or not at all if none comes within a week. Turns of the last week are left out, answered or not: of those
+only the quick answers are known yet. Each past answer is timed in their time, not the clock's: each hour counts at
+how often they were around in it over the 60 days before (as their usual day above; their quietest hours still 3%),
+so a message at their bedtime that waited for their morning took them little of their time. Each counts for less the
+older it is (halved every half year) and the less alike the quiet before it was to the quiet before yours (a
+log-normal kernel 1.5 wide: a message mid-conversation goes by the times you wrote mid-conversation). Everyone's answers
+to you over the last year, in plain time, fill in as 4 of theirs. As you wait, the answers sooner than the time gone by
+drop out, so the estimate moves later. Only times and authors are read, never what anyone wrote.
+`GET /api/people/:id/answer` answers a `TheirAnswerView`; the app asks again when the chat's last message changes and
+every 5 minutes while it is open.
+
+**How well** (backtested on a copy of a real hub, 2025-26, the estimate made as of each moment from what came before):
+against everyone's answers alone, their own timed in their hours scores 5% better at the moment you write (Brier, at 10
+minutes to 3 days), 6-8% better after an hour or six of waiting, and 5.5% on messages sent in their night. At the moment
+you write, answers come before the half mark 52% of the times and before the 8 in 10 mark 79%. After waiting an hour,
+47% and 65%: once a message has waited, it tends to wait longer than past answers say, more so lately (2026's
+chats were slower than 2025's), and after a whole day the chance within the week is said as 68% where it was 51%.
+Whether they wrote elsewhere since you wrote was tried and left out: it was rare, and said little.
 
 ## Status dots
 
