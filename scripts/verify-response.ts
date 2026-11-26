@@ -107,7 +107,9 @@ async function startHub(dir: string) {
   base = `http://127.0.0.1:${port}`;
   const log = openSync(join(work, `hub-${++hubs}.log`), 'a');
   running.hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', '--data', dir, '--port', String(port), '--host', '127.0.0.1', '--web', web], {
-    env: { ...process.env, DITHER_DEMO_CHATTER: '0', DITHER_CALENDAR_URL: 'off' },
+    // The inbox in the same order in every run: sorted by the learned order's mean, not a sample of it that changes
+    // with the clock (ranker.ts), so each page clicks the same rows.
+    env: { ...process.env, DITHER_DEMO_CHATTER: '0', DITHER_CALENDAR_URL: 'off', DITHER_INBOX_EXPLORE: '0' },
     stdout: log,
     stderr: log,
   });
@@ -146,6 +148,17 @@ await startHub(seeded);
   const [channel, , dm, group] = world.open;
   for (const c of [channel, dm, group]) await fetch(`${base}/api/conversations/${c.id}/read`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' });
   await until(async () => !(await getJson('/api/attention/waiting')).waiting, 120_000, 'the hub was still scoring the reads after 2 minutes');
+}
+// The inbox ranking's first check is 20 s after a start (ranker.ts): with opens it has not learned from (the demo's
+// calibration feed puts some hours back), it refits then and scores every row again. Done here, once, so the copies
+// hold the fitted order and no page's hub refits in the middle of its clicks.
+{
+  await until(async () => {
+    const m = await getJson('/api/attention/model');
+    return m.mode === 'off' || (!m.due && !m.refitting);
+  }, 120_000, 'the inbox ranking still had a refit due after 2 minutes');
+  await until(async () => !(await getJson('/api/attention/waiting')).waiting, 120_000, 'the hub was still scoring after the refit after 2 minutes');
+  await journalStill();
 }
 const boot = await getJson('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');

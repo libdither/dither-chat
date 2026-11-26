@@ -137,10 +137,14 @@ try {
   check(desk.sure.includes(`${v.sure.length} it was sure of`), 'desktop: the sure ones folded', desk.sure);
   await shot('desktop-feed');
 
-  // 1 answers the one open: the bars become the chances after, over a dashed line at the old.
-  const first = await p.eval<string>(`document.querySelector('.cal-main .cal-card').dataset.calId`);
-  const firstItem = v.items.find((i) => i.id === first)!;
-  check(firstItem.kind === 'card', 'desktop: the first open is a card', firstItem.kind);
+  // The one open first is the one most worth asking, a card or a past answer (both are sorted by worth asking now).
+  const opened = await p.eval<string>(`document.querySelector('.cal-main .cal-card').dataset.calId`);
+  check(opened === v.items[0].id, 'desktop: the first open is the one most worth asking', { opened, top: v.items[0].id });
+  // 1 answers the one open: the bars become the chances after, over a dashed line at the old. A past answer takes
+  // no new one, so open a card from its row on the left first.
+  const first = v.items.find((i) => i.kind === 'card')!.id;
+  await click(`.cal-side [data-cal-id="${first}"]`);
+  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${first}'`, 5_000);
   const before = await fills(first);
   await key('1');
   await p.until(`!!document.querySelector('[data-cal-id="${first}"] .cal-acts.cal-answered') && document.querySelectorAll('[data-cal-id="${first}"] .cal-old').length === 3`, 10_000);
@@ -177,11 +181,13 @@ try {
   await key('k');
   await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${first}'`, 5_000);
   check(true, 'desktop: k moves back');
-  await key('j');
-  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${second}'`, 5_000);
+  // x skips the one open: another card, so the past answer below is still there.
+  const skipped = v.items.find((i) => i.kind === 'card' && i.id !== first)!.id;
+  await click(`.cal-side [data-cal-id="${skipped}"]`);
+  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${skipped}'`, 5_000);
   await key('x');
-  await p.until(`!document.querySelector('.cal-side [data-cal-id="${second}"]') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Undo'))`, 5_000);
-  const skippedOn = await until('the skip kept', async () => (db.query(`SELECT skipped FROM cal_item WHERE id = ?`).get(second) as { skipped: number }).skipped === 1, 5_000);
+  await p.until(`!document.querySelector('.cal-side [data-cal-id="${skipped}"]') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Undo'))`, 5_000);
+  const skippedOn = await until('the skip kept', async () => (db.query(`SELECT skipped FROM cal_item WHERE id = ?`).get(skipped) as { skipped: number }).skipped === 1, 5_000);
   check(skippedOn, 'desktop: x skips, with Undo on the toast');
   await noToasts();
 
