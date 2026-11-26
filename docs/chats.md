@@ -41,7 +41,8 @@ except while a draft waits in the picked route's box, so the box never changes u
 
 The page adds guesses in front of that, because it knows things the hub doesn't. From first to last:
 
-1. the route of the message you are replying to;
+1. the route of the message you are editing or replying to (Edit on a page whose address is not that DM opens the DM,
+   and its message box takes the edit: `scripts/verify-edit.ts`);
 2. the route you picked on this page (a tag in the timeline, the message box's line, the list under the name), while
    the page stays at the address it was picked at;
 3. **the DM the address names**: opened as one of their DMs (from the inbox, a notification, search, a link), the
