@@ -349,7 +349,7 @@ ends in "Continue this thread", which opens that comment as a thread of its own,
   ([profile.md](profile.md#connections)). X cannot follow or unfollow from here yet, so there is no Follow back. Until 2026-11-13 About carried a **Follows you** tag.
 - **Feed actors' profiles** show what the hub logged (bio, counts, links, how you follow each other) at once, without
   asking.
-  Asking X then brings their posts. Their feed items are in **Recent messages** ("X notifications", "Liked your post:
+  Asking X then brings their posts. Their feed items are in **Between you** ("X notifications", "Liked your post:
   “…”") and open the feed. The feed is not listed in **In common**.
 
 ## Threads
@@ -504,7 +504,7 @@ logged follows `reply_to_id` across every account's posts (index `message_post_r
 docs/mail-design.md) because a mail is not a chat message: subjects, folders and labels, threads by headers, bodies of
 megabytes, a server to keep in step with. A post is a short text by an identity, answering another post, with
 pictures: what a message already is. As a message it gets, with no code of its own: search (full text,
-`from:`, `has:image`, `network:x`, misspellings, `in:"X posts"`); the person's Recent messages, activity and message
+`from:`, `has:image`, `network:x`, misspellings, `in:"X posts"`); the person's Between you, activity and message
 counts; the history of an edit; the media archive keeping its pictures; sync to devices; and the thread read back
 when X cannot be asked, through `reply_to_id`. What a post has that a message lacks (counts, the quoted post, the
 thread's first post as `root`) rides in `extra.post`, as the feed's `FeedItem` does in `extra.feed`.
@@ -517,7 +517,7 @@ scores and a profile's In common, and the forward picker. Nothing learns from it
 rank history or its refolds. The hub never asks the network for its history (or a feed's): there is no such chat on
 X. Everyone in a thread is an identity, not a person: no person is made for them, as
 one is for someone in your notifications. Opening the conversation lists what was logged, newest first; a message
-of it (a search hit, Recent messages) opens its thread (`GET /api/messages/:id/thread`).
+of it (a search hit, a profile's Between you) opens its thread (`GET /api/messages/:id/thread`).
 
 ## Following a post
 

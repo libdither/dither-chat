@@ -5,7 +5,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { RELATIONSHIP_LABEL, withList } from '@dither-chat/protocol';
-import { connections, connectionTags, withChanges, type Connection } from '../connections.ts';
+import { connections, connectionTags, withChanges } from '../connections.ts';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { memoOn } from './memo.ts';
 import type { ComponentChildren } from 'preact';
@@ -26,8 +26,7 @@ import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } f
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
-import { CloseCard, VoiceCard } from './VoiceClose.tsx';
-import { Between, type BetweenRow, DesignBar, PeopleList, profileDesign, Section, Tabs } from './ProfileDesigns.tsx';
+import { PeopleInCommon, tiesOf, useCloseTo, VoiceCard } from './VoiceClose.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
@@ -437,50 +436,50 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
-/**
- * Connections (connections.ts): how each of your accounts stands with them, in one vocabulary across networks (a
- * Discord friend and an X mutual follow are both Friends), with Remove friend, Unfollow and the like.
- */
-function ConnectionsCard({ ids, list, onEnded }: { ids: P.IdentityView[]; list: Connection[]; onEnded: (identityId: string, accountId: string) => void }) {
-  if (!list.length) return null;
-  return (
-    <Card title="Connections" icon="users" count={list.length > 1 ? list.length : undefined} class="pf-standing">
-      <ProfileConnections identities={ids} list={list} onEnded={onEnded} />
-    </Card>
-  );
+/** A row of Between you: a message of theirs or a mail thread with them. */
+interface BetweenRow {
+  key: string;
+  ts: number;
+  kind: 'chat' | 'mail';
+  el: ComponentChildren;
 }
 
-/** Mail with them: their newest threads, how many, and all of it in Mail (hub mail/people.ts). */
-function MailCard({ mail, list, name }: { mail: NonNullable<P.ProfileView['mail']>; list: string; name: string }) {
-  const open = (t: P.MailThreadView) => {
-    db.mail.threads.set(t.id, t);
-    go({ view: 'inbox', conv: t.id });
-  };
+/**
+ * Between you (docs/profile.md): their recent messages and your mail with them, newest first, in one list, with
+ * Messages and Mail chips when there are both, the first few shown.
+ */
+function Between({ rows, shown = 6, foot }: { rows: BetweenRow[]; shown?: number; foot?: ComponentChildren }) {
+  const [only, setOnly] = useState<'chat' | 'mail' | null>(null);
+  const [all, setAll] = useState(false);
+  const kinds = new Set(rows.map((r) => r.kind));
+  const list = rows.filter((r) => !only || r.kind === only).sort((a, b) => b.ts - a.ts);
   return (
-    <Card title="Mail" icon="mail" count={mail.total || undefined} class="pf-mail">
-      {!mail.threads.length && <p class="pf-empty">No mail with them on this hub.</p>}
-      <div class="pf-rows">
-        {mail.threads.map((t) => (
-          <button class={`pf-row pf-mail-row ${t.unread ? 'unread' : ''}`} onClick={() => open(t)} title={fullTime(t.lastAt)}>
-            <NetBadge network="email" size={28} />
-            <span class="pf-row-text">
-              <b>{t.subject || '(no subject)'}</b>
-              <small>
-                {senderLine(t)}
-                {t.count > 1 ? ` · ${t.count}` : ''}
-                {t.preview ? ` — ${t.preview}` : ''}
-              </small>
-            </span>
-            <span class="pf-row-time">{ago(t.lastAt)}</span>
-          </button>
-        ))}
-      </div>
-      {mail.total > 0 && (
-        <button class="link-btn pf-mail-all" onClick={() => go({ view: 'inbox', mail: list })}>
-          {mail.total > mail.threads.length ? `All ${mail.total.toLocaleString()} threads with ${name}` : `All mail with ${name}`}
-        </button>
+    <div class="pf-between">
+      {kinds.size > 1 && (
+        <div class="pf-friend-nets" role="radiogroup" aria-label="Show">
+          {(
+            [
+              [null, 'All', rows.length],
+              ['chat', 'Messages', rows.filter((r) => r.kind === 'chat').length],
+              ['mail', 'Mail', rows.filter((r) => r.kind === 'mail').length],
+            ] as const
+          ).map(([k, label, n]) => (
+            <button class={`chip-btn ${only === k ? 'on' : ''}`} role="radio" aria-checked={only === k} data-track={`between (${label.toLowerCase()})`} onClick={() => setOnly(k)}>
+              <b>{label}</b> {n}
+            </button>
+          ))}
+        </div>
       )}
-    </Card>
+      <div class="pf-rows">{(all ? list : list.slice(0, shown)).map((r) => r.el)}</div>
+      <div class="pf-between-foot">
+        {list.length > shown && (
+          <button class="link-btn" onClick={() => setAll(!all)}>
+            {all ? 'Fewer' : `All ${list.length}`}
+          </button>
+        )}
+        {foot}
+      </div>
+    </div>
   );
 }
 
@@ -555,6 +554,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   }, [merging, q, person?.id]);
 
   // Your own picture (PictureEditor.tsx): only your own profile's Abouts list what you may change.
+  // The people graph's ties of theirs, for People in common and the glance.
+  const closeTo = useCloseTo(personId ? `/api/persons/${personId}` : `/api/identities/${identityId}`);
   const pe = usePictureEditor(Object.values(abouts).some((a) => a.editable?.includes('avatar')));
   // The editor, open on a picture, ticked to the network it came from (an account tile's menu), else the page's.
   const [picturing, setPicturing] = useState<(PictureStart & { came?: string }) | null>(null);
@@ -941,35 +942,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     </>
   );
 
-  const accountsCard = (
-    <>
-      {several && (
-        <Card title="Accounts" icon="idBadge" count={ids.length} class="pf-accounts">
-          <div class="pf-acct-list">
-            {tiles.map((i) => {
-              const r = reach(i);
-              return <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />;
-            })}
-          </div>
-          {!isSelf && person && (
-            <p class="pf-acct-note">
-              {speaker ? (
-                <span>
-                  <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now, as the account you talked with last'}: its name{pictureOf ? '' : ' and picture'} everywhere, its bio first in About.
-                  {pictureOf && ` Their picture is from ${netName(pictureOf.network)}.`}
-                  {!person.facePinned && ' Make Main Account on one to keep it.'}
-                </span>
-              ) : (
-                <>No account speaks for them yet. Edit one and Make Main Account.</>
-              )}
-            </p>
-          )}
-          {mergeUi}
-        </Card>
-      )}
-    </>
-  );
-
   const sameBox = (
     <>
       {!isSelf && sameSide && <SameBox side={sameSide} />}
@@ -1115,67 +1087,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     </>
   );
 
-  const inCommonCard = (
-    <>
-      {(sharedSpaces.length > 0 || groupChats.length > 0) && (
-        <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={sharedSpaces.length + groupChats.length}>
-          {sharedSpaces.length > 0 && (
-            <div class="pf-spaces">
-              {sharedSpaces.map(({ s, messages, nick, roles, bio, pronouns }) => {
-                const est = counts[s.id]?.observed ? counts[s.id] : undefined;
-                return (
-                  <button class="pf-space" onClick={() => go({ view: 'space', space: s.id })} title={s.name}>
-                    <Avatar id={s.id} name={s.name} url={s.icon} size={40} square network={s.network} />
-                    <span class="pf-space-text">
-                      <b>{s.name}</b>
-                      {(nick || !est) && <small>{nick ? `as ${nick}` : messages ? `${messages.toLocaleString()} message${messages === 1 ? '' : 's'}` : 'member'}</small>}
-                      {est && (
-                        <small class="pf-msgcount" title={countTitle(est, fullTime)}>
-                          {countText(est)}
-                        </small>
-                      )}
-                      {(bio || pronouns) && (
-                        <small class="pf-space-bio" title="Their profile in this server">
-                          {[pronouns, bio].filter(Boolean).join(' · ')}
-                        </small>
-                      )}
-                      {roles && roles.length > 0 && (
-                        <span class="pf-roles">
-                          {roles.slice(0, 3).map((r) => (
-                            <span class="pf-role" style={r.color ? { '--role': r.color } : undefined}>
-                              {r.name}
-                            </span>
-                          ))}
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {groupChats.length > 0 && (
-            <div class="pf-rows">
-              {groupChats.map(({ c, messages, lastTs }) => (
-                <button class="pf-row" onClick={() => openConv(c)}>
-                  <PlaceIcon c={c} size={28} />
-                  <span class="pf-row-text">
-                    <b>{convTitle(c)}</b>
-                    <small>
-                      {kindLabel(c)}
-                      {messages ? ` · ${messages.toLocaleString()} from ${isSelf ? 'you' : 'them'}` : ''}
-                    </small>
-                  </span>
-                  {lastTs && <span class="pf-row-time">{ago(lastTs)}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
-    </>
-  );
-
   const storiesEl = (
     <>
       {ids
@@ -1192,37 +1103,6 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     </>
   );
 
-  const mailCard = (
-    <>
-      {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
-    </>
-  );
-
-  const recentCard = (
-    <>
-      {(profile.recent.length > 0 || chatNets.length > 0) && (
-        <Card title="Recent messages" icon="send" count={profile.recent.length || undefined}>
-          {!profile.recent.length && <p class="pf-empty">None stored. The hub only has what your accounts have fetched.</p>}
-          <div class="pf-rows">
-            {profile.recent.map((m) => {
-              const c = db.conversations.get(m.conversationId);
-              return (
-                <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
-                  {c && !isQuietConv(c) ? <PlaceIcon c={c} size={28} /> : <NetBadge network={m.network} size={28} />}
-                  <span class="pf-row-text">
-                    <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : c.variant === 'posts' ? `${netName(c.network)} posts` : convLabel(c)) : 'Unknown'}</small>
-                    <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body, m.network) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
-                  </span>
-                  <span class="pf-row-time">{ago(m.ts)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-    </>
-  );
-
   const historyCard = (
     <>
       <HistoryCard path={`${changesPath}?except=status,presence,voice`} person />
@@ -1235,141 +1115,27 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     </>
   );
 
-  const closeCard = (
-    <>
-      {!isSelf && <CloseCard base={person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`} />}
-    </>
-  );
-
   const safetyCard = (
     <>
       {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
     </>
   );
 
-  const connectionsCard = (
-    <>
-      {!isSelf && (
-        <ConnectionsCard
-          ids={ids}
-          list={conns}
-          onEnded={(identityId, accountId) => {
-            change(accountId, identityId, 'stranger');
-            const a = abouts[identityId];
-            if (a && a.accountId === accountId) learn({ ...a, relationship: 'stranger' });
-          }}
-        />
-      )}
-    </>
-  );
-
-  const oneAccountCard = (
-    <>
-      {!several && (
-        <Card title="Accounts" icon="idBadge">
-          {ids.map((i) => {
-            const link = externalProfile(i);
-            return (
-              <div class="pf-identity">
-                <NetBadge network={i.network} size={24} />
-                <span class="pf-row-text">
-                  <b>{identityName(i.id)}</b>
-                  <small>
-                    {netName(i.network)} · {i.handle ?? i.nativeId}
-                    {i.nickname ? ` · their name: ${ownName(i)}` : ''}
-                  </small>
-                </span>
-                {link && (
-                  <a class="icon-btn small" href={link} target="_blank" rel="noreferrer" title={`Open on ${netName(i.network)}`}>
-                    <Icon name="external" size={14} />
-                  </a>
-                )}
-              </div>
-            );
-          })}
-          {mergeUi}
-        </Card>
-      )}
-    </>
-  );
-
-  const notifyCard = (
-    <>
-      {!isSelf && (
-        <Card title="Notifications" icon="bell">
-          <label class="toggle-row">
-            <input
-              type="checkbox"
-              checked={rule?.level === 'all'}
-              onChange={async (e) => {
-                const on = (e.target as HTMLInputElement).checked;
-                setRule('person', await ensure(), on ? 'all' : null);
-              }}
-            />
-            <span>
-              <b>Always alert</b>
-              <small>Every message of theirs is an alert, on every network, even in busy groups. A place you muted still stays silent.</small>
-            </span>
-          </label>
-        </Card>
-      )}
-    </>
-  );
-
-  const noteCard = (
-    <>
-      <Card title="Note" icon="pencil">
-        <textarea class="input pf-note" rows={3} placeholder="Only you see this. It stays on the hub." value={profile.note ?? ''} onChange={(e) => patch({ note: (e.target as HTMLTextAreaElement).value })} />
-      </Card>
-    </>
-  );
-
-  const main = (
-    <>
-      {accountsCard}
-      {sameBox}
-      {aboutCard}
-      {postsCard}
-      {activityCard}
-      {voiceCard}
-      {inCommonCard}
-      {storiesEl}
-      {eventsCard}
-      {mailCard}
-      {recentCard}
-      {historyCard}
-    </>
-  );
-
-  const side = (
-    <>
-      {friendsCard}
-      {closeCard}
-      {safetyCard}
-      {connectionsCard}
-      {oneAccountCard}
-      {notifyCard}
-      {noteCard}
-    </>
-  );
-
-  // ---- the draft designs' merged blocks (ProfileDesigns.tsx)
-  const design = profileDesign.value;
-  const base = person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`;
   const ended = (identityId: string, accountId: string) => {
     change(accountId, identityId, 'stranger');
     const a = abouts[identityId];
     if (a && a.accountId === accountId) learn({ ...a, relationship: 'stranger' });
   };
-  // Their accounts, each with how yours stand with it: the Connections card folded into Accounts.
-  const accountsMerged = (
-    <Card title="Accounts" icon="idBadge" count={ids.length > 1 ? ids.length : undefined} class="pf-accounts pfd-accounts">
+  // Their accounts, each with how yours stand with it (connections.ts: friends, contacts, follows, with Remove friend
+  // and the like) under it. An account named as the person leads with its handle.
+  const accountsCard = (
+    <Card title="Accounts" icon="idBadge" count={ids.length > 1 ? ids.length : undefined} class="pf-accounts">
       <div class="pf-acct-list">
         {tiles.map((i) => {
           const r = reach(i);
           const mine = conns.filter((c) => c.identityId === i.id);
           return (
-            <div class="pfd-acct" data-same={identityName(i.id) === name || undefined}>
+            <div class="pf-acct-item" data-same={identityName(i.id) === name || undefined}>
               <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />
               {mine.length > 0 && <ProfileConnections identities={ids} list={mine} onEnded={ended} />}
             </div>
@@ -1380,7 +1146,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         <p class="pf-acct-note">
           {speaker ? (
             <span>
-              <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now'}.
+              <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now'}
+              {pictureOf ? `; their picture is from ${netName(pictureOf.network)}` : ''}.
             </span>
           ) : (
             <>No account speaks for them yet.</>
@@ -1438,30 +1205,28 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   });
   const betweenRows = [...profile.recent.map(msgRow), ...(profile.mail?.threads ?? []).map(mailRow)];
   const mailTotal = profile.mail?.total ?? 0;
-  const betweenEl = (
-    <Between
-      rows={betweenRows}
-      foot={
-        mailTotal > 0 && (
-          <button class="link-btn" onClick={() => go({ view: 'inbox', mail: withList(person?.id ?? first.id) })}>
-            {mailTotal > (profile.mail?.threads.length ?? 0) ? `All ${mailTotal.toLocaleString()} mail threads` : 'All mail'}
-          </button>
-        )
-      }
-    />
-  );
+  // Their messages and your mail with them, in one list (docs/profile.md "Between you").
   const betweenCard = betweenRows.length > 0 && (
-    <Card title={isSelf ? 'Your messages' : 'Between you'} icon="send" count={profile.recent.length + mailTotal || undefined} class="pfd-between-card">
-      {betweenEl}
+    <Card title={isSelf ? 'Your messages' : 'Between you'} icon="send" count={profile.recent.length + mailTotal || undefined} class="pf-between-card">
+      <Between
+        rows={betweenRows}
+        foot={
+          mailTotal > 0 && (
+            <button class="link-btn pf-mail-all" onClick={() => go({ view: 'inbox', mail: withList(person?.id ?? first.id) })}>
+              {mailTotal > (profile.mail?.threads.length ?? 0) ? `All ${mailTotal.toLocaleString()} mail threads` : 'All mail'}
+            </button>
+          )
+        }
+      />
     </Card>
   );
   const placesN = sharedSpaces.length + groupChats.length;
   const placesEl = placesN > 0 && (
-    <div class="pf-rows pfd-places">
-      {sharedSpaces.map(({ s, messages, nick, roles }) => {
+    <div class="pf-rows pf-places">
+      {sharedSpaces.map(({ s, messages, nick, roles, bio, pronouns }) => {
         const est = counts[s.id]?.observed ? counts[s.id] : undefined;
         return (
-          <button class="pf-row" onClick={() => go({ view: 'space', space: s.id })} title={s.name}>
+          <button class="pf-row" onClick={() => go({ view: 'space', space: s.id })} title={[s.name, est && countTitle(est, fullTime), pronouns, bio].filter(Boolean).join('\n')}>
             <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />
             <span class="pf-row-text">
               <b>{s.name}</b>
@@ -1485,24 +1250,27 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       ))}
     </div>
   );
-  const peopleRows = isSelf ? null : <PeopleList base={base} said={said} />;
-  const peopleFaces = isSelf ? null : <PeopleList base={base} said={said} faces shown={16} />;
-  // Friends and places you share, in one card.
-  const commonCard = (faces: boolean) => (
+  const ties = !isSelf && closeTo ? tiesOf(closeTo, said) : null;
+  // The friends you share and the people they talk with, then the servers and groups you are both in.
+  const commonCard = (
     <>
       {isSelf && friendsCard}
-      {(!isSelf || placesN > 0) && (
-        <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={placesN || undefined} class="pfd-common">
-          {!isSelf && <h4 class="pfd-h">People</h4>}
-          {faces ? peopleFaces : peopleRows}
-          {placesN > 0 && <h4 class="pfd-h">Places</h4>}
+      {(ties?.length || placesN > 0) && (
+        <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={placesN || undefined} class="pf-common">
+          {!!ties?.length && (
+            <>
+              <h4 class="pf-sub-h">People</h4>
+              <PeopleInCommon ties={ties} />
+            </>
+          )}
+          {placesN > 0 && !isSelf && <h4 class="pf-sub-h">Places</h4>}
           {placesEl}
         </Card>
       )}
     </>
   );
   const yoursCard = (
-    <Card title={isSelf ? 'Note' : 'Yours'} icon="pencil" class="pfd-yours">
+    <Card title={isSelf ? 'Note' : 'Yours'} icon="pencil" class="pf-yours">
       {!isSelf && (
         <label class="toggle-row">
           <input
@@ -1532,7 +1300,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   );
   // At a glance: how you stand, what you share, when you last heard from them, in a sentence or three.
   const placeNames = [...sharedSpaces.map((x) => x.s.name), ...groupChats.map((x) => convTitle(x.c))];
-  const mutualNames = onePerPerson(said.flatMap((a) => a.mutualFriends ?? []).filter((i) => !isSelfIdentity(i))).map((i) => db.persons.get(db.identities.get(i)?.personId ?? '')?.name ?? identityName(i));
+  const mutualIds = ties ? ties.filter((t) => t.friendOn.length).map((t) => t.identityId) : onePerPerson(said.flatMap((a) => a.mutualFriends ?? []).filter((i) => !isSelfIdentity(i)));
+  const mutualNames = mutualIds.map((i) => db.persons.get(db.identities.get(i)?.personId ?? '')?.name ?? identityName(i));
   const when = (ts: number) => {
     const a = ago(ts);
     return a === 'now' ? 'just now' : /\d[mh]$/.test(a) ? `${a} ago` : `on ${a}`;
@@ -1545,7 +1314,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     .join(', ');
   const standing = standingText.charAt(0).toUpperCase() + standingText.slice(1);
   const glance = !isSelf && (
-    <p class="pfd-glance">
+    <p class="pf-glance">
       {conns.length > 0 && <span>{standing}. </span>}
       {(placeNames.length > 0 || mutualNames.length > 0) && (
         <span>
@@ -1568,145 +1337,36 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
       )}
     </p>
   );
-  const ago1 = betweenRows.length ? ago(Math.max(...betweenRows.map((r) => r.ts))) : null;
-  const linesOf = {
-    between: [profile.recent.length && `${profile.recent.length} messages`, mailTotal && `${mailTotal} mail`, ago1 && `latest ${ago1}`].filter(Boolean).join(' · '),
-    common: [sharedSpaces.length && `${sharedSpaces.length} server${sharedSpaces.length === 1 ? '' : 's'}`, groupChats.length && `${groupChats.length} group${groupChats.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ') || 'people',
-    accounts: (
-      <>
-        {nets.map((n) => (
-          <NetGlyph network={n} size={11} decorative />
-        ))}{' '}
-        {ids.length} account{ids.length === 1 ? '' : 's'}
-        {conns.length ? ` · ${connectionTags(conns).map((t) => t.label.toLowerCase()).join(', ')}` : ''}
-      </>
-    ),
-  };
-  const layout =
-    design === 'a' ? (
-      <Columns
-        main={
-          <>
+  // Who they are and what passes between you on the left, their accounts and what you share on the right. One column
+  // (900px and narrower) takes each side's lead first: the glance, About, Between you, Accounts and In common, then the
+  // rest.
+  const layout = (
+    <Columns
+      main={
+        <>
+          <div class="pf-lead">
             {glance}
             {sameBox}
             {aboutCard}
             {betweenCard}
-            {activityCard}
-            {rest}
-            {historyCard}
-          </>
-        }
-        side={
-          <>
-            {accountsMerged}
-            {commonCard(false)}
-            {safetyCard}
-            {yoursCard}
-          </>
-        }
-      />
-    ) : design === 'b' ? (
-      <div class="pfd-one">
-        {glance}
-        {sameBox}
-        <Tabs
-          tabs={[
-            {
-              key: 'overview',
-              label: 'Overview',
-              body: (
-                <>
-                  {aboutCard}
-                  {activityCard}
-                  {rest}
-                </>
-              ),
-            },
-            { key: 'between', label: isSelf ? 'Messages' : 'Between you', count: profile.recent.length + mailTotal, body: betweenEl ?? <p class="pf-empty">Nothing yet.</p> },
-            {
-              key: 'common',
-              label: isSelf ? 'Friends and places' : 'In common',
-              count: placesN,
-              body: (
-                <div class="pfd-two">
-                  <div>
-                    <h4 class="pfd-h">People</h4>
-                    {isSelf ? friendsCard : peopleRows}
-                  </div>
-                  <div>
-                    <h4 class="pfd-h">Places</h4>
-                    {placesEl || <p class="pf-empty">None.</p>}
-                  </div>
-                </div>
-              ),
-            },
-            {
-              key: 'accounts',
-              label: 'Accounts',
-              count: ids.length,
-              body: (
-                <>
-                  {accountsMerged}
-                  {safetyCard}
-                  {yoursCard}
-                </>
-              ),
-            },
-            { key: 'history', label: 'History', body: historyCard },
-          ]}
-        />
-      </div>
-    ) : design === 'c' ? (
-      <div class="pfd-one pfd-digest">
-        {glance}
-        {sameBox}
-        {aboutCard}
-        {betweenRows.length > 0 && (
-          <Section title={isSelf ? 'Your messages' : 'Between you'} line={linesOf.between} open>
-            {betweenEl}
-          </Section>
-        )}
-        <Section title={isSelf ? 'Friends and places' : 'In common'} line={linesOf.common} open>
-          {isSelf ? friendsCard : peopleFaces}
-          {placesEl}
-        </Section>
-        <Section title="Accounts" line={linesOf.accounts}>
-          {accountsMerged}
-          {safetyCard}
-        </Section>
-        <Section title="Activity" line={status?.text ?? 'when they are around'}>
-          {activityCard}
-          {voiceCard}
-        </Section>
-        <Section title="More" line="posts, stories, events, notes, history">
-          {postsCard}
-          {storiesEl}
-          {eventsCard}
-          {yoursCard}
-          {historyCard}
-        </Section>
-      </div>
-    ) : design === 'd' ? (
-      <div class="pfd-three">
-        <div>
-          {glance}
-          {sameBox}
-          {aboutCard}
-          {accountsMerged}
-          {safetyCard}
-          {yoursCard}
-        </div>
-        <div>
-          {betweenCard}
+          </div>
           {activityCard}
           {rest}
           {historyCard}
-        </div>
-        <div>{commonCard(true)}</div>
-      </div>
-    ) : (
-      <Columns main={main} side={side} />
-    );
+        </>
+      }
+      side={
+        <>
+          <div class="pf-lead">
+            {accountsCard}
+            {commonCard}
+          </div>
+          {safetyCard}
+          {yoursCard}
+        </>
+      }
+    />
+  );
 
   return (
     <ProfilePage title={name} label={`${name}'s profile`} onBack={onBack}>
@@ -1716,8 +1376,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           No direct chat yet, and no connected account can start one on {chatNets.map(netName).join(' or ')}. Start it in the network's own app; it appears here once it exists.
         </p>
       )}
-      <div class={`pfd pfd-${design || 'now'}`}>{layout}</div>
-      <DesignBar />
+      {layout}
       {ownPicture && pe && <pe.PictureDrop open={setPicturing} />}
       {pe && picturing && editing.current && <pe.PictureEditor target={editing.current} start={picturing} onClose={() => setPicturing(null)} />}
     </ProfilePage>

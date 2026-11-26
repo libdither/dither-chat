@@ -12396,56 +12396,6 @@ a.pf-link:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pf-spaces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
-}
-.pf-space {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  background: var(--bg-center);
-  border: 1px solid var(--border-soft);
-  text-align: left;
-  min-width: 0;
-}
-.pf-space:hover {
-  border-color: var(--border);
-  background: var(--bg-hover);
-}
-.pf-space-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.pf-space-text b {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pf-space-text small {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Seen and estimated message counts: two lines rather than cut off. */
-.pf-space-text small.pf-msgcount {
-  white-space: normal;
-  line-height: 1.3;
-}
-.pf-roles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
 .pf-role {
   --role: var(--text-faint);
   display: inline-flex;
@@ -12509,7 +12459,7 @@ a.pf-link:hover {
   align-self: flex-start;
   margin-top: 2px;
 }
-/* The Mail card (mail/people.ts): a thread you have read is not bold. */
+/* A mail thread in Between you (mail/people.ts): its subject bold only while unread. */
 .pf-mail-row:not(.unread) .pf-row-text b {
   font-weight: 500;
 }
@@ -12549,12 +12499,6 @@ a.pf-link:hover {
 }
 .pf-person:hover {
   background: var(--bg-hover);
-}
-.pf-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
 }
 /* A person's several accounts (Profile.tsx AccountRow): a row each, its picture, name, handle, and Main or Picture
    when it speaks for them; Edit opens its menu's choices as buttons under it. */
@@ -18854,47 +18798,41 @@ h1:hover > .pair-nick-edit,
   box-shadow: inset 3px 0 0 color-mix(in oklab, var(--accent) var(--loud-mix), transparent);
 }
 
-/* Draft profile designs (ProfileDesigns.tsx): a picker, and the merged blocks and layouts it switches between. */
-.pfd-bar {
-  position: fixed;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  z-index: 50;
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  padding: 5px 8px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
-  max-width: calc(100vw - 24px);
-  overflow-x: auto;
-}
-.pfd-bar-label {
-  font-size: 11px;
-  color: var(--text-faint);
-  padding: 0 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 700;
-}
-.pfd-bar .chip-btn {
-  white-space: nowrap;
-}
-.pfd {
-  padding-bottom: 64px;
-}
-.pfd:not(.pfd-now) .pf-card {
+/* The profile's tighter cards and merged parts (Profile.tsx): the glance, Between you, Accounts with your standing under
+   each, In common. */
+.pf-cols .pf-card {
   padding: 10px 12px;
   gap: 7px;
 }
-.pfd:not(.pfd-now) .pf-main,
-.pfd:not(.pfd-now) .pf-side {
+.pf-main,
+.pf-side,
+.pf-lead {
   gap: 10px;
 }
-.pfd-h {
+.pf-lead {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* One column: each side's lead (the glance, About, Between you, Accounts, In common) before the rest. */
+@media (max-width: 900px) {
+  .pf-cols {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .pf-main,
+  .pf-side {
+    display: contents;
+  }
+  .pf-lead {
+    order: -1;
+  }
+}
+.pf-cols {
+  padding-bottom: 24px;
+}
+.pf-sub-h {
   margin: 4px 0 0;
   font-size: 11px;
   font-weight: 700;
@@ -18902,17 +18840,17 @@ h1:hover > .pair-nick-edit,
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.pfd-sum {
+.pf-people-sum {
   margin: 0;
   display: flex;
   gap: 10px;
   font-size: 12px;
   color: var(--text-dim);
 }
-.pfd-sum b {
+.pf-people-sum b {
   color: var(--text);
 }
-.pfd-person .pf-row-text small {
+.pf-tie .pf-row-text small {
   display: flex;
   align-items: center;
   gap: 3px;
@@ -18920,7 +18858,7 @@ h1:hover > .pair-nick-edit,
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.pfd-meter {
+.pf-meter {
   width: 42px;
   height: 4px;
   border-radius: 2px;
@@ -18928,214 +18866,37 @@ h1:hover > .pair-nick-edit,
   flex: none;
   overflow: hidden;
 }
-.pfd-meter i {
+.pf-meter i {
   display: block;
   height: 100%;
   background: var(--accent);
 }
-.pfd-faces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
-  gap: 4px;
-}
-.pfd-face {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 6px 2px;
-  border-radius: 10px;
-  min-width: 0;
-}
-.pfd-face:hover {
-  background: var(--bg-hover);
-}
-.pfd-face-name {
-  font-size: 11px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-}
-.pfd-face-friend {
-  position: absolute;
-  top: 3px;
-  left: calc(50% + 9px);
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  border: 2px solid var(--bg-raised);
-}
-.pfd-more {
+.pf-more {
   align-self: flex-start;
   font-size: 12px;
 }
-.pfd-people {
+.pf-ties {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.pfd-foot {
+.pf-between-foot {
   display: flex;
   gap: 14px;
   font-size: 12px;
 }
-.pfd-foot:empty {
+.pf-between-foot:empty {
   display: none;
 }
-.pfd-between {
+.pf-between {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.pfd-between .pf-msg-body b {
+.pf-between .pf-msg-body b {
   font-weight: 600;
 }
-.pfd-acct .pf-links-list {
-  margin: -2px 0 6px 46px;
-}
-.pfd-acct .pf-conn-list {
-  margin: 0;
-  padding: 0;
-}
-.pfd-acct .pf-link-row {
-  padding: 2px 0;
-}
-.pfd-one {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 12px 28px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.pfd-tab-row {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--border-soft);
-  overflow-x: auto;
-}
-.pfd-tab {
-  padding: 8px 12px;
-  font-size: 13px;
-  color: var(--text-dim);
-  border-bottom: 2px solid transparent;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  white-space: nowrap;
-}
-.pfd-tab.on {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-.pfd-tab-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 10px;
-}
-.pfd-two {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 20px;
-}
-.pfd-section {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-  background: var(--bg-raised);
-}
-.pfd-section > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-}
-.pfd-section > summary::-webkit-details-marker {
-  display: none;
-}
-.pfd-section > summary b {
-  font-size: 13.5px;
-  white-space: nowrap;
-}
-.pfd-line {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-faint);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pfd-section[open] > summary > svg {
-  transform: rotate(180deg);
-}
-.pfd-section-body {
-  padding: 0 14px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.pfd-section .pf-card {
-  border: none;
-  background: none;
-  padding: 0;
-}
-.pfd-section .pf-card > h3 {
-  display: none;
-}
-.pfd-three {
-  max-width: 1320px;
-  margin: 0 auto;
-  padding: 14px 28px 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-}
-.pfd-three > div {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-@media (max-width: 1100px) {
-  .pfd-three {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  }
-  .pfd-three > div:nth-child(3) {
-    grid-column: 1 / -1;
-    order: -1;
-  }
-}
-@media (max-width: 900px) {
-  .pfd-one,
-  .pfd-three {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-  .pfd-three,
-  .pfd-two {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .pfd-three > div:nth-child(3) {
-    grid-column: auto;
-    order: 0;
-  }
-  .pfd-bar {
-    bottom: calc(70px + env(safe-area-inset-bottom));
-  }
-}
-.pfd-glance {
+.pf-glance {
   margin: 0;
   padding: 10px 14px;
   border-radius: var(--radius-lg);
@@ -19145,46 +18906,54 @@ h1:hover > .pair-nick-edit,
   line-height: 1.5;
   color: var(--text-dim);
 }
-.pfd-glance b {
+.pf-glance b {
   color: var(--text);
   font-weight: 600;
 }
-.pfd-line > * {
-  display: inline-block;
-  vertical-align: -2px;
-  margin-right: 2px;
+.pf-acct-item .pf-acct {
+  padding: 4px 6px;
+  align-items: center;
 }
 /* An account named as the person: its handle leads, on one line with its buttons. */
-.pfd-acct[data-same] .pf-acct-name {
+.pf-acct-item[data-same] .pf-acct-name {
   display: none;
 }
-.pfd-acct[data-same] .pf-acct-text {
+.pf-acct-item[data-same] .pf-acct-text {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: center;
   column-gap: 8px;
 }
-.pfd-acct[data-same] .pf-acct-handle {
+.pf-acct-item[data-same] .pf-acct-handle {
   order: -1;
   flex: 1;
   min-width: 0;
 }
-.pfd-acct[data-same] .pf-acct-top {
+.pf-acct-item[data-same] .pf-acct-top {
   flex: none;
 }
-.pfd-acct[data-same] .pf-acct-edit {
+.pf-acct-item[data-same] .pf-acct-edit {
   flex-basis: 100%;
 }
-/* How yours stand with it, as a line under it. */
-.pfd-acct .pf-link-row > :first-child {
+/* How yours stand with it, a line each under it, its button small. */
+.pf-acct-item .pf-conn-list {
+  margin: 0;
+  padding: 0;
+}
+.pf-acct-item .pf-conn-title,
+.pf-acct-item .pf-link-row > :first-child {
   display: none;
 }
-.pfd-acct .pf-link-row {
+.pf-acct-item .pf-links-list {
+  margin: -2px 6px 6px 52px;
+}
+.pf-acct-item .pf-link-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 2px 0;
 }
-.pfd-acct .pf-link-what {
+.pf-acct-item .pf-link-what {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -19192,28 +18961,14 @@ h1:hover > .pair-nick-edit,
   flex: 1;
   min-width: 0;
 }
-.pfd-acct .pf-link-what b {
+.pf-acct-item .pf-link-what b {
   font-size: 12px;
   font-weight: 600;
   color: var(--accent-text, var(--accent));
 }
-.pfd-acct .pf-link-row .btn {
+.pf-acct-item .pf-link-row .btn {
   padding: 1px 6px;
   font-size: 11px;
   min-height: 0;
   color: var(--text-faint);
-}
-.pfd-acct .pf-conn-title {
-  display: none;
-}
-.pfd-acct .pf-links-list {
-  margin-left: 46px;
-}
-.pfd-acct .pf-acct {
-  padding: 4px 6px;
-  align-items: center;
-}
-.pfd-bar-label {
-  white-space: nowrap;
-  flex: none;
 }
