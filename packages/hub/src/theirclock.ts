@@ -1,8 +1,10 @@
 /**
  * What time it is for someone, and when they are usually around (docs/profile.md "Their time"): a zone you set for
  * them, else the zone a profile of theirs states (Zulip, Matrix), else a whole-hour offset guessed from the hours they
- * write in; and their usual day, by hour, with how sure each hour is. Only what the hub holds; the one thing it asks a network is a profile, for a
- * zone, on networks whose profiles carry one.
+ * are around in; and their usual day, by hour, with how sure each hour is. Around is anything they did that the hub
+ * logs with a time: writing, reacting, reading, voting, calling, setting a status, coming online or leaving (the last
+ * two only while they are logged). Only what the hub holds; the one thing it asks a network is a profile, for a zone,
+ * on networks whose profiles carry one.
  */
 import type * as P from '@dither-chat/protocol';
 import type { Database } from 'bun:sqlite';
@@ -23,10 +25,15 @@ const SHOW_DAYS = 10;
 /** Where most adults' nights are centred, in local hours after midnight, and how far one person's may be from it (one standard deviation). */
 const NIGHT_MIDDLE = 4;
 const NIGHT_SPREAD = 1.2;
-/** A night is the hours they write in at most this share of their usual hour's rate. */
+/** A night is the hours they are around in at most this share of their usual hour's rate. */
 const QUIET = 0.3;
 /** A quiet stretch longer than a night (a day they don't write in, as well as the night) holds the night somewhere in it. */
 const NIGHT_HOURS = 8;
+/**
+ * A minute with this many presence changes, across everyone, is an account's fresh snapshot after a restart (each
+ * person's state heard again at once), not people coming and going: about 6 a minute is usual.
+ */
+const BURST = 40;
 
 type Row = Record<string, any>;
 const marks = (n: number) => Array.from({ length: n }, () => '?').join(',');
@@ -61,8 +68,8 @@ function statedZone(db: Database, ids: string[]): { zone: string; network: P.Net
 }
 
 /**
- * The offset (whole hours, as minutes east of UTC) their nights put them at, from message times. What places someone
- * is where they never write: work leaves a gap on weekdays that weekends fill, but nothing fills a night. So: the
+ * The offset (whole hours, as minutes east of UTC) their nights put them at, from the times they were around (their
+ * messages, and what else they did). What places someone is where they never are: work leaves a gap on weekdays that weekends fill, but nothing fills a night. So: the
  * share of their days with a message in each UTC hour (recent days counting more, halved every three weeks back, so a
  * change of clocks for summer or winter is soon outweighed); the stretch of hours around the quietest that stays
  * under a third of their usual rate; its middle taken as about 4 in the morning for them. How sure that is comes from
@@ -123,11 +130,87 @@ export function guessOffset(ts: number[], near: number | null): { offset: number
   return { offset: offsets[best] * 60, sure: Math.round(sure * 100) / 100, days: perDay.size, post };
 }
 
-/** Their messages' times (not system lines), oldest first, from `from` on. */
+/**
+ * When they wrote from `from` on, oldest first: the first and last message of each hour they wrote in, which is all an
+ * hour's share and a night's edges need, read from the (author, time) index alone; reading every message of someone
+ * who writes a lot took a hundred times as long. System lines they made (a pin, a call) count too: telling those apart
+ * would read every row.
+ */
 function messageTimes(db: Database, ids: string[], from: number): number[] {
   if (!ids.length) return [];
-  return (db.query(`SELECT ts FROM message WHERE author_id IN (${marks(ids.length)}) AND ts >= ? AND kind != 'system' ORDER BY ts`).all(...ids, from) as Row[]).map((r) => r.ts as number);
+  const rows = db.query(`SELECT MIN(ts) AS a, MAX(ts) AS b FROM message WHERE author_id IN (${marks(ids.length)}) AND ts >= ? GROUP BY ts / ${HOUR}`).all(...ids, from) as Row[];
+  return rows.flatMap((r) => (r.a === r.b ? [r.a as number] : [r.a as number, r.b as number])).sort((a, b) => a - b);
 }
+
+/** Something else they did, and when. */
+type Moment = [kind: Exclude<P.TheirActivity, 'messages'>, at: number];
+
+/** Whether the change log holds presence and statuses now: adversarial features (store.ts logsPresence). */
+interface Logged {
+  presence: boolean;
+  statuses: boolean;
+}
+
+/** Tables some modules make only when first used (polls, calls). */
+const hasTable = (db: Database, name: string) => !!db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+
+const presenceState = (v: string | null): string | null => {
+  try {
+    return v ? ((JSON.parse(v) as { state?: string }).state ?? null) : null;
+  } catch {
+    return null;
+  }
+};
+const present = (s: string | null) => s === 'online' || s === 'dnd';
+
+/** The minutes from `from` on in which presence changed for at least BURST people at once. */
+function burstMinutes(db: Database, from: number): Set<number> {
+  if (!hasTable(db, 'change_log')) return new Set();
+  return new Set((db.query(`SELECT at / ${MIN} AS m FROM change_log WHERE field = 'presence' AND at >= ? GROUP BY m HAVING COUNT(*) >= ${BURST}`).all(from) as Row[]).map((r) => r.m as number));
+}
+
+/**
+ * What else they did from `from` on, by identity, for several people at once (a pass over each table, none of which
+ * has an index by who): reactions (timed by the network, or when the hub heard them), reads and plays of messages,
+ * poll votes, calls they started, and while they are logged, statuses they set and coming online (or to do not
+ * disturb) or leaving it. Idle to offline is left out: often a laptop's lid or a lost connection, hours after they
+ * went. So are presence changes in a burst minute. Every id asked for is in the answer.
+ */
+function otherMoments(db: Database, ids: string[], from: number, logged: Logged, bursts: () => Set<number>): Map<string, Moment[]> {
+  const out = new Map<string, Moment[]>(ids.map((id) => [id, []]));
+  if (!ids.length) return out;
+  const who = `IN (${marks(ids.length)})`;
+  const read = (table: string, sql: string, kind: Moment[0]) => {
+    if (!hasTable(db, table)) return;
+    for (const r of db.query(sql).all(...ids, from) as Row[]) out.get(r.i)?.push([kind, r.at]);
+  };
+  read('reaction', `SELECT identity_id AS i, at FROM reaction WHERE identity_id ${who} AND at >= ?`, 'reactions');
+  read('receipt', `SELECT identity_id AS i, at FROM receipt WHERE identity_id ${who} AND at >= ? AND state IN ('read', 'played')`, 'reads');
+  read('poll_vote', `SELECT identity_id AS i, at FROM poll_vote WHERE identity_id ${who} AND at >= ?`, 'votes');
+  read('call_log', `SELECT caller_id AS i, started_at AS at FROM call_log WHERE caller_id ${who} AND started_at >= ?`, 'calls');
+  if (logged.statuses) read('change_log', `SELECT target_id AS i, at FROM change_log WHERE target_kind = 'identity' AND target_id ${who} AND field = 'status' AND at >= ?`, 'statuses');
+  if (logged.presence && hasTable(db, 'change_log')) {
+    const rows = db.query(`SELECT target_id AS i, at, new FROM change_log WHERE target_kind = 'identity' AND target_id ${who} AND field = 'presence' AND at >= ? ORDER BY target_id, at, id`).all(...ids, from) as Row[];
+    const burst = rows.length ? bursts() : null;
+    let id = '';
+    let was: string | null = null;
+    for (const r of rows) {
+      if (r.i !== id) (id = r.i), (was = null);
+      const s = presenceState(r.new);
+      if (s && present(s) !== present(was) && !burst!.has(Math.floor(r.at / MIN))) out.get(r.i)?.push(['presence', r.at]);
+      was = s;
+    }
+  }
+  return out;
+}
+
+/** Their messages and the rest together: every time, oldest first, the messages' alone, and how many of each kind. */
+interface Around {
+  times: number[];
+  wrote: number[];
+  moments: Moment[];
+}
+const aroundOf = (wrote: number[], moments: Moment[]): Around => ({ times: [...wrote, ...moments.map((m) => m[1])].sort((a, b) => a - b), wrote, moments });
 
 /** A share of n with its 80% Wilson interval, in whole percent. */
 function share(k: number, n: number): [number, number, number] {
@@ -152,13 +235,15 @@ function clockMedian(xs: number[], about: number): { at: number; spread: number 
 }
 
 /**
- * Their usual day in `zone`, from message times over [now - days, now]: per hour and per weekday-hour, the share of
- * the days observed that had a message then; and their usual night, from the gaps of 3 to 20 hours that cover the
- * quietest part of their day.
+ * Their usual day in `zone`, from the times they were around over [now - days, now] (`ts`, oldest first): per hour and
+ * per weekday-hour, the share of the days observed that had any of it then, and per hour the share with a message
+ * (`wrote`, the messages' times; all of `ts` when not given); and their usual night, from the gaps of 3 to 20 hours
+ * that cover the quietest part of their day.
  */
-export function usualDay(ts: number[], zone: Zone, now: number, days = DAY_WINDOW): Omit<P.TheirDayView, 'clock' | 'frame'> {
+export function usualDay(ts: number[], zone: Zone, now: number, days = DAY_WINDOW, wrote = ts): Omit<P.TheirDayView, 'clock' | 'frame' | 'counts'> {
   const start = now - days * DAY;
-  const times = ts.filter((t) => t >= start && t <= now + MIN);
+  const within = (t: number) => t >= start && t <= now + MIN;
+  const times = ts.filter(within);
   const pieces = offsetPieces(zone, start - DAY, now + HOUR);
   const offset = (t: number) => {
     let lo = 0;
@@ -179,11 +264,14 @@ export function usualDay(ts: number[], zone: Zone, now: number, days = DAY_WINDO
   const weekDays = new Array(7).fill(0) as number[];
   for (let d = today - observed + 1; d <= today; d++) weekDays[weekday(d)]++;
 
-  const seen = new Set<number>();
-  for (const t of times) {
+  const localHour = (t: number) => {
     const local = t + offset(t);
-    seen.add(Math.floor(local / DAY) * 24 + Math.floor(mod(local, DAY) / HOUR));
-  }
+    return Math.floor(local / DAY) * 24 + Math.floor(mod(local, DAY) / HOUR);
+  };
+  const seen = new Set(times.map(localHour));
+  const wroteIn = new Set(wrote.filter(within).map(localHour));
+  const byWrote = new Array(24).fill(0) as number[];
+  for (const k of wroteIn) byWrote[mod(k, 24)]++;
   const byHour = new Array(24).fill(0) as number[];
   const byWeek = new Array(168).fill(0) as number[];
   for (const k of seen) {
@@ -191,10 +279,10 @@ export function usualDay(ts: number[], zone: Zone, now: number, days = DAY_WINDO
     byHour[h]++;
     byWeek[weekday(Math.floor(k / 24)) * 24 + h]++;
   }
-  const hours = byHour.map((k) => share(k, observed));
+  const hours = byHour.map((k, h) => [...share(k, observed), share(byWrote[h], observed)[0]] as [number, number, number, number]);
   const week = byWeek.map((k, i) => share(k, weekDays[Math.floor(i / 24)]));
 
-  const out: Omit<P.TheirDayView, 'clock' | 'frame'> = { days: observed, messages: times.length, hours, week, weekDays };
+  const out: Omit<P.TheirDayView, 'clock' | 'frame' | 'counts'> = { days: observed, hours, week, weekDays };
   if (times.length < 2) return out;
   // The quietest six hours of their day; its middle is the night every gap counted has to cover.
   let low = 0;
@@ -246,6 +334,8 @@ interface ClockDeps {
   pins?: { get: () => Record<string, string>; set: (m: Record<string, string>) => void };
   /** Ask a network for an identity's profile, which keeps its zone (people.ts). */
   askProfile?: (identityId: string) => Promise<unknown>;
+  /** Whether presence and statuses are logged now; both read when not given (the log holds them only while they were). */
+  logged?: () => Logged;
   now?: () => number;
 }
 
@@ -257,11 +347,33 @@ export class Clocks {
   /** Queued or being asked. */
   private pending = new Set<string>();
   private inFlight = 0;
+  /** What else the authors of one clocks() call did, read for all of them at once. */
+  private pre: Map<string, Moment[]> | null = null;
+  private bursts: { at: number; from: number; minutes: Set<number> } | null = null;
 
   constructor(private d: ClockDeps) {}
 
   private now() {
     return this.d.now?.() ?? Date.now();
+  }
+
+  /** Presence bursts, kept a while: reading them goes through every presence change. */
+  private burstsFrom(from: number): Set<number> {
+    const b = this.bursts;
+    if (b && b.from <= from && this.now() - b.at < 30 * MIN) return b.minutes;
+    this.bursts = { at: this.now(), from, minutes: burstMinutes(this.d.db, from) };
+    return this.bursts.minutes;
+  }
+
+  /** When they were around from `from` on: their messages and what else they did. */
+  private around(ids: string[], from: number): Around {
+    const pre = this.pre;
+    const moments = pre && ids.every((id) => pre.has(id)) ? ids.flatMap((id) => pre.get(id)!) : [...this.others(ids, from).values()].flat();
+    return aroundOf(messageTimes(this.d.db, ids, from), moments);
+  }
+
+  private others(ids: string[], from: number) {
+    return otherMoments(this.d.db, ids, from, this.d.logged?.() ?? { presence: true, statuses: true }, () => this.burstsFrom(from));
   }
 
   /** One author's clock; `asking` when a profile is being asked for a zone. Keyed by the ids' first, so a person is worked out once. */
@@ -277,7 +389,7 @@ export class Clocks {
     let clock: P.TheirClock | null = stated ? { source: 'profile', zone: stated.zone, network: stated.network } : null;
     const asking = !stated && this.askForZone(who.ids);
     if (!clock) {
-      const g = guessOffset(messageTimes(this.d.db, who.ids, this.now() - DAY_WINDOW * DAY), near);
+      const g = guessOffset(this.around(who.ids, this.now() - DAY_WINDOW * DAY).times, near);
       if (g && g.sure >= SHOW_SURE && g.days >= SHOW_DAYS) clock = { source: 'rhythm', offset: g.offset, sure: g.sure, days: g.days };
     }
     if (!asking) this.kept.set(key, { at: this.now(), clock, ids: who.ids });
@@ -286,12 +398,25 @@ export class Clocks {
 
   /** Several authors at once (GET /api/people/clocks). */
   clocks(refs: string[], near: number | null): P.TheirClocksView {
+    // What else they did, for every author to be worked out, in one pass over each table rather than one each.
+    const pins = this.d.pins?.get() ?? {};
+    const need = refs.flatMap((r) => {
+      const who = identitiesOf(this.d.db, r);
+      if (!who || who.self || knownZone(pins[who.key])) return [];
+      const k = this.kept.get(`${who.key}|${near}`);
+      return k && this.now() - k.at < 30 * MIN ? [] : who.ids;
+    });
+    this.pre = need.length > 1 ? this.others([...new Set(need)], this.now() - DAY_WINDOW * DAY) : null;
     const clocks: Record<string, P.TheirClock | null> = {};
     const asking: string[] = [];
-    for (const r of refs) {
-      const c = this.clock(r, near);
-      clocks[r] = c.clock;
-      if (c.asking) asking.push(r);
+    try {
+      for (const r of refs) {
+        const c = this.clock(r, near);
+        clocks[r] = c.clock;
+        if (c.asking) asking.push(r);
+      }
+    } finally {
+      this.pre = null;
     }
     return { clocks, ...(asking.length ? { asking } : {}) };
   }
@@ -304,8 +429,14 @@ export class Clocks {
     const near = offsetAt(yours, now) / MIN;
     const { clock } = who.self ? { clock: null } : this.clock(ref, near);
     const zone: Zone = clock ? (clock.source === 'rhythm' ? { offset: clock.offset } : { tz: clock.zone }) : yours;
-    const day = usualDay(messageTimes(this.d.db, who.ids, now - (DAY_WINDOW + 1) * DAY), zone, now);
-    return { clock, frame: { theirs: !!clock, zone: zoneName(zone), offsetNow: offsetAt(zone, now) / MIN }, ...day };
+    const a = this.around(who.ids, now - (DAY_WINDOW + 1) * DAY);
+    const day = usualDay(a.times, zone, now, DAY_WINDOW, a.wrote);
+    const start = now - DAY_WINDOW * DAY;
+    const counts: P.TheirDayView['counts'] = {};
+    const wrote = who.ids.length ? ((this.d.db.query(`SELECT COUNT(*) AS n FROM message WHERE author_id IN (${marks(who.ids.length)}) AND ts >= ?`).get(...who.ids, start) as Row).n as number) : 0;
+    if (wrote) counts.messages = wrote;
+    for (const [kind, at] of a.moments) if (at >= start) counts[kind] = (counts[kind] ?? 0) + 1;
+    return { clock, frame: { theirs: !!clock, zone: zoneName(zone), offsetNow: offsetAt(zone, now) / MIN }, ...day, counts };
   }
 
   /** Set their zone by hand, or clear it (null). False for an unknown person or zone. */

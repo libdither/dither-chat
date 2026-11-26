@@ -2305,6 +2305,12 @@ export class Store {
     return r.adversarial && r.presence && r.changes;
   }
 
+  /** Whether statuses over time are logged, in the change log. */
+  logsStatuses(): boolean {
+    const r = this.retention();
+    return r.adversarial && r.statuses && r.changes;
+  }
+
   /**
    * Someone's presence as heard now, logged only while logsPresence(); otherwise the hub keeps nothing of it. The
    * newest logged row is how they are now, so a change is anything else, and the same heard from a second account
@@ -2465,8 +2471,7 @@ export class Store {
     const own = (this.db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]).map((r) => r.id as string);
     const selves = [...new Set([...this.selfIdentities, ...own])];
     const self = !!person?.is_self || ids.some((id) => selves.includes(id));
-    const r = this.retention();
-    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: r.adversarial && r.statuses && r.changes });
+    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: this.logsStatuses() });
   }
 
   /** The top-level community a conversation is in (through sections, and a thread's channel), or null. */

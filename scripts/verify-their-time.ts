@@ -106,7 +106,7 @@ try {
   await point(`[data-probe="mika"] .msg-their-time`);
   await p.until(`!!document.querySelector('.their-day.shown .td-bar')`, 15_000);
   const text = (await card()) ?? '';
-  check(/for Mika/.test(text) && /Guessed from when they write/.test(text), 'the card shows her time and says it is a guess', text.split('\n').slice(0, 3));
+  check(/for Mika/.test(text) && /Guessed from when they are around/.test(text) && /reactions/.test(text), 'the card shows her time and says it is a guess', text.split('\n').slice(0, 3));
   check(/Usually quiet/.test(text), 'and when she is usually quiet', text.match(/Usually quiet[^\n]*/)?.[0]);
   await shot('card');
   await p.eval(`document.querySelector('.their-day .td-frames button:last-child').click()`);

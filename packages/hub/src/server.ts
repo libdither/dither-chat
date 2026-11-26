@@ -480,7 +480,12 @@ export class HubServer {
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
-    this.clocks = new Clocks({ db: store.db, pins: { get: store.zonePins, set: store.setZonePins }, askProfile: (id) => this.people.get(id) });
+    this.clocks = new Clocks({
+      db: store.db,
+      pins: { get: store.zonePins, set: store.setZonePins },
+      askProfile: (id) => this.people.get(id),
+      logged: () => ({ presence: store.logsPresence(), statuses: store.logsStatuses() }),
+    });
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
     this.searchThread = opts.searchFile ? new SearchThread({ store, file: opts.searchFile, secret: opts.secret, log: (l) => console.log(l) }) : null;

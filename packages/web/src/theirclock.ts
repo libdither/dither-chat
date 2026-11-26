@@ -1,6 +1,6 @@
 /**
  * What time it is for someone (docs/profile.md "Their time"): their clock from the hub (a zone set by hand, a zone a
- * profile states, or an offset guessed from when they write), asked for a chat's authors in one request as their
+ * profile states, or an offset guessed from when they are around), asked for a chat's authors in one request as their
  * messages are drawn, and kept a few hours; and their time at a moment, to show beside yours.
  */
 import type * as P from '@dither-chat/protocol';

@@ -1,7 +1,8 @@
 /**
  * Their usual day, on a card by a message's time (docs/profile.md "Their time"): the message's time in their time or
- * yours, where their clock comes from, and a bar of the day, hour by hour, of how often they write then, each hour
- * with its 80% range, their usual night shaded with its give-or-take, and the message and now marked. Week shows it
+ * yours, where their clock comes from, and a bar of the day, hour by hour, of how often they are around then (and,
+ * within it, write), each hour with its 80% range, their usual night shaded with its give-or-take, and the message and
+ * now marked. Week shows it
  * by weekday. Set time zone keeps a zone for them when the guess is wrong. A chunk of its own (TheirTime.tsx).
  */
 import type * as P from '@dither-chat/protocol';
@@ -28,12 +29,29 @@ const hourLabel = (h: number) => wallClock(Date.UTC(2000, 0, 1, mod(Math.round(h
 const minuteLabel = (m: number) => wallClock(Date.UTC(2000, 0, 1) + mod(Math.round(m), 1440) * 60_000, 0);
 const roughly = (min: number) => (min < 55 ? `${Math.round(min / 5) * 5} min` : `${Math.round(min / 30) / 2} h`);
 
+/** What they did, in the words the card counts it in: one, many. */
+const KINDS: [P.TheirActivity, string, string][] = [
+  ['messages', 'message', 'messages'],
+  ['reactions', 'reaction', 'reactions'],
+  ['reads', 'read receipt', 'read receipts'],
+  ['presence', 'time online or off', 'times online or off'],
+  ['statuses', 'status set', 'statuses set'],
+  ['votes', 'poll vote', 'poll votes'],
+  ['calls', 'call started', 'calls started'],
+];
+/** "412 messages, 80 reactions and 30 read receipts". */
+function countsLine(counts: P.TheirDayView['counts']): string {
+  const parts = KINDS.flatMap(([k, one, many]) => (counts[k] ? [`${counts[k]} ${counts[k] === 1 ? one : many}`] : []));
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : (parts[0] ?? 'nothing');
+}
+const total = (counts: P.TheirDayView['counts']) => Object.values(counts).reduce((a, b) => a + (b ?? 0), 0);
+
 /** Where their clock comes from, in a line. */
 function sourceLine(c: P.TheirClock | null, frame: P.TheirDayView['frame']): string {
-  if (!c) return 'Their time zone is not known: what they say on a profile, or enough days of messages, would tell.';
+  if (!c) return 'Their time zone is not known: what they say on a profile, or enough days of them around, would tell.';
   if (c.source === 'pinned') return `${c.zone}, set by you`;
   if (c.source === 'profile') return `${c.zone}, from their ${NETWORK_META[c.network]?.name ?? c.network} profile`;
-  return `Guessed from when they write (${frame.zone}): ${Math.round(c.sure * 100)}% likely within an hour, from ${c.days} days`;
+  return `Guessed from when they are around (${frame.zone}): ${Math.round(c.sure * 100)}% likely within an hour, from ${c.days} days`;
 }
 
 export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void }) {
@@ -144,8 +162,8 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
       ) : (
         <>
           <div class="td-line">{sourceLine(v.clock, v.frame)}</div>
-          {v.messages < 10 ? (
-            <div class="td-line">Too few messages from them in the last {v.days} days to show their day.</div>
+          {total(v.counts) < 10 ? (
+            <div class="td-line">Too little from them in the last {v.days} days to show their day.</div>
           ) : (
             <>
               <DayBar v={v} shift={shift} msgAt={minutesAt(card.ts)} nowAt={minutesAt(now)} />
@@ -168,13 +186,13 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
                   : 'Not enough nights yet to say when they are usually quiet.'}
               </div>
               <div class="td-line td-dim">
-                From {v.messages} messages over {v.days} days. A bar is the share of days they wrote in that hour; its line, the likely range.
+                From {countsLine(v.counts)} over {v.days} days. A bar is the share of days they were around in that hour, its solid part the days they wrote; its line, the likely range.
               </div>
               {week && <WeekGrid v={v} shift={shift} />}
             </>
           )}
           <div class="td-actions">
-            {v.messages >= 10 && (
+            {total(v.counts) >= 10 && (
               <button type="button" class="link-btn" aria-expanded={week} onClick={() => setWeek(!week)}>
                 {week ? 'Hide week' : 'Week'}
               </button>
@@ -197,7 +215,10 @@ function Layer({ onClose }: { onClose: () => void }) {
   return null;
 }
 
-/** The day as a bar: hours along it, how often they write in each (a column, its range a line), their night shaded. */
+/**
+ * The day as a bar: hours along it, how often they are around in each (a column, its range a line) and how often they
+ * write (the column's solid part), their night shaded.
+ */
 function DayBar({ v, shift, msgAt, nowAt }: { v: P.TheirDayView; shift: number; msgAt: number; nowAt: number }) {
   const H = 44;
   const x = (h: number) => (mod(h, 24) / 24) * W;
@@ -217,12 +238,13 @@ function DayBar({ v, shift, msgAt, nowAt }: { v: P.TheirDayView; shift: number; 
       <rect class="td-track" x={0} y={0} width={W} height={H} rx={4} />
       {q && span((q.from - q.fromSpread) / 60 + shift, (q.to + q.toSpread) / 60 + shift, 'td-night-edge', 'e')}
       {q && span((q.from + q.fromSpread) / 60 + shift, (q.to - q.toSpread) / 60 + shift, 'td-night', 'n')}
-      {v.hours.map(([p, lo, hi], h) => {
+      {v.hours.map(([p, lo, hi, wrote], h) => {
         const at = x(h + shift);
         return (
           <g key={h}>
-            <title>{`${hourLabel(h + shift)}: wrote on ${p}% of days (likely ${lo}–${hi}%)`}</title>
+            <title>{`${hourLabel(h + shift)}: around on ${p}% of days (likely ${lo}–${hi}%), wrote on ${wrote}%`}</title>
             <rect class="td-col" x={at + 1} y={y(p)} width={cw - 2} height={H - y(p)} />
+            {wrote > 0 && <rect class="td-wrote" x={at + 1} y={y(wrote)} width={cw - 2} height={H - y(wrote)} />}
             <line class="td-range" x1={at + cw / 2} x2={at + cw / 2} y1={y(hi)} y2={y(lo)} />
           </g>
         );
@@ -238,7 +260,7 @@ function DayBar({ v, shift, msgAt, nowAt }: { v: P.TheirDayView; shift: number; 
   );
 }
 
-/** By weekday: a row a day, Monday first, each hour's cell as strong as how often they write then. */
+/** By weekday: a row a day, Monday first, each hour's cell as strong as how often they are around then. */
 function WeekGrid({ v, shift }: { v: P.TheirDayView; shift: number }) {
   const rowH = 13;
   const cw = W / 24;
@@ -257,7 +279,7 @@ function WeekGrid({ v, shift }: { v: P.TheirDayView; shift: number }) {
         const row = Math.floor(at / 24);
         const col = at - row * 24;
         const n = v.weekDays[Math.floor(i / 24)];
-        const label = `${LONG_WEEKDAYS[row]} ${hourLabel(col)}: wrote on ${Math.round((p / 100) * n)} of ${n} ${LONG_WEEKDAYS[row]}s (likely ${lo}–${hi}%)`;
+        const label = `${LONG_WEEKDAYS[row]} ${hourLabel(col)}: around on ${Math.round((p / 100) * n)} of ${n} ${LONG_WEEKDAYS[row]}s (likely ${lo}–${hi}%)`;
         const draw = (c: number, r: number, k: string) => (
           <rect key={k} class="td-cell" x={L + c * cw + 0.5} y={r * rowH + 1} width={cw - 1} height={rowH - 2} style={{ opacity: p ? 0.15 + (0.85 * p) / top : 0.06 }}>
             <title>{label}</title>

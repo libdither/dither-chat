@@ -1,6 +1,7 @@
 /**
  * Their time (theirclock.ts, docs/profile.md "Their time"): a zone a profile states wins; else an offset guessed from
- * the hours they write in, shown only when sure enough; their usual day by hour with intervals, and their usual night.
+ * the hours they are around in (writing, reacting, reading, coming online…), shown only when sure enough; their usual
+ * day by hour with intervals, and their usual night.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
@@ -76,8 +77,8 @@ describe('their usual day', () => {
     expect(d.week.length).toBe(168);
     expect(d.weekDays.reduce((a, b) => a + b, 0)).toBe(d.days);
     for (const h of [3, 4, 5]) expect(d.hours[h][0]).toBeLessThan(5);
-    for (const [p, lo, hi] of d.hours) expect(lo <= p && p <= hi).toBe(true);
-    const mean = (xs: [number, number, number][]) => xs.reduce((n, x) => n + x[0], 0) / xs.length;
+    for (const [p, lo, hi, wrote] of d.hours) expect(lo <= p && p <= hi && wrote === p).toBe(true);
+    const mean = (xs: number[][]) => xs.reduce((n, x) => n + x[0], 0) / xs.length;
     expect(mean(d.hours.slice(9, 23))).toBeGreaterThan(5 * mean(d.hours.slice(2, 6)) + 5);
     // In bed around half past midnight, up around eight (an hour later at weekends): quiet from a little before the
     // one to a little after the other.
@@ -93,8 +94,20 @@ describe('their usual day', () => {
     const ts = rhythmTimes(person('Asia/Tokyo'), 60, NOW, 3);
     const tokyo = usualDay(ts, { tz: 'Asia/Tokyo' }, NOW);
     const utc = usualDay(ts, { offset: 0 }, NOW);
-    const quietest = (h: [number, number, number][]) => h.map((x) => x[0]).indexOf(Math.min(...h.map((x) => x[0])));
+    const quietest = (h: number[][]) => h.map((x) => x[0]).indexOf(Math.min(...h.map((x) => x[0])));
     expect((quietest(utc.hours) + 9) % 24).toBe(quietest(tokyo.hours));
+  });
+
+  test('around and wrote: hours they only react in count as around, not as written', () => {
+    const wrote = rhythmTimes(person('Asia/Tokyo', 18, 24.5), 60, NOW, 3);
+    const mornings = rhythmTimes(person('Asia/Tokyo', 8, 12), 60, NOW, 4);
+    const d = usualDay([...wrote, ...mornings].sort((a, b) => a - b), { tz: 'Asia/Tokyo' }, NOW, 90, wrote);
+    for (const [p, , , w] of d.hours) expect(w).toBeLessThanOrEqual(p);
+    const sum = (from: number, to: number, i: number) => d.hours.slice(from, to).reduce((n, h) => n + h[i], 0);
+    // Mornings: around, never written in; evenings written in.
+    expect(sum(8, 12, 0)).toBeGreaterThan(100);
+    expect(sum(8, 12, 3)).toBe(0);
+    expect(sum(18, 24, 3)).toBeGreaterThan(50);
   });
 
   test('too few nights: no usual night', () => {
@@ -110,7 +123,10 @@ describe('clocks from the database', () => {
       CREATE TABLE identity (id TEXT PRIMARY KEY, person_id TEXT, network TEXT);
       CREATE TABLE account (id TEXT PRIMARY KEY, self_identity TEXT);
       CREATE TABLE about (target_id TEXT, account_id TEXT, data TEXT, fetched_at INTEGER);
-      CREATE TABLE message (id INTEGER PRIMARY KEY, author_id TEXT, ts INTEGER, kind TEXT DEFAULT 'text');`);
+      CREATE TABLE message (id INTEGER PRIMARY KEY, author_id TEXT, ts INTEGER, kind TEXT DEFAULT 'text');
+      CREATE TABLE reaction (message_id TEXT, identity_id TEXT, key TEXT, at INTEGER, at_exact INTEGER DEFAULT 0);
+      CREATE TABLE receipt (message_id TEXT, identity_id TEXT, state TEXT, at INTEGER);
+      CREATE TABLE change_log (id INTEGER PRIMARY KEY, target_kind TEXT, target_id TEXT, field TEXT, old TEXT, new TEXT, at INTEGER);`);
     const add = (id: string, network: string, person: string | null, times: number[]) => {
       db.query('INSERT INTO identity VALUES (?, ?, ?)').run(id, person, network);
       for (const t of times) db.query('INSERT INTO message (author_id, ts) VALUES (?, ?)').run(id, t);
@@ -181,6 +197,54 @@ describe('clocks from the database', () => {
     expect(c.pin('idn_nobody', 'Asia/Seoul')).toBe(false);
     expect(c.pin('per_mika', null)).toBe(true);
     expect(c.clocks(['idn_mika_sig'], 0).clocks.idn_mika_sig?.source).toBe('rhythm');
+  });
+
+  /** Someone who wrote a few times only, but reacted, read and came online through six weeks in Tokyo. */
+  function quietWriter(db: Database, presence: { at: number; state: string }[] = []) {
+    const times = rhythmTimes(person('Asia/Tokyo'), 42, NOW, 21);
+    db.query('INSERT INTO identity VALUES (?, ?, ?)').run('idn_lurk', null, 'signal');
+    times.slice(-4).forEach((t) => db.query('INSERT INTO message (author_id, ts) VALUES (?, ?)').run('idn_lurk', t));
+    times.forEach((t, i) =>
+      i % 3 ? db.query('INSERT INTO reaction VALUES (?, ?, ?, ?, 1)').run(`m${i}`, 'idn_lurk', '👍', t) : db.query("INSERT INTO receipt VALUES (?, ?, 'read', ?)").run(`m${i}`, 'idn_lurk', t),
+    );
+    // A delivery is their phone, not them: never counted.
+    db.query("INSERT INTO receipt VALUES ('m0', 'idn_lurk', 'delivered', ?)").run(NOW - 3 * HOUR);
+    for (const p of presence) db.query("INSERT INTO change_log (target_kind, target_id, field, new, at) VALUES ('identity', 'idn_lurk', 'presence', ?, ?)").run(JSON.stringify({ state: p.state }), p.at);
+  }
+
+  test('reactions and reads place someone who barely writes, and their day counts each kind', () => {
+    const db = world();
+    quietWriter(db);
+    const c = new Clocks({ db, now: () => NOW });
+    const v = c.clocks(['idn_lurk', 'idn_mika_dc'], -360);
+    const g = v.clocks.idn_lurk!;
+    expect(g.source === 'rhythm' && Math.abs(g.offset - 540) <= 60 && g.days >= 10).toBe(true);
+    const d = c.day('idn_lurk', { tz: 'America/Chicago' })!;
+    expect(d.counts.messages).toBe(4);
+    expect(d.counts.reactions! + d.counts.reads!).toBeGreaterThan(100);
+    expect(d.counts.presence).toBeUndefined();
+    // Batched or one at a time, the same guess.
+    expect(new Clocks({ db, now: () => NOW }).clocks(['idn_lurk'], -360).clocks.idn_lurk).toEqual(g);
+  });
+
+  test('presence: coming online and leaving it count, idle to offline and a restart burst do not, nor anything while it is not logged', () => {
+    const db = world();
+    const t0 = NOW - 2 * DAY;
+    quietWriter(db, [
+      { at: t0, state: 'online' },
+      { at: t0 + HOUR, state: 'idle' },
+      { at: t0 + 5 * HOUR, state: 'offline' },
+      { at: t0 + 9 * HOUR, state: 'dnd' },
+      { at: t0 + 10 * HOUR, state: 'online' },
+      { at: t0 + 11 * HOUR, state: 'offline' },
+    ]);
+    // A fresh snapshot after a restart: everyone heard again in one minute.
+    const burst = t0 + 20 * HOUR;
+    for (let i = 0; i < 45; i++) db.query("INSERT INTO change_log (target_kind, target_id, field, new, at) VALUES ('identity', ?, 'presence', ?, ?)").run(i ? `idn_other${i}` : 'idn_lurk', JSON.stringify({ state: 'online' }), burst + i);
+    const day = (presence: boolean) => new Clocks({ db, now: () => NOW, logged: () => ({ presence, statuses: false }) }).day('idn_lurk', { offset: 0 })!;
+    // Online, off to idle, back (to do not disturb), to offline: four; idle to offline, dnd to online and the burst, none.
+    expect(day(true).counts.presence).toBe(4);
+    expect(day(false).counts.presence).toBeUndefined();
   });
 
   test('their day comes in their zone when it is known, in yours when not', () => {

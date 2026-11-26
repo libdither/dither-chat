@@ -1,7 +1,7 @@
 /**
  * The demo world's friends in other time zones (DITHER_DEMO_SCENARIO=clocks, docs/profile.md "Their time"): a
- * made-up Discord group whose people have written for six weeks on their own local days, so the hub can guess their
- * clocks from when they write. Discord states no zone, so each is a guess. Everyone and everything here is made up.
+ * made-up Discord group whose people have written and reacted for six weeks on their own local days, so the hub can
+ * guess their clocks from when they are around. Discord states no zone, so each is a guess. Everyone and everything here is made up.
  */
 import type * as P from '@dither-chat/protocol';
 import { HOUR, offsetAt } from './activitychart.ts';
@@ -93,6 +93,7 @@ const FRIENDS: Friend[] = [
 const SELF = { id: 'clocks-you', name: 'You' };
 const GROUP = 'clocks-group-1';
 
+const REACTIONS = ['👍', '😂', '❤️', '👀', '🎉'];
 const LINES = ['ok', 'ha', 'nice', 'same', 'on my way', 'did anyone try the new build?', 'sending the photos now', 'brb', 'good morning!', 'night all', 'that works for me', 'which day?', 'lol', 'checking', 'done', 'pushed the fix', 'any plans this weekend?', 'coffee first', 'sounds good'];
 
 export class DemoClocks implements InprocAdapter {
@@ -113,6 +114,17 @@ export class DemoClocks implements InprocAdapter {
     const msgs = FRIENDS.flatMap((f, i) => rhythmTimes(f.rhythm, 42, now, 17 + i).map((ts) => ({ ts, who: f.id }))).sort((a, b) => a.ts - b.ts);
     emit({ t: 'conversation', conversation: { nativeId: GROUP, shape: 'group', name: 'Across time zones', participants: [SELF.id, ...FRIENDS.map((f) => f.id)], lastMessageAt: msgs.at(-1)?.ts ?? now } });
     msgs.forEach((m, i) => emit({ t: 'message', live: false, message: { nativeId: `clocks-${i}`, conversation: GROUP, author: m.who, ts: m.ts, body: LINES[(i * 7) % LINES.length] } }));
+    // Reactions on days and at hours they don't write too, to the newest message before from someone else.
+    FRIENDS.forEach((f, i) => {
+      let k = 0;
+      let next = 0;
+      for (const ts of rhythmTimes({ ...f.rhythm, perDay: 3, active: 0.6 }, 42, now, 41 + i)) {
+        while (next < msgs.length && msgs[next].ts < ts) next++;
+        let j = next - 1;
+        while (j >= 0 && msgs[j].who === f.id) j--;
+        if (j >= 0) emit({ t: 'reaction', conversation: GROUP, message: `clocks-${j}`, author: f.id, key: REACTIONS[k++ % REACTIONS.length], ts });
+      }
+    });
     emit({ t: 'read', conversation: GROUP, upToTs: msgs.at(-1)?.ts ?? now, unread: 0, mentions: 0 });
   }
 

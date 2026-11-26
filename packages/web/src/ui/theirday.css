@@ -79,8 +79,12 @@
 .td-night-edge {
   fill: color-mix(in oklab, var(--text) 8%, transparent);
 }
+/* Around in that hour; its solid part, wrote. */
 .td-col {
-  fill: color-mix(in oklab, var(--accent) 75%, transparent);
+  fill: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.td-wrote {
+  fill: color-mix(in oklab, var(--accent) 80%, transparent);
 }
 .td-range {
   stroke: var(--text-dim);

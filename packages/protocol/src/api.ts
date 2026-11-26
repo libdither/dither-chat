@@ -1399,9 +1399,12 @@ export type TheirClock =
       offset: number;
       /** The chance the true offset is within an hour of it, 0 to 1. */
       sure: number;
-      /** Days with a message of theirs that it was guessed from. */
+      /** Days they were around (wrote, reacted, read, came online…) that it was guessed from. */
       days: number;
     };
+
+/** What counts as their being around, on their day (TheirDayView.counts): each a moment they did something. */
+export type TheirActivity = 'messages' | 'reactions' | 'reads' | 'votes' | 'calls' | 'statuses' | 'presence';
 
 /**
  * GET /api/people/clocks?ids=<identity ids>&tz=<your zone>: each author's clock, null where none is known or the
@@ -1413,24 +1416,26 @@ export interface TheirClocksView {
 }
 
 /**
- * GET /api/people/:id/day?tz=<your zone> (:id a person or an identity): when they usually write, over the last 90
- * days, by hour of the day in `frame` (their zone, or yours when theirs is not known). Shares are of the days observed
- * that had a message in that hour, in percent, with an 80% interval: [share, low, high].
+ * GET /api/people/:id/day?tz=<your zone> (:id a person or an identity): when they are usually around, over the last
+ * 90 days, by hour of the day in `frame` (their zone, or yours when theirs is not known). Around is anything they did
+ * that the hub logs with a time (TheirActivity): a message, a reaction, a read receipt, a vote, a call, a status set,
+ * coming online or leaving (the last two only while presence is logged). Shares are of the days observed that had any
+ * of it in that hour, in percent, with an 80% interval, and the share that had a message: [share, low, high, wrote].
  */
 export interface TheirDayView {
   clock: TheirClock | null;
   /** The zone the hours are in: theirs when `clock` is set, else yours. Its offset now, minutes east of UTC. */
   frame: { theirs: boolean; zone: string; offsetNow: number };
-  /** Days observed (from their first message in the window, or the window's start), and their messages in them. */
+  /** Days observed (from the first thing they did in the window, or the window's start), and what they did in them, by kind. */
   days: number;
-  messages: number;
-  hours: [share: number, low: number, high: number][];
+  counts: Partial<Record<TheirActivity, number>>;
+  hours: [share: number, low: number, high: number, wrote: number][];
   /** Weekday by hour, 7 × 24, Monday first, and how many of each weekday were observed. */
   week: [share: number, low: number, high: number][];
   weekDays: number[];
   /**
-   * Their usual night: when they go quiet and when they write again, in minutes after midnight in `frame`, each with
-   * its spread (minutes, about one standard deviation), from `nights` nights. Absent with fewer than 7.
+   * Their usual night: when they go quiet and when they are around again, in minutes after midnight in `frame`, each
+   * with its spread (minutes, about one standard deviation), from `nights` nights. Absent with fewer than 7.
    */
   quiet?: { from: number; to: number; fromSpread: number; toSpread: number; nights: number };
 }
