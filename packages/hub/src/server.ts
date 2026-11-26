@@ -62,6 +62,7 @@ import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { Answers } from './theiranswer.ts';
 import { Clocks } from './theirclock.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
@@ -375,6 +376,8 @@ export class HubServer {
   readonly people: People;
   /** What time it is for someone, and their usual day (theirclock.ts, docs/profile.md "Their time"). */
   readonly clocks: Clocks;
+  /** When someone is likely to answer you (theiranswer.ts, docs/profile.md "When they answer"). */
+  readonly theirAnswers: Answers;
   /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
   readonly matches: SameMatches;
   /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
@@ -485,6 +488,7 @@ export class HubServer {
       askProfile: (id) => this.people.get(id),
       logged: () => ({ presence: store.logsPresence(), statuses: store.logsStatuses() }),
     });
+    this.theirAnswers = new Answers({ db: store.db, clocks: this.clocks });
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
     this.searchThread = opts.searchFile ? new SearchThread({ store, file: opts.searchFile, secret: opts.secret, log: (l) => console.log(l) }) : null;
@@ -1493,6 +1497,10 @@ export class HubServer {
       if (!zone) return bad('unknown time zone');
       const v = this.clocks.day(m[1], zone);
       return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/answer$/)) && method === 'GET') {
+      const v = this.theirAnswers.answer(m[1]);
+      return v ? ok(v) : bad('nobody by that id, or you', 404);
     }
     if ((m = path.match(/^\/api\/people\/([\w-]+)\/zone$/)) && method === 'PUT') {
       const b = await body<Partial<P.ZonePinBody>>();

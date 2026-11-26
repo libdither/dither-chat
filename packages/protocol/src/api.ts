@@ -1440,6 +1440,28 @@ export interface TheirDayView {
   quiet?: { from: number; to: number; fromSpread: number; toSpread: number; nights: number };
 }
 
+/**
+ * GET /api/people/:id/answer: when they are likely to answer you (docs/profile.md "When they answer"), from how long
+ * they took with your earlier messages in your direct chats, timed in the hours they are usually around. For your
+ * message they have not answered yet, as of now; else for one you would send now.
+ */
+export interface TheirAnswerView {
+  /** When your unanswered message was sent (the first of your run); null: the last word is theirs, and this is for a message sent now. */
+  waiting: number | null;
+  /** The chance, in percent, they have answered by each half hour from now, for a day, given no answer yet. */
+  by: number[];
+  /** When that chance reaches a half, and 8 in 10; null when it does not within a week of the message. */
+  half: number | null;
+  likely: number | null;
+  /** The chance, in percent, of an answer within a week of the message. */
+  week: number;
+  /** Your earlier messages to them it is from, and how many days back the first was. */
+  turns: number;
+  days: number;
+  /** How much of it is theirs rather than everyone's answers to you, 0 to 1. */
+  own: number;
+}
+
 /** PUT /api/people/:id/zone: set their zone by hand (an IANA name), or null to go back to what is said or guessed. */
 export interface ZonePinBody {
   zone: string | null;

@@ -2379,6 +2379,8 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   const sendAsValue = pref('sendAs')[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
   const held = heldRequest(db.requests, c.id);
+  // A chat with one person: when they are likely to answer you, at the typing line's end (docs/profile.md "When they answer").
+  const peer = c.shape === 'direct' && c.peerPersonId ? db.persons.get(c.peerPersonId) : undefined;
   // A stage you are in is a room (docs/calls.md "The room view"): beside the chat on a wide pane, a Room / Chat switch
   // on a narrow one (a container query on .room-pane), only the room where there is no chat.
   const room = roomCall(c);
@@ -2402,6 +2404,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <TypingBar
         convIds={[c.id]}
         tkey={timelineKey('c', c.id)}
+        awaited={peer ? { who: peer.id, name: peer.name, last: c.lastMessageAt } : undefined}
         lead={
           !held &&
           (accounts.length > 1 ? (
@@ -2557,6 +2560,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       <TypingBar
         convIds={shown.map((d) => d.id)}
         tkey={tkey}
+        awaited={{ who: person.id, name: person.name, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) || null }}
         lead={
           !held && (
             <>

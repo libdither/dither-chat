@@ -19,6 +19,8 @@ export interface DayCard {
   frame: 'theirs' | 'yours';
   /** Opened by a click or a tap: it stays until closed, and back closes it. */
   pinned: boolean;
+  /** Opened from your message waiting on their answer (ui/Typing.tsx): the card leads with when it is likely to come. */
+  answer?: boolean;
 }
 
 const dayCard = signal<DayCard | null>(null);
@@ -74,6 +76,11 @@ export function dayHover(m: P.MessageView, name: string, frame: DayCard['frame']
   const id = m.authorId;
   if (!id) return {};
   return { onPointerEnter: (e: PointerEvent) => enter(e, { identityId: id, name, ts: m.ts, frame }), onPointerLeave: leaveCard };
+}
+
+/** Something that shows someone's day for a time when pointed at, and keeps it open when clicked, as their times do. */
+export function dayCardProps(card: Omit<DayCard, 'el' | 'pinned'>) {
+  return { onPointerEnter: (e: PointerEvent) => enter(e, card), onPointerLeave: leaveCard, onClick: (e: MouseEvent) => pin(e, card) };
 }
 
 /** A message head's times: yours, then theirs where it differs. `hover`: a pointer to show cards with. */

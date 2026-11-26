@@ -126,6 +126,22 @@ export class DemoClocks implements InprocAdapter {
       }
     });
     emit({ t: 'read', conversation: GROUP, upToTs: msgs.at(-1)?.ts ?? now, unread: 0, mentions: 0 });
+    // A direct chat with each: you write a few minutes before a burst of theirs, or an hour after their last of a
+    // stretch; your last message, half an hour ago, still waits on them (docs/profile.md "When they answer").
+    FRIENDS.forEach((f, i) => {
+      const dm = `clocks-dm-${f.id}`;
+      const theirs = rhythmTimes({ ...f.rhythm, perDay: 4, active: 0.7 }, 42, now - HOUR, 61 + i);
+      emit({ t: 'conversation', conversation: { nativeId: dm, shape: 'direct', participants: [SELF.id, f.id], lastMessageAt: now - 30 * MIN } });
+      let k = 0;
+      const say = (author: string, ts: number) => emit({ t: 'message', live: false, message: { nativeId: `${dm}-${k}`, conversation: dm, author, ts, body: LINES[(k++ * 5 + i) % LINES.length] } });
+      theirs.forEach((ts, j) => {
+        const before = theirs[j - 1];
+        if (before === undefined || ts - before > HOUR) say(SELF.id, j % 3 === 2 && before !== undefined ? before + HOUR : ts - (4 + ((j * 7) % 26)) * MIN);
+        say(f.id, ts);
+      });
+      say(SELF.id, now - 30 * MIN);
+      emit({ t: 'read', conversation: dm, upToTs: now - 30 * MIN, unread: 0, mentions: 0 });
+    });
   }
 
   command(cmd: P.AdapterCommand) {

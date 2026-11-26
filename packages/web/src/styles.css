@@ -11109,6 +11109,18 @@ html[data-theme='light'] .acc-dot {
   font-weight: 700;
   color: var(--text);
 }
+/* Your message waiting on their answer: when it is likely to come (Typing.tsx AnswerNote). Pointing shows their day. */
+.answer-note {
+  pointer-events: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.answer-note:hover {
+  color: var(--text-dim);
+}
 .typing-dots {
   display: inline-flex;
   align-items: center;

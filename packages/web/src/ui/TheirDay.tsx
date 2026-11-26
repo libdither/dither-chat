@@ -11,11 +11,13 @@ import { createPortal } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../api.ts';
 import { useLayer } from '../phone.ts';
+import { answerLine, ENOUGH_TURNS } from '../theiranswer.ts';
 import { clockOffset, forgetClock, myOffset, myZone, wallClock } from '../theirclock.ts';
 import { leaveCard, stayCard, type DayCard } from './TheirTime.tsx';
 import './theirday.css';
 
 const days = new Map<string, { at: number; v: P.TheirDayView }>();
+const answers = new Map<string, { at: number; v: P.TheirAnswerView }>();
 const KEEP_MS = 5 * 60_000;
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -59,10 +61,22 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
   const [week, setWeek] = useState(false);
   const [zoneOpen, setZoneOpen] = useState(false);
   const [v, setV] = useState(() => days.get(card.identityId)?.v ?? null);
+  const [answer, setAnswer] = useState(() => answers.get(card.identityId)?.v ?? null);
   const [failed, setFailed] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
 
+  const fetchAnswer = () => {
+    const k = answers.get(card.identityId);
+    if (k && Date.now() - k.at < 60_000) return setAnswer(k.v);
+    api<P.TheirAnswerView>(`/api/people/${card.identityId}/answer`).then(
+      (a) => {
+        answers.set(card.identityId, { at: Date.now(), v: a });
+        setAnswer(a);
+      },
+      () => setAnswer(null),
+    );
+  };
   const fetchDay = (force = false) => {
     const k = days.get(card.identityId);
     if (!force && k && Date.now() - k.at < KEEP_MS) return setV(k.v);
@@ -77,6 +91,7 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
   useLayoutEffect(() => {
     setFrame(card.frame);
     fetchDay();
+    fetchAnswer();
   }, [card.identityId, card.ts, card.frame]);
 
   // Beside the time: below it, or above where the window has no room below.
@@ -88,7 +103,7 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
     let y = r.bottom + 6;
     if (y + b.height > innerHeight - 8) y = Math.max(8, r.top - b.height - 6);
     setPos({ x, y });
-  }, [card.el, v, week, zoneOpen, frame]);
+  }, [card.el, v, answer, week, zoneOpen, frame]);
 
   // Escape closes it: a card opened by a click is a layer (back closes it too); one shown by pointing listens itself.
   useLayoutEffect(() => {
@@ -161,6 +176,7 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
         <div class="td-line">{failed ? 'Could not reach the hub.' : 'Working out their day…'}</div>
       ) : (
         <>
+          {card.answer && answer?.waiting != null && answer.turns >= ENOUGH_TURNS && <AnswerPart a={answer} v={v} at={atOffset} who={card.name} />}
           <div class="td-line">{sourceLine(v.clock, v.frame)}</div>
           {total(v.counts) < 10 ? (
             <div class="td-line">Too little from them in the last {v.days} days to show their day.</div>
@@ -191,6 +207,12 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
               {week && <WeekGrid v={v} shift={shift} />}
             </>
           )}
+          {!card.answer && answer && answer.turns >= ENOUGH_TURNS && (
+            <div class="td-line">
+              {answer.waiting === null ? 'A message now: ' : `Your message from ${wallClock(answer.waiting, atOffset(answer.waiting), true)}: `}
+              {answerLine(answer, now, true, atOffset)}
+            </div>
+          )}
           <div class="td-actions">
             {total(v.counts) >= 10 && (
               <button type="button" class="link-btn" aria-expanded={week} onClick={() => setWeek(!week)}>
@@ -206,6 +228,61 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
       )}
     </div>,
     document.body,
+  );
+}
+
+/**
+ * When they are likely to answer your message (docs/profile.md "When they answer"): in a line, and as the chance of it
+ * by each half hour of the next day, their usual quiet hours shaded.
+ */
+function AnswerPart({ a, v, at, who }: { a: P.TheirAnswerView; v: P.TheirDayView; at: (ts: number) => number; who: string }) {
+  const now = Date.now();
+  const H = 34;
+  const step = 30 * 60_000;
+  const x = (ms: number) => (ms / (24 * 3_600_000)) * W;
+  const y = (p: number) => H - (p / 100) * (H - 2);
+  const line = [`0,${y(0)}`, ...a.by.map((p, i) => `${x((i + 1) * step).toFixed(1)},${y(p).toFixed(1)}`)].join(' ');
+  // Their usual quiet hours along the next day, in the hours of the frame the hub gave them in.
+  const q = v.quiet;
+  const quiet: [number, number][] = [];
+  if (q) {
+    const inQuiet = (m: number) => (q.from <= q.to ? m >= q.from && m < q.to : m >= q.from || m < q.to);
+    for (let k = 0; k < 96; k++) {
+      const t = now + k * 15 * 60_000;
+      const m = mod(Math.floor((t + v.frame.offsetNow * 60_000) / 60_000), 1440);
+      if (!inQuiet(m)) continue;
+      const last = quiet.at(-1);
+      if (last && last[1] === k) last[1] = k + 1;
+      else quiet.push([k, k + 1]);
+    }
+  }
+  return (
+    <>
+      <div class="td-line td-answer">
+        Your message from {wallClock(a.waiting!, at(a.waiting!), true)}: <b>{answerLine(a, now, true, at)}</b>
+      </div>
+      <svg class="td-bar" viewBox={`0 0 ${W} ${H + 14}`} width={W} height={H + 14} role="img" aria-label={`The chance ${who} has answered, over the next day`}>
+        <rect class="td-track" x={0} y={0} width={W} height={H} rx={4} />
+        {quiet.map(([s, e]) => (
+          <rect key={s} class="td-night" x={(s / 96) * W} y={0} width={((e - s) / 96) * W} height={H} />
+        ))}
+        <polygon class="td-chance" points={`${line} ${W},${H}`} />
+        <polyline class="td-chance-line" points={line}>
+          <title>{a.by.map((p, i) => (i % 4 === 3 ? `${wallClock(now + (i + 1) * step, at(now + (i + 1) * step))}: ${p}%` : '')).filter(Boolean).join(', ')}</title>
+        </polyline>
+        {[50, 80].map((p) => (
+          <line key={p} class="td-guide" x1={0} x2={W} y1={y(p)} y2={y(p)} />
+        ))}
+        {[0, 6, 12, 18].map((h) => (
+          <text key={h} class="td-tick" x={x(h * 3_600_000) + 1} y={H + 11}>
+            {h ? wallClock(now + h * 3_600_000, at(now + h * 3_600_000)) : 'now'}
+          </text>
+        ))}
+      </svg>
+      <div class="td-line td-dim">
+        The chance they have answered by then, from {a.turns} of your messages to them over {a.days} days{a.own < 0.5 ? ', and everyone’s answers to you' : ''}, timed in the hours they are usually around. Lines at a half and 8 in 10.
+      </div>
+    </>
   );
 }
 
