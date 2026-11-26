@@ -143,6 +143,20 @@ volume and mute are remembered for the next video.
 The demo world has one video, an invented test pattern in Alice's WhatsApp chat (`packages/hub/src/demo-clip.webm`).
 `scripts/verify-video.ts` plays it with a mouse, keys and a finger, in CI.
 
+## Playing in the background
+
+What plays is tracked in one place, `src/nowplaying.ts`: a listener on the document hears every player's play, pause
+and end, whatever made it (the voice message's player, a sound file's, a video's). Muted and looping ones (GIFs,
+previews) do not count, nor a call's sound (`new Audio()`, never in the page). One plays at a time: starting one pauses
+the one before, and a call starting pauses it.
+
+It gives the system the controls: `navigator.mediaSession` in a browser (the title, "Voice message" or the file's
+name, the sender as artist, the chat as album, the sender's picture; play, pause, seek and stop, so media keys and the
+browser's own controls work), and in the Android app a media notification whose service keeps the sound going with the
+screen off ([android.md](android.md#playing-in-the-background)). A player taken out of the page (its chat closed) is
+paused by the browser, and with it what plays ends: playing on while you read other chats would need one player of the
+app's own outside the message rows, which is not built yet.
+
 ## Protocol
 
 Capabilities: `sendStickers`, `installStickers`, `searchGifs`, `sendGifs`, `sendVoice`, `sendViewOnce`, `stories`.

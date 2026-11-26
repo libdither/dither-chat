@@ -1,7 +1,8 @@
 /**
  * The Android app's bridge (apps/android). There the page runs in a WebView that injects `DitherAndroid`, a
  * message port restricted to the hub's origin (WebViewCompat.addWebMessageListener). It does what a WebView cannot:
- * keep a call alive with the screen off, pick the audio route, and receive push through UnifiedPush.
+ * keep a call alive with the screen off, keep a voice message or video playing with the screen off (nowplaying.ts), pick
+ * the audio route, and receive push through UnifiedPush.
  *
  * Messages are JSON both ways, `{ t: ... }`. Everywhere else `android` is null and nothing here runs.
  */
@@ -16,6 +17,7 @@ import { answerable } from './ringing.ts';
 import { api } from './api.ts';
 import type * as P from '@dither-chat/protocol';
 import { onIme, keepKeyboardRoom } from './phone.ts';
+import { control, onNowPlaying } from './nowplaying.ts';
 
 interface Port {
   postMessage(msg: string): void;
@@ -219,6 +221,10 @@ function receive(d: any) {
     case 'call.mute':
       if (activeCall.value) setMuted(!!d.muted);
       break;
+    // The media notification's buttons, the lock screen's, a headset's (apps/android MediaService.kt).
+    case 'media.do':
+      if (['play', 'pause', 'stop', 'seek'].includes(d.action)) control(d.action, typeof d.to === 'number' ? d.to : undefined);
+      break;
   }
 }
 
@@ -254,6 +260,8 @@ export function startAndroid() {
       android.send(msg);
     }
   });
+  // Something playing keeps going with the screen off inside the app's media service, which shows its controls.
+  onNowPlaying((n) => android.send(n ? { t: 'media', ...n } : { t: 'media', state: 'none' }));
   // Launch screen and status bar follow the theme the page picked.
   effect(() => {
     void [pref('theme'), pref('themeDark'), pref('themeLight')];

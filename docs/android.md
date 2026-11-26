@@ -28,6 +28,7 @@ Around the WebView:
 | Keyboard | A page that says it keeps the keyboard's room (`{ t: 'keyboard', page: true }`, after `info` lists `keyboard`) gets the WebView's whole height, and the keyboard's height over the navigation bar on every frame of its slide (`{ t: 'ime', h, done }`, from a `WindowInsetsAnimation` callback; Android 11+). The page then sizes itself to what the keyboard leaves, so the message box rides on the keyboard, and a panel can take the keyboard's place without the box moving ([phone.md](phone.md), "The keyboard and the panel"). Each new page starts with the app making room, until it says so again |
 | Bridge | `WebViewCompat.addWebMessageListener` named `DitherAndroid`, with an allowed-origin rule of the hub's origin only, so no other page, frame or redirect target can post to it. Page side: `packages/web/src/android.ts` |
 | Calls | `CallService`: a foreground service while the page says a call is live (`phoneCall`, and `microphone` once the microphone is allowed: [The call service](#the-call-service)), with an ongoing notification (Hang up, Mute, Audio route) |
+| Playing in the background | `MediaService`: a `mediaPlayback` foreground service while the page plays a voice message or a sound file, with a media notification and session (play and pause, the position, Close, the lock screen, a headset's button). See [Playing in the background](#playing-in-the-background) |
 | Audio route | `AudioManager.setCommunicationDevice` (Android 12+: speaker, earpiece, Bluetooth, wired, USB); speaker or earpiece before that. The notification's Audio button cycles; `android.setAudioRoute()` is there for the call UI. On the earpiece a proximity wake lock turns the screen off at the ear |
 | History uploads | The History section's upload buttons open the system picker from the app, which then uploads in a `dataSync` foreground service, so it goes on with the app closed. Files, or a whole folder, which a WebView's picker can't do. See [History uploads](#history-uploads) |
 | Push | UnifiedPush (below), registered from Settings → *Push on this device*. Tapping a notification opens its conversation; opening a conversation clears its notification; Reply in the notification goes through the hub's ordinary send, as `sw.js` does in a browser |
@@ -107,6 +108,39 @@ A push whose data has a `call` (`{id, tag, accountId, canAnswer, canDecline}`, f
   (`onceListed` in `src/versions.ts`). Until 2026-11-20 the wait ran again on every change the join itself made to the
   call: a cold Answer joined a hundred times, each asking for the microphone and opening a socket, and the last socket
   could stay connecting, leaving the call at *Connecting* while the network still rang.
+
+### Playing in the background
+
+A voice message or a sound file goes on playing with the app in the background or the screen off, as a call does.
+The page's tracker (`packages/web/src/nowplaying.ts`, [media-kinds.md](media-kinds.md#playing-in-the-background))
+says what plays over the bridge, `{t: 'media', state: 'playing' | 'paused' | 'none', title, artist, album,
+conversationId, duration, position, rate}`, and the app:
+
+- starts `MediaService`, a `mediaPlayback` foreground service, when something plays. It starts only from `playing`,
+  which a tap in the app starts while the app is in front: Android 12+ refuses a foreground service started from the
+  background. While it plays the activity skips `WebView.onPause`, the renderer keeps `RENDERER_PRIORITY_IMPORTANT`,
+  and the service holds a partial wake lock and a Wi-Fi lock (a file streams from the hub);
+- shows a media notification (channel `playing`) with a `MediaSession`: title ("Voice message", or the file's name),
+  the sender and the chat, the position bar, play and pause, and Close. Android 13+ draws these controls from the
+  session's playback state, so Close is a custom action there as well as a notification button. The lock screen and a
+  headset's button use the same session. Each control goes back to the page as `{t: 'media.do', action: 'play' |
+  'pause' | 'stop' | 'seek', to}`, and the page answers with its new state;
+- keeps the service while paused, so Play from the notification or a headset needs no new start from the background,
+  and stops it after 10 minutes paused, at Close (or the notification swiped away), when the sound ends, when its
+  page goes (a new page says hello, or the activity is destroyed: swiped from Recents), or when its player leaves the
+  page (its chat closed);
+- pauses it when headphones come out (`ACTION_AUDIO_BECOMING_NOISY`). A call starting pauses it (`call.ts
+  startCall`).
+
+A video is not played in the background: the WebView pauses a video once the app is hidden, and plays none while it
+is, even from the media session (checked on the emulator's WebView, 2026-11-26). The page then drops it, so the
+notification goes with it instead of offering a Play that does nothing.
+
+On the emulator a sound plays on in the background without the service too: the app sits cached (process state 15)
+for minutes and is neither frozen nor killed. What the service changes is the app's standing, process state 4 (a
+foreground service) instead of the first in line when Android needs memory, which is what ends a long voice message on
+a phone with other apps open. `scripts/verify-android-media.ts` checks the service, its notification and session, 30 s
+in the background with the screen off, the headset's pause and play, Close, the end, and a video (below).
 
 ## Crashes
 
@@ -537,7 +571,8 @@ For debugging, `./gradlew assembleDebug` builds an 8.8 MB debuggable APK, as its
 `scripts/verify-android.ts` runs every emulator test of the app, as CI's `android-device` workflow does
 ([testing.md](testing.md#android-on-an-emulator)): the calls test below against a demo hub of its own (its rings
 through the emulator's UnifiedPush distributor, such as ntfy, or through the test's own where it has none), then
-`scripts/verify-android-arrived.ts`, a push's copy of its message (docs/notifications.md, "A copy in the push"): kept
+`scripts/verify-android-media.ts` (playing in the background, [above](#playing-in-the-background)) against the same
+hub, then `scripts/verify-android-arrived.ts`, a push's copy of its message (docs/notifications.md, "A copy in the push"): kept
 with the app closed and the hub stopped, shown by an offline start from the notification's intent, a second push shown
 by the open page, and both gone with the app's records once the hub is back.
 
