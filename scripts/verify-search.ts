@@ -2,8 +2,8 @@
  * Search, end to end against a demo hub in headless Chromium: the box's operator suggestions (people with pictures),
  * picking one by keyboard, results as you type with no Enter, a misspelt search corrected, Jump to (Ctrl+K's matches),
  * top matches above the newest, hits grouped by conversation with context, the tabs and filter chips, recent searches,
- * walking the results with the arrow keys, Ctrl+F in a chat, the inbox box handing over to the search page, and more
- * results loading on scroll.
+ * walking the results with the arrow keys, Ctrl+F in a chat, the inbox box handing over to the search page (fast typing
+ * included), and more results loading on scroll.
  *
  *   bun scripts/verify-search.ts http://127.0.0.1:8791 /tmp/dc-search-shots
  * Only reads; still, point it at a demo hub (--demo) with its own data dir.
@@ -186,6 +186,33 @@ try {
   await p.until(`document.querySelectorAll('.search-suggest-row').length > 0`, 3000).catch(() => {});
   check((await rows()).some((r) => r.includes('general')) && (await onTop()), 'its suggestions follow, on top of the list below', await rows());
   await p.shot(join(shots, 'sidebar-suggest.png'));
+
+  // Fast typing: key after key with no wait, so some land in the inbox box before the search page's box has the cursor.
+  // Each of them must reach the page, in order.
+  const fast = async () => {
+    await p.goto(`${hub}/#/`);
+    await p.until(`!!document.querySelector('.sidebar .search-box input')`, 8000);
+    await p.eval(`document.querySelector('.sidebar .search-box input').focus()`);
+    for (const c of 'searching') {
+      await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: c, code: `Key${c.toUpperCase()}`, text: c, windowsVirtualKeyCode: c.toUpperCase().charCodeAt(0) });
+      await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: c, code: `Key${c.toUpperCase()}` });
+    }
+    // The query goes into the address a moment after the last key (TYPE_PAUSE_MS): wait for that too.
+    await p.until(`document.activeElement === document.querySelector('${box}') && document.querySelector('${box}').value.length >= 9 && new URLSearchParams(location.hash.split('?')[1]).get('q')?.length >= 9`, 5000).catch(() => {});
+    return p.eval<{ box: string; inbox: string; q: string }>(`({ box: document.querySelector('${box}')?.value, inbox: document.querySelector('.sidebar .search-box input').value, q: new URLSearchParams(location.hash.split('?')[1]).get('q') })`);
+  };
+  const typed = [await fast(), await fast()];
+  check(typed.every((t) => t.box === 'searching' && t.q === 'searching' && t.inbox === ''), 'fast typing in the inbox box loses no letter, and the inbox box lets go of it', typed);
+
+  // The inbox box's words fit it: a key hint where there is room, "…" where there is not, never cut mid-letter.
+  await p.goto(`${hub}/#/`);
+  await p.until(`!!document.querySelector('.sidebar .search-box input')`, 8000);
+  const fits = () => p.eval<{ hint: boolean; ellipsis: boolean; overlap: boolean }>(`(() => { const f = document.querySelector('.sidebar .search-box'); const i = f.querySelector('input'); const k = f.querySelector('.search-hint'); const shown = !!k && getComputedStyle(k).display !== 'none'; const ib = i.getBoundingClientRect(), kb = k?.getBoundingClientRect(); return { hint: shown, ellipsis: getComputedStyle(i).textOverflow === 'ellipsis', overlap: shown && ib.right > kb.left + 0.5 }; })()`);
+  const wide = await fits();
+  await p.eval(`document.querySelector('.sidebar .inbox-search').style.width = '190px'`);
+  const narrow = await fits();
+  check(wide.hint && !wide.overlap && wide.ellipsis && !narrow.hint && narrow.ellipsis, 'the inbox box shows Ctrl K when it has room and ends in "…" when it has not', { wide, narrow });
+  await p.shot(join(shots, 'sidebar-narrow.png'));
 
   // More results load as the list nears its end, no tap needed.
   await p.goto(`${hub}/#/search?q=the`);
