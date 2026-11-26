@@ -228,6 +228,9 @@ function pickVia(rows: { via: string; url: string | null }[] | undefined, url: s
   return rows?.find((r) => r.url === url)?.via ?? rows?.[0]?.via ?? null;
 }
 
+/** How long before and after a system message a change of its chat may count as what it brought (Store.messageChanges). */
+const SYSTEM_LEAD = 5_000;
+const SYSTEM_TAIL = 120_000;
 /** Fields that may go from nothing to something and back (Store.logChanges). */
 const SETTABLE = new Set(['topic', 'bio', 'status', 'pronouns']);
 const PRESENCE_STATES = new Set<string>(['online', 'idle', 'dnd', 'offline']);
@@ -2516,7 +2519,7 @@ export class Store {
   }
 
   /** What changed about these, newest first. `fields`: only these; `except`: not these. */
-  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[]; rolesOf?: string[] } = {}): P.ChangeView[] {
+  changes(targets: { kind: P.ChangeView['target']['kind']; id: string }[], limit = 100, pick: { fields?: string[]; except?: string[]; rolesOf?: string[]; from?: number; to?: number } = {}): P.ChangeView[] {
     if (!targets.length) return [];
     // A person's roles and groups given and lost in places (kept against the place), on their own page too, while
     // changes are kept.
@@ -2529,9 +2532,11 @@ export class Store {
     const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence', 'voice'))`;
     const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
     const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
+    // A span of time, both ends kept: the changes a system message ("Sam updated the group.") brought.
+    const span = `${pick.from !== undefined ? ' AND at >= ?' : ''}${pick.to !== undefined ? ' AND at <= ?' : ''}`;
     const rows = this.db
-      .query(`SELECT * FROM change_log WHERE (${where})${watched}${only}${not} ORDER BY at DESC, id DESC LIMIT ?`)
-      .all(...targets.flatMap((t) => [t.kind, t.id]), ...rolesOf, ...(pick.fields ?? []), ...(pick.except ?? []), limit) as Row[];
+      .query(`SELECT * FROM change_log WHERE (${where})${watched}${only}${not}${span} ORDER BY at DESC, id DESC LIMIT ?`)
+      .all(...targets.flatMap((t) => [t.kind, t.id]), ...rolesOf, ...(pick.fields ?? []), ...(pick.except ?? []), ...[pick.from, pick.to].filter((x): x is number => x !== undefined), limit) as Row[];
     const val = (r: Row, v: string | null): unknown => {
       const x = json<unknown>(v, null);
       return (r.field === 'avatar' || r.field === 'banner') && typeof x === 'string' ? this.media(x, r.account_id) : x;
@@ -2551,6 +2556,25 @@ export class Store {
         ...(typeof whose === 'string' ? { identityId: whose } : {}),
       };
     });
+  }
+
+  /**
+   * What a system message brought ("Sam updated the group."), on any network: its chat's changes logged from a little
+   * before it to a while after (Signal reads the group again after the message; others send the change first). A
+   * change belongs to the nearest line, so two lines close together never share one. null: no such message.
+   */
+  messageChanges(id: string): P.ChangeView[] | null {
+    const m = this.db.query('SELECT conversation_id, ts, kind FROM message WHERE id = ?').get(id) as Row | null;
+    if (!m) return null;
+    if (m.kind !== 'system') return [];
+    const near = (op: '<' | '>') =>
+      (this.db.query(`SELECT ${op === '<' ? 'MAX' : 'MIN'}(ts) AS ts FROM message WHERE conversation_id = ? AND kind = 'system' AND ts ${op} ?`).get(m.conversation_id, m.ts) as Row | null)?.ts as number | null;
+    const prev = near('<');
+    const next = near('>');
+    // Halfway to the lines on either side: the earlier half's changes are the earlier line's.
+    const from = Math.max(m.ts - SYSTEM_LEAD, prev !== null ? Math.floor((prev + m.ts) / 2) + 1 : -Infinity);
+    const to = Math.min(m.ts + SYSTEM_TAIL, next !== null ? Math.floor((m.ts + next) / 2) : Infinity);
+    return this.changes([{ kind: 'conversation', id: m.conversation_id }], 50, { from, to, except: ['status', 'presence', 'voice'] });
   }
 
   /** A message's versions, oldest first, the last as it reads now; what else happened to it; who got and read it. */

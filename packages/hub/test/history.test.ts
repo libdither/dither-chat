@@ -360,6 +360,36 @@ describe('adversarial features', () => {
     expect(store.one('SELECT COUNT(*) AS n FROM change_log WHERE field = ?', 'presence')).toEqual({ n: 0 });
   });
 
+  test('what a system message brought: the chat changes around it, each with the nearest line, on any network', () => {
+    conv(sig, { nativeId: 'g9', name: 'Board games', participants: ['me', 'ann'] });
+    const id = hubId('cnv', 'signal', 'g9');
+    const line = (nativeId: string, ts: number, kind: P.MessageFact['kind'] = 'system') => {
+      store.ingest(sig, { t: 'message', message: { nativeId, conversation: 'g9', author: 'ann', ts, kind, body: 'ANN updated the group.' }, live: true });
+      return hubId('msg', 'signal', nativeId);
+    };
+    const T = 50_000_000;
+    const first = line('sys1', T);
+    line('chat1', T + 10_000, 'text');
+    const second = line('sys2', T + 60_000);
+    const ann = hubId('idn', 'signal', 'ann');
+    store.logChange('conversation', id, 'name', 'Board games', 'Board game night', sig.id, T - 2_000); // the change came first
+    store.logChange('conversation', id, 'avatar', null, 'file:///pic-1', sig.id, T + 500); // Signal reads the group again
+    store.logChange('conversation', id, 'member', null, ann, sig.id, T + 56_000); // just before the second line: the second's
+    const third = line('sys3', T + 63_000);
+    store.logChange('conversation', id, 'name', 'Board game night', 'Games', sig.id, T + 62_900); // the third's, not the second's
+    store.logChange('conversation', id, 'topic', null, 'Fridays', sig.id, T + 61_000);
+    store.logChange('conversation', id, 'topic', 'Fridays', 'Fridays at 7', sig.id, T + 200_000); // long after: no line's
+    store.logChange('conversation', id, 'name', 'x', 'y', sig.id, T - 60_000); // long before
+    expect(store.messageChanges(first)!.map((c) => c.field)).toEqual(['avatar', 'name']);
+    expect(store.messageChanges(second)!.map((c) => [c.field, c.new])).toEqual([
+      ['topic', 'Fridays'],
+      ['member', ann],
+    ]);
+    expect(store.messageChanges(third)!.map((c) => [c.field, c.new])).toEqual([['name', 'Games']]);
+    expect(store.messageChanges(hubId('msg', 'signal', 'chat1'))).toEqual([]);
+    expect(store.messageChanges('msg_nope')).toBeNull();
+  });
+
   test('presence over time: the first heard, then each change; the same again, or from another account, is nothing new', () => {
     store.setRetention({ ...ADV, presence: true });
     const dc2 = store.createAccount({ network: 'discord', label: 'd2', color: '#222', adapter: 'discord' });
@@ -377,6 +407,10 @@ describe('adversarial features', () => {
     const bob = [{ kind: 'identity' as const, id: hubId('idn', 'discord', 'bob') }];
     expect(store.changes(bob, 100, { fields: ['presence'] }).length).toBe(3);
     expect(store.changes(bob, 100, { except: ['presence'] }).some((c) => c.field === 'presence')).toBe(false);
+    // Only a span of time, both ends kept: what a system message brought.
+    expect(store.changes(bob, 100, { from: 2000, to: 3000 }).map((c) => c.at)).toEqual([3000, 2000]);
+    expect(store.changes(bob, 100, { from: 2001 }).map((c) => c.at)).toEqual([3000]);
+    expect(store.changes(bob, 100, { to: 1999 }).map((c) => c.at)).toEqual([1000]);
     // Hidden, then forgotten.
     store.setRetention({ ...ADV, presence: true, adversarial: false });
     expect(presence()).toEqual([]);

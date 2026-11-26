@@ -32,6 +32,7 @@
         "src/ui/AccountSelf.tsx",
         "src/ui/AddAccount.tsx",
         "src/ui/apps/Apps.tsx",
+        "src/ui/SystemChanges.tsx",
         "src/ui/calendar/PlanChip.tsx",
         "src/ui/CallPanel.tsx",
         "src/ui/CallRoom.tsx",

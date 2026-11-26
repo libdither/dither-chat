@@ -56,10 +56,12 @@ const person = boot.persons.find((p: any) => p.id !== boot.selfPersonId && p.ide
 const account = boot.accounts[0];
 const folder = boot.folders.find((f: any) => f.items.some((i: any) => i.kind === 'conversation'));
 const folderConv = folder?.items.find((i: any) => i.kind === 'conversation').id;
+/** A group whose description changes here, for the card of what its line changed (docs/history.md "What a line changed"). */
+const family = boot.conversations.find((c: any) => c.name === 'dither core' && c.network === 'signal');
 /** A Matrix room with a thread: it opens on its stream (docs/threads.md "The channel stream"). */
 const room = boot.conversations.find((c: any) => c.network === 'matrix' && c.shape === 'channel' && boot.conversations.some((t: any) => t.shape === 'thread' && t.parentId === c.id));
 const roomThread = room && boot.conversations.find((t: any) => t.shape === 'thread' && t.parentId === room.id);
-if (!dm || !channel || !person || !folderConv || !roomThread) throw new Error('the demo world is missing a DM, a channel, a person, a folder with a chat or a Matrix room with a thread');
+if (!dm || !channel || !person || !folderConv || !roomThread || !family) throw new Error('the demo world is missing a DM, a channel, a person, a folder with a chat a Matrix room with a thread or the Signal group dither core');
 /** Mail as chats (docs/mail.md): a person's email route, and a thread with more people, a chat of its own. */
 let mailChat: any = boot.mail?.chats?.[0];
 let mailGroup: any;
@@ -205,6 +207,15 @@ const LAYERS: LayerCase[] = [
   { name: "a message's history", file: 'ui/MessageHistory.tsx', at: `#/inbox/c/${climb.id}`, open: async () => {
       await p.until(`!!document.querySelector('button.msg-edited.link')`, 10000);
       await click('button.msg-edited.link');
+    } },
+  { name: 'what a line changed', file: 'ui/SystemChanges.tsx', at: `#/inbox/c/${family?.id}`, open: async () => {
+      // The demo network says "You changed description." and logs the change, as a network does. Each run adds a
+      // line: it waits for this run's, the newest.
+      const lines = await p.eval<number>(`document.querySelectorAll('.msg.system .sys-what').length`);
+      const r = await fetch(`${hub}/api/conversations/${family.id}/about`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ change: { key: 'topic', value: `Sunday lunch at 1 ${Date.now()}` } }) });
+      if (!r.ok) throw new Error(`changing the description: ${r.status} ${await r.text()}`);
+      await p.until(`document.querySelectorAll('.msg.system .sys-what').length > ${lines}`, 10000);
+      await click('.msg.system .sys-what', 'left', true);
     } },
   { name: "search's filter chips", file: 'ui/Search.tsx', at: '#/search?q=pizza', open: () => click('.search-chip-main'), noLayer: true },
   { name: 'the theme picker', file: 'ui/Themes.tsx', at: '#/people', open: () => click('button[aria-label="Theme"]'), noLayer: true },
