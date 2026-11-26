@@ -105,8 +105,9 @@ export function HistoryCard({ path, network, person }: { path: string; network?:
   );
 }
 
-export function Change({ c, network, person }: { c: P.ChangeView; network?: P.Network; person?: boolean }) {
-  const [open, setOpen] = useState(false);
+/** `expanded`: a long value (a description, a bio) shows at once, as in the card of what a line changed. */
+export function Change({ c, network, person, expanded }: { c: P.ChangeView; network?: P.Network; person?: boolean; expanded?: boolean }) {
+  const [open, setOpen] = useState(!!expanded);
   const ident = c.target.kind === 'identity' ? db.identities.get(c.target.id) : null;
   const where = ident && !network ? (
     <span class="hist-src" title={netName(ident.network)}>

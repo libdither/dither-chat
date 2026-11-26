@@ -153,6 +153,19 @@ reactions with a known time (docs/reactions.md "When") and receipts.
 - Nothing said is no change: networks often leave fields out. A description, bio, status or pronouns may go from
   nothing to something and back; a name or picture is only replaced.
 
+### What a line changed
+
+A line a network puts in a chat, like "Sam updated the group.", says little on some networks. Pointing at it (or a
+click or tap) opens a card with what changed around it, whatever the network: the chat's own History rows, as on its
+profile. `GET /api/messages/:id/changes` gives them (Store.messageChanges): the chat's changes logged from 5 s before
+the line to 2 min after (Signal reads the group again after its line; other networks send the change first),
+statuses, presence and voice left out. A change belongs to the nearest line (the window stops halfway to the lines
+either side), so two lines close together never show the same change. Pointing at a line that brought nothing kept shows nothing; a click says so.
+
+What it can't show: a change the hub heard after the window (it was not running then, and caught up later), lines
+from an imported history, and anything the adapter doesn't say as a change (Signal's group picture keeps one file
+name, so a new picture is not seen as a change yet).
+
 ## A message's history
 
 One list for everything that happened to a message (ui/MessageHistory.tsx, rows in `messageHistory.ts`), oldest first

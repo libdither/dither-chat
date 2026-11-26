@@ -446,6 +446,49 @@ function useMdContext(network: P.Network) {
 }
 
 /** The text; `tail` (your message's ticks) sits right after its last word. */
+type SystemChunk = typeof import('./SystemChanges.tsx');
+let systemChunk: SystemChunk | null = null;
+const loadSystemChunk = () => import('./SystemChanges.tsx').then((c) => (systemChunk = c));
+
+/**
+ * A line like "Sam updated the group.": pointing at it, or a click or tap, shows what it changed (SystemChanges.tsx),
+ * from the chat's History on any network. The card's chunk loads the first time a line is pointed at.
+ */
+function SystemLine({ m }: { m: P.MessageView }) {
+  const [card, setCard] = useState<{ anchor: DOMRect; pinned: boolean } | null>(null);
+  const [chunk, setChunk] = useState(systemChunk);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const line = useRef<HTMLSpanElement>(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const want = () => (chunk ? Promise.resolve(chunk) : loadSystemChunk().then((c) => (setChunk(c), c)));
+  const enter = (e: PointerEvent) => {
+    if (e.pointerType === 'touch') return;
+    clearTimeout(timer.current);
+    if (card) return;
+    void want().catch(() => {});
+    timer.current = setTimeout(() => line.current && setCard({ anchor: line.current.getBoundingClientRect(), pinned: false }), 350);
+  };
+  const leave = () => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCard((c) => (c?.pinned ? c : null)), 200);
+  };
+  const click = () => {
+    clearTimeout(timer.current);
+    if (card?.pinned) return setCard(null);
+    want().then(() => line.current && setCard({ anchor: line.current.getBoundingClientRect(), pinned: true }), () => {});
+  };
+  return (
+    <>
+      <span ref={line} class="sys-what" onPointerEnter={enter} onPointerLeave={leave} onClick={click}>
+        <Body m={m} />
+      </span>
+      {card && chunk && (
+        <chunk.SystemChanges m={m} anchor={card.anchor} pinned={card.pinned} onClose={() => setCard(null)} onEnter={() => clearTimeout(timer.current)} onLeave={leave} />
+      )}
+    </>
+  );
+}
+
 function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
   // Only mentions and room links read the db (names may arrive later); other bodies render once.
   // A role's name comes with the message (docs/rich-messages.md); a relative <t:…:R> moves on with the list.
@@ -772,7 +815,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   if (m.kind === 'system')
     return (
       <div class="msg system" id={`m-${m.id}`} {...menuProps}>
-        <Icon name="chevronRight" size={12} /> <Body m={m} /> <span class="msg-time">{clock(m.ts)}</span>
+        <Icon name="chevronRight" size={12} /> <SystemLine m={m} /> <span class="msg-time">{clock(m.ts)}</span>
         <ReactionBar m={m} />
       </div>
     );

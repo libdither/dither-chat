@@ -1506,6 +1506,13 @@ export class HubServer {
       s.dirty.messages.set(a.message_id, s.dirty.messages.get(a.message_id) ?? false);
       return ok(info);
     }
+    // What a system message brought (docs/history.md "What a line changed"): its chat's changes around it.
+    if ((m = path.match(/^\/api\/messages\/([\w-]+)\/changes$/)) && method === 'GET') {
+      const changes = s.messageChanges(m[1]);
+      if (!changes) return bad('no such message', 404);
+      const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId].filter((x): x is string => !!x)));
+      return ok({ changes, identities: s.identitiesByIds(named) });
+    }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/history$/))) {
       const h = s.messageHistory(m[1]);
       return h ? ok(h) : bad('no such message', 404);

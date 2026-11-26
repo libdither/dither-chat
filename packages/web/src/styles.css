@@ -2021,6 +2021,16 @@ button.inbox-status:hover {
 .msg.system .reactions {
   margin-top: 0;
 }
+/* A line that may have changed something opens what (SystemChanges.tsx). */
+.msg.system .sys-what {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.msg.system .sys-what:hover .msg-body {
+  color: var(--text-dim);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
 /* A message gone to (a quote, a link): lit up once the view gets there, then fading, as Discord does. */
 .msg.flash {
   animation: flash 2s ease-out;
