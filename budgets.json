@@ -118,7 +118,7 @@
     "js/shared/Indexing.bytes": { "measured": 8306, "budget": 8473 },
     "js/shared/Indexing.gzip": { "measured": 3226, "budget": 3275 },
     "js/shared/jump.bytes": { "measured": 1778, "budget": 1800, "reason": "Mail threads with more people in Ctrl+K and search's Jump to (docs/mail.md \"Mail as chats\"): named by their subject, found by their people" },
-    "js/shared/jump.gzip": { "measured": 893, "budget": 909 },
+    "js/shared/jump.gzip": { "measured": 910, "budget": 928, "reason": "Unchanged code; its imports from the startup chunk are short mangled names, and the calibration feed changing what the startup chunk exports (the web loudness.ts) moved them by a byte in CI's build" },
     "js/shared/load.bytes": { "measured": 1740, "budget": 1775 },
     "js/shared/load.gzip": { "measured": 991, "budget": 1009 },
     "js/shared/MarkdownView.bytes": { "measured": 53060, "budget": 53663, "reason": "The mail editor (docs/mail.md \"Writing\"): marked, which the rich editor reads Markdown with too, now shares a chunk with the file viewer's MarkdownView (it was js/shared/marked.esm)" },
