@@ -400,7 +400,9 @@ person on seven accounts, and Mo on two), `servers` (35 more Discord servers wit
 `crowd` (about 120 more people in eight servers and eleven groups, with pairs planted for Same person? to find from
 sure to faint, demo-crowd.ts; `scripts/shots-same-person.ts` screenshots it, docs/same-person.md) and `zulip` (a
 made-up Zulip organization whose channels are forums of topics, with unread, muted and resolved topics, a moved message
-and profiles with time zones, demo-zulip.ts; `scripts/shots-zulip.ts` screenshots it, docs/threads.md). Without it the
+and profiles with time zones, demo-zulip.ts; `scripts/shots-zulip.ts` screenshots it, docs/threads.md) and `clocks` (a
+Discord group of friends abroad with six weeks of messages on their own hours, demo-clocks.ts; docs/profile.md "Their
+time"). Without it the
 world is the one tests and perf baselines expect.
 
 A demo hub runs without the login (its data is invented); any other hub is behind it, a throwaway one too. Scripts

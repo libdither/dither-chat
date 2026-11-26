@@ -4191,6 +4191,9 @@ export class Store {
   metaValue = <T>(key: string) => this.metaJson<T>(key);
   setMetaValue = (key: string, value: unknown) => this.setMetaJson(key, value);
   quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
+  /** Zones set by hand for people (theirclock.ts, docs/profile.md "Their time"): by person id, else identity id. */
+  zonePins = () => this.metaJson<Record<string, string>>('zone_pins') ?? {};
+  setZonePins = (m: Record<string, string>) => this.setMetaJson('zone_pins', m);
   privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
   setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);

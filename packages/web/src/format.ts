@@ -57,7 +57,7 @@ export function stamp(ts: number, now = Date.now()): string {
 let yearDayFmt: Intl.DateTimeFormat | undefined;
 
 /** Minutes a time zone is ahead of UTC at that moment, or null for a zone this browser does not know. */
-function zoneOffset(zone: string, ts: number): number | null {
+export function zoneOffset(zone: string, ts: number): number | null {
   try {
     const p = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(ts);
     const n = (t: string) => Number(p.find((x) => x.type === t)?.value);

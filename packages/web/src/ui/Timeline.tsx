@@ -137,6 +137,7 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
+import { dayHover, TheirDayHost, TimeStamps } from './TheirTime.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
@@ -796,7 +797,8 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
-          <span class="msg-time-hover" title={hover ? fullTime(m.ts) : undefined}>
+          // Another's: pointing shows their usual day (ui/TheirTime.tsx), headed by the day and time; yours keeps the full time as a tooltip.
+          <span class="msg-time-hover" title={hover && self ? fullTime(m.ts) : undefined} {...(hover && !self ? dayHover(m, name, 'yours') : {})}>
             {clock(m.ts)}
           </span>
         ) : (
@@ -825,9 +827,14 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
                 {m.sms.toUpperCase()}
               </span>
             )}
-            <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
-              {clock(m.ts)}
-            </span>
+            {/* Theirs beside yours where their clock differs (ui/TheirTime.tsx); pointing at either shows their usual day. */}
+            {self || !m.authorId ? (
+              <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
+                {clock(m.ts)}
+              </span>
+            ) : (
+              <TimeStamps m={m} name={name} hover={hover} />
+            )}
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
             {mail ? (subject || mail.only) && <SubjectTag m={m} tag={!!subject} /> : conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
@@ -1528,6 +1535,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
           ))}
         {/* Next unread topic (docs/threads.md "Next unread"): one mount for a thread's page and a channel's stream. */}
         {!tkey.startsWith('p:') && convIds[0] && <NextUnreadBar at={convIds[0]} stream={!tkey.startsWith('c:')} bottom={end === all.length && !t?.detached && msgs.length > 0} />}
+        <TheirDayHost />
       </div>
     </div>
   );

@@ -226,6 +226,7 @@ const UNCOVERED: Record<string, string> = {
   'ui/Offline.tsx': 'shown only while the hub is out of reach',
   'ui/panel/Panel.tsx': "the phone's keyboard panel needs the Android app's keyboard",
   'ui/Sheet.tsx': "a phone's sheets: verify-phone.ts",
+  'ui/TheirDay.tsx': "someone's usual day needs an author whose clock is not yours (DITHER_DEMO_SCENARIO=clocks): verify-their-time.ts closes it by Escape and back",
   'ui/Stories.tsx': 'stories: a network that has them',
   'ui/Viewer.tsx': 'the demo pictures open in the viewer on a phone: verify-phone.ts',
   'ui/VideoPlayer.tsx': "a video filling the page where the browser has no full screen: verify-video.ts takes it down with back",

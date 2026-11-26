@@ -23,6 +23,7 @@ import { DemoStage, demoStageSeed } from './demostage.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
+import { DEMO_CLOCKS_ACCOUNT, DemoClocks, demoClocksOn } from './demo-clocks.ts';
 import { DEMO_ZULIP_ACCOUNT, DemoZulip, demoZulipOn } from './demo-zulip.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -51,6 +52,7 @@ const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('se
 /** DITHER_DEMO_SCENARIO=crowd adds about 120 people, eight servers and eleven groups, with pairs for Same person? to find (demo-crowd.ts). */
 const CROWD = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('crowd');
 // DITHER_DEMO_SCENARIO=zulip adds a made-up Zulip organization, its channels as forums of topics (demo-zulip.ts, demoZulipOn).
+// DITHER_DEMO_SCENARIO=clocks adds a group of friends abroad, six weeks of messages on their own hours (demo-clocks.ts).
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
@@ -3422,6 +3424,7 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
   if (DEMO_POST_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoPosts(acc, dir);
   if (DEMO_EVENT_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoEvents(acc, dir);
   if (acc.id === DEMO_ZULIP_ACCOUNT.id) return new DemoZulip(acc, dir);
+  if (acc.id === DEMO_CLOCKS_ACCOUNT.id) return new DemoClocks(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
@@ -3438,7 +3441,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boole
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : []), ...(demoClocksOn() ? [DEMO_CLOCKS_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */
