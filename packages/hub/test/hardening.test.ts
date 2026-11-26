@@ -149,6 +149,32 @@ describe('the store', () => {
     expect(readdirSync(join(d, 'backups')).length).toBe(1);
   });
 
+  test('no second copy before migrating when the deployer copied the database just before this start; two kept', () => {
+    const d = join(dir, 'mig-fresh');
+    mkdirSync(d);
+    const path = join(d, 'hub.sqlite');
+    new Store(path, mediaSigner('s')).db.close();
+    const older = () => {
+      const db = new Database(path);
+      db.exec(`UPDATE meta SET value = 'old' WHERE key = 'schema_sig'`);
+      db.close();
+    };
+    mkdirSync(join(d, 'backups'));
+    const preDeploy = join(d, 'backups', 'pre-deploy.sqlite');
+    writeFileSync(preDeploy, 'copied by the deployer');
+    older();
+    new Store(path, mediaSigner('s')).db.close();
+    expect(readdirSync(join(d, 'backups'))).toEqual(['pre-deploy.sqlite']);
+    // A pre-deploy copy from hours ago is not this start's: the hub copies it itself, and keeps the newest two.
+    const hoursAgo = new Date(Date.now() - 6 * 3_600_000);
+    utimesSync(preDeploy, hoursAgo, hoursAgo);
+    for (let i = 0; i < 3; i++) {
+      older();
+      new Store(path, mediaSigner('s')).db.close();
+    }
+    expect(readdirSync(join(d, 'backups')).filter((f) => /^pre-migrate-.*\.sqlite$/.test(f))).toHaveLength(2);
+  });
+
   test('stars set before stars left the app are cleared once, the column kept; a star sent since is ignored', () => {
     const d = join(dir, 'stars');
     mkdirSync(d);

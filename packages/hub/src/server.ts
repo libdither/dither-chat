@@ -67,7 +67,8 @@ import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
 import { graphTuning, peopleGraph, setGraphTuning } from './graph.ts';
-import { activityView, Closeness } from './closeness.ts';
+import { activityView, Closeness, closeTo } from './closeness.ts';
+import { personVoice } from './voicetime.ts';
 import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
@@ -777,6 +778,7 @@ export class HubServer {
     const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
+    const mark = this.store.journal.mark();
     try {
       frame = timedWrite('flush', () =>
         this.store.db
@@ -789,8 +791,11 @@ export class HubServer {
     } catch (e) {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
       // the store gave up goes out and into the journal on its own.
+      // The journal's rows went with the transaction: it takes back what it thought written, and what it cannot write now
+      // (a full disk) it holds for the next frame, so this one still reaches every connected device.
       console.error('flush: one transaction failed; sending what changed as it is', e);
       jobFailed('flush', e);
+      this.store.journal.undo(mark);
       frame = this.record(events);
       s.fail(e);
     }
@@ -1367,6 +1372,19 @@ export class HubServer {
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     if (path === '/api/graph/activity' && method === 'GET') return ok(activityView(s, await this.closeness.get()));
+    // A person's time in voice and who they are closest to (docs/profile.md "Voice", "Close to"), keyed as the graph is.
+    if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/(voice|close)$/)) && method === 'GET') {
+      const ids = m[1] === 'persons' ? (s.db.query('SELECT id FROM identity WHERE person_id = ?').all(m[2]) as { id: string }[]).map((r) => r.id) : [m[2]];
+      if (!ids.length) return bad('nobody by that id', 404);
+      const key = m[1] === 'persons' ? m[2] : (((s.db.query('SELECT person_id FROM identity WHERE id = ?').get(m[2]) as { person_id: string | null } | null)?.person_id ?? m[2]) as string);
+      if (m[3] === 'voice') {
+        const keyOf = s.db.query('SELECT person_id FROM identity WHERE id = ?');
+        const voice = personVoice(s.db, ids, (i) => ((keyOf.get(i) as { person_id: string | null } | null)?.person_id ?? i) as string);
+        return ok({ voice, identities: s.identitiesByIds(voice?.with.map((w) => w.identityId) ?? []) });
+      }
+      const close = closeTo(s, await this.closeness.get(), key, graphTuning(s.db));
+      return ok({ close, identities: s.identitiesByIds(close.map((c) => c.identityId)) });
+    }
     if (path === '/api/graph/tuning' && method === 'GET') return ok(graphTuning(s.db));
     if (path === '/api/graph/tuning' && method === 'PUT') {
       const b = await body<{ tuning?: unknown }>();

@@ -176,6 +176,27 @@ describe('a locked database at the stop', () => {
   });
 });
 
+test('an event the full disk refuses is held, not skipped as a bad record, even when the batch around it commits', () => {
+  let full = false;
+  const order: string[] = [];
+  store.ingest = (a, ev) => {
+    if (ev.t === 'message' && ev.message.nativeId === 'ann-1' && full) throw Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' });
+    if (ev.t === 'message') order.push(ev.message.nativeId);
+    return realIngest(a, ev);
+  };
+  const s = run();
+  full = true;
+  s.apply(ann.id, msgs(ann, 0, 3));
+  // The one before it is in; it and the one after wait, in order.
+  expect(stored(ann)).toBe(1);
+  expect(s.heldEvents).toBe(2);
+  expect(logged.some((l) => l.includes('could not be written') && l.includes('2 events wait'))).toBe(true);
+  full = false;
+  s.retryHeld();
+  expect(stored(ann)).toBe(3);
+  expect(order).toEqual(['ann-0', 'ann-1', 'ann-2']);
+});
+
 test('a database locked past every try keeps its events and saves them, instead of dropping them', () => {
   let locked = true;
   watchOrder(() => locked);

@@ -538,7 +538,8 @@ function prune(a: App) {
 /**
  * The hub's database, copied before a restart when the last copy is older than BACKUP_EVERY (one rolling file, as by
  * hand: VACUUM INTO from the sqlite3 shell). Not at every merge: 2 GB each time, and a rollback changes the code, not
- * the database. A schema change is copied by the hub itself first (backups/pre-migrate-*), and ZFS snapshots hourly.
+ * the database. A schema change is copied by the hub itself first (backups/pre-migrate-*) unless this copy was just
+ * made, and ZFS snapshots the data directory.
  */
 const BACKUP_EVERY = 6 * 3_600_000;
 function backup() {

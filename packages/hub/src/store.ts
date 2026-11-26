@@ -1,7 +1,7 @@
 import { whole } from './slices.ts';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
@@ -28,6 +28,9 @@ import { feedItemOf, feedView, postView, scrubEventGuests } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
+
+/** A pre-deploy copy this young was made for this start (the deployer copies, then restarts the hub). */
+const PRE_DEPLOY_FRESH_MS = 15 * 60_000;
 
 type Row = Record<string, any>;
 
@@ -536,17 +539,27 @@ export class Store {
     this.db.exec(`INSERT INTO meta (key, value) VALUES ('seen_via_gone', '1')`);
   }
 
-  /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
+  /**
+   * backups/pre-migrate-<time>.sqlite next to the database, the newest two kept (DITHER_PRE_MIGRATE_KEEP). Not for an
+   * in-memory database, and not when the deployer copied it to backups/pre-deploy.sqlite moments ago, before this
+   * restart (PRE_DEPLOY_FRESH_MS): that copy is the same database, and each copy is gigabytes.
+   */
   private snapshotBeforeMigrating(path: string) {
     if (path === ':memory:' || path === '') return;
     const dir = join(dirname(path), 'backups');
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const preDeploy = join(dir, 'pre-deploy.sqlite');
+    if (existsSync(preDeploy) && Date.now() - statSync(preDeploy).mtimeMs < PRE_DEPLOY_FRESH_MS) {
+      console.log(`schema changed: ${preDeploy} was copied just before this start, so no second copy before migrating`);
+      return;
+    }
     const file = join(dir, `pre-migrate-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
     this.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
     chmodSync(file, 0o600);
     console.log(`schema changed: copied the database to ${file} before migrating`);
     const old = readdirSync(dir).filter((f) => /^pre-migrate-.*\.sqlite$/.test(f)).sort();
-    for (const f of old.slice(0, Math.max(0, old.length - 5))) rmSync(join(dir, f), { force: true });
+    const keep = Number(process.env.DITHER_PRE_MIGRATE_KEEP) || 2;
+    for (const f of old.slice(0, Math.max(0, old.length - keep))) rmSync(join(dir, f), { force: true });
   }
 
   // ------------------------------------------------------------ triage queue and retention
@@ -2512,8 +2525,8 @@ export class Store {
       ...targets.map(() => '(target_kind = ? AND target_id = ?)'),
       ...(rolesOf.length ? [`(target_kind IN ('space', 'conversation') AND field = 'role' AND json_extract(coalesce(new, old), '$.identityId') IN (${rolesOf.map(() => '?').join(', ')}))`] : []),
     ].join(' OR ');
-    // Statuses and presence over time only with adversarial features shown.
-    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence'))`;
+    // Statuses, presence and voice over time only with adversarial features shown.
+    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence', 'voice'))`;
     const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
     const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
     const rows = this.db
