@@ -27,6 +27,11 @@ So a merge, a split, a new account or a new DM changes the chat as soon as the t
 in step. Group chats that are "the same group on two networks" would need a stored link. That is not built (see
 [Not yet](#not-yet)).
 
+A network can say two of its own ids are one account (IdentityFact `sameAs`: Partiful files a chat's people under the
+chat service's ids, `stream:<id>`, beside their user ids). The hub keeps the pair (`identity_same`) and, the first time
+it hears it, puts the two with one person, the user id's; a split you make after that stays. An id said to be the same
+as your own is you: your person, and its messages are yours.
+
 ## Where a message goes
 
 Routes are listed newest first. A message without a route goes through the chat's **default route**:
