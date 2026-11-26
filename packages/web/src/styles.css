@@ -376,6 +376,108 @@ code {
   align-items: center;
   gap: 8px;
 }
+/* The inbox's head: its title, what the app is doing with the hub (ui/InboxStatus.tsx), then its buttons. */
+.inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-status-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  container-type: inline-size;
+  /* A little room after the title, so the two never read as one. */
+  padding-left: 6px;
+}
+.inbox-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px 2px 2px;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  animation: inbox-status-in 160ms ease-out;
+}
+button.inbox-status {
+  cursor: pointer;
+}
+button.inbox-status:hover {
+  background: var(--hover);
+}
+.inbox-status-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+}
+.inbox-status .status-orb {
+  color: var(--accent);
+}
+.inbox-status.done .inbox-status-icon {
+  color: var(--accent);
+}
+.inbox-status-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inbox-status-title {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-status.amber .inbox-status-title {
+  color: var(--warn);
+}
+.inbox-status-more {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+/* Short of room (a phone's list beside a page), since when goes, and the rail's orb still tells it. */
+@container (max-width: 165px) {
+  .inbox-status-aside {
+    display: none;
+  }
+}
+@keyframes inbox-status-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Out of reach: the list stays as it was, a shade quieter (ui/InboxStatus.tsx). */
+.inbox-side .side-scroll {
+  transition:
+    opacity 400ms ease,
+    filter 400ms ease;
+}
+.inbox-side.offline .side-scroll {
+  opacity: 0.9;
+  filter: saturate(0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-status {
+    animation: none;
+  }
+  .inbox-side .side-scroll {
+    transition: none;
+  }
+}
 .side-sub {
   display: block;
   color: var(--text-faint);
@@ -11008,6 +11110,57 @@ html[data-theme='light'] .acc-dot {
     opacity: 0.7;
   }
 }
+/* Opening a chat (ui/OpenBar.tsx): a 2 px line along the foot of this row, right over the message box. Nothing for the
+   first 180 ms, which is most opens; the fill moves by Web Animations, on the compositor. */
+.open-bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  opacity: 0;
+  animation: open-bar-in 160ms ease-out 180ms forwards;
+}
+.open-bar.done {
+  opacity: 1;
+  animation: open-bar-out 220ms ease-in 140ms forwards;
+}
+.open-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+@keyframes open-bar-in {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes open-bar-out {
+  to {
+    opacity: 0;
+  }
+}
+/* A slow open, in the row's own words: which step, the hub's or the network's (OpenBar.tsx). */
+.open-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.open-note.slow {
+  color: var(--warn);
+}
+.app.phone .open-bar {
+  left: 10px;
+  right: 10px;
+}
 /* ================================================================== end typing */
 
 /* ================================================================== activity log (ui/ActivityLog.tsx, docs/activity.md) */
@@ -13238,6 +13391,31 @@ button.msg-edited.link:hover {
 .boot-status {
   color: var(--text-dim);
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+/* The orb fills from the bottom as the inbox comes (Loader.tsx bootFill): a dim orb, and a lit one shown through a
+   window that slides up while the orb in it slides down, both transforms, so the compositor plays them. */
+.boot-orb {
+  position: relative;
+  display: block;
+  width: 88px;
+  height: 88px;
+}
+.boot-orb-dim {
+  opacity: 0.32;
+}
+.boot-fill,
+.boot-fill-in {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--fill-ms, 250ms) cubic-bezier(0.25, 0.6, 0.4, 1);
+}
+.boot-fill {
+  overflow: hidden;
+  transform: translateY(calc((1 - var(--fill, 0)) * 100%));
+}
+.boot-fill-in {
+  transform: translateY(calc((var(--fill, 0) - 1) * 100%));
 }
 .boot-slow {
   color: var(--text-faint);

@@ -51,6 +51,8 @@ import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { InboxStatus } from './InboxStatus.tsx';
+import { offline } from './Offline.tsx';
 import { FolderIcon } from './Rail.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, placeLabel } from './Organize.tsx';
@@ -721,9 +723,12 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
     return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} loud={loudOf(louds, ids)} />;
   };
   return (
-    <div class="sidebar-inner inbox-side" data-track-area="inbox">
-      <header class="side-head">
-        <h1>Inbox<NewMessageButton /></h1>
+    <div class={`sidebar-inner inbox-side ${offline.value ? 'offline' : ''}`} data-track-area="inbox">
+      {/* What the app is doing with the hub goes in the room the title leaves (InboxStatus.tsx). */}
+      <header class="side-head inbox-head">
+        <h1>Inbox</h1>
+        <InboxStatus />
+        <NewMessageButton />
       </header>
       <div class="inbox-search">
         {mail ? <MailListSearch list={mail} /> : <SearchBox

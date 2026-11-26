@@ -5,6 +5,7 @@
  * still), and for anything that takes longer than a moment.
  */
 import { useEffect, useState } from 'preact/hooks';
+import { bootFill, bootStatus, type FirstLoad } from '../firstload.ts';
 
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 /** Finer than the 12-cell mark, so the light's edge reads as a gradient. */
@@ -111,11 +112,21 @@ export function Loading({ label, size, inline, fill }: { label?: string; size?: 
   );
 }
 
-/** The whole-screen start: the orb, what it is waiting for, and after a while what to try. */
-function BootScreen({ status, slow }: { status: string; slow?: string | null }) {
+/**
+ * The whole-screen start: the orb, filling as the inbox comes, what it is waiting for, and after a while what to try.
+ * The filled part is a second orb, lit, shown from the bottom up by two transforms that move against each other.
+ */
+function BootScreen({ status, slow, fill }: { status: string; slow?: string | null; fill: { fill: number; ms: number } }) {
   return (
     <div class="boot-screen" role="status" aria-live="polite">
-      <DitherOrb size={88} appear={!drawnByPage} />
+      <span class="boot-orb" style={{ '--fill': fill.fill, '--fill-ms': `${fill.ms}ms` } as any}>
+        <DitherOrb size={88} appear={!drawnByPage} class="boot-orb-dim" />
+        <span class="boot-fill" aria-hidden="true">
+          <span class="boot-fill-in">
+            <DitherOrb size={88} appear={false} />
+          </span>
+        </span>
+      </span>
       <div class="boot-text">
         <div class="boot-status">{status}</div>
         {slow && <div class="boot-slow">{slow}</div>}
@@ -125,7 +136,7 @@ function BootScreen({ status, slow }: { status: string; slow?: string | null }) 
 }
 
 /** The start screen while the app connects and loads, with a hint once it has taken a while. */
-export function Boot({ connected }: { connected: boolean }) {
+export function Boot({ connected, load }: { connected: boolean; load: FirstLoad }) {
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setSlow(true), 8000);
@@ -133,8 +144,9 @@ export function Boot({ connected }: { connected: boolean }) {
   }, []);
   return (
     <BootScreen
-      status={connected ? 'Loading your conversations…' : 'Connecting to your hub…'}
-      slow={slow ? (connected ? 'A big first sync takes a moment.' : 'Still trying. Is the hub running, and is this device on its network?') : null}
+      status={bootStatus(load, connected)}
+      fill={bootFill(load, connected)}
+      slow={slow && load.phase !== 'draw' ? (connected ? 'A big first sync takes a moment.' : 'Still trying. Is the hub running, and is this device on its network?') : null}
     />
   );
 }

@@ -51,6 +51,7 @@ import { onRing, ringGate, ringWords, sweepCalls } from './callstate.ts';
 import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
 import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
 import { readPassword } from './auth.ts';
+import { noteListening, noteStopping, readRestarts, usualDown } from './restarts.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -692,6 +693,8 @@ if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 startup.mark('adapters');
 server.start();
 startup.mark('http listen');
+// How long the stop before this one took to come back to here: the usual time a stopping hub tells the pages (restarts.ts).
+noteListening(dataDir);
 // The web build's files packed hard once, on the thread pool, what index.html loads first (compress.ts PackedFiles).
 {
   const began = performance.now();
@@ -756,6 +759,9 @@ const shutdown = async () => {
   if (stopping) return;
   stopping = true;
   const stopBy = Date.now() + STOP_APPLY_MS;
+  // Every page hears it first, with how long a restart usually takes, then the stop is kept for the next start to time.
+  server.sayStopping(usualDown(readRestarts(dataDir)));
+  noteStopping(dataDir);
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();

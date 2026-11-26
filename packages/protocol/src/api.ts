@@ -1608,6 +1608,8 @@ export interface Bootstrap {
   notices?: NoticesBoot;
   /** Changes when the hub process starts again, as in a sync answer: a new one may have brought a new web build. */
   boot?: string;
+  /** The hub's code (its git commit), as in a sync answer; absent where it cannot tell. */
+  build?: string;
   /** Status dots: everyone's presence as last heard (PresenceNowView). Absent from hubs that predate them. */
   presence?: PresenceNowView[];
 }
@@ -1787,6 +1789,12 @@ export type ClientEvent =
   | { t: 'interaction'; interaction: import('./apps.ts').InteractionView }
   /** A bot opened a form in answer to one of yours (apps.ts). Of the moment. */
   | { t: 'appModal'; modal: import('./apps.ts').AppModalView }
+  /**
+   * The hub is stopping, most often to restart on a new release (docs/sync.md "Restarts"): sent to every socket as the
+   * stop begins, so a page can say so at once and try every second rather than back off. `usualMs`: how long its last
+   * few restarts took from here to answering again, when it knows. Of the moment: not journaled.
+   */
+  | { t: 'stopping'; usualMs?: number }
   | { t: 'resync' };
 
 // ------------------------------------------------------------------ delta sync (docs/sync.md)
@@ -1858,6 +1866,8 @@ export type SyncResponse =
       sync: SyncPosition;
       /** Changes since the hub process started; a new one may have brought a new web build. */
       boot: string;
+      /** The hub's code (its git commit), to tell a restart onto a new release from one onto the same; absent where it cannot tell. */
+      build?: string;
       /** The same events the live socket sends, current as of `sync.seq`. Empty when only timelines were asked for. */
       events: ClientEvent[];
       selfPersonId?: string | null;

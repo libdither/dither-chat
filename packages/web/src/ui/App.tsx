@@ -2,7 +2,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptOpened, api, back, connected, db, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
+import { adoptOpened, api, back, connected, db, firstLoad, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { installEscape } from '../escape.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, layerCount, phone, pushLayer } from '../phone.ts';
@@ -431,7 +431,7 @@ export function App() {
 
   if (!loaded.value)
     return (
-      <Boot connected={connected.value} />
+      <Boot connected={connected.value} load={firstLoad.value} />
     );
 
   const full = r.view === 'directory' || r.view === 'calendar';
