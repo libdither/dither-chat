@@ -2,6 +2,7 @@
  * Ties between people, and the circles they make (docs/people-graph.md "Ties and circles"). A tie between two people, neither of
  * them you, adds up:
  *  - their talk with each other, from the hub (replies, reactions, turns in a small group), fading as talk with you does;
+ *  - their time in a voice channel together (the adversarial voice log), times your voice weight, fading the same way;
  *  - friends, as a fetched profile says (its friends in common with you are its person's friends too);
  *  - the small places they share (groups and servers of 60 people or fewer here), more the smaller the place.
  * Each is divided by how much both have of it all, so someone who answers everyone in a busy server is not tied to all of
@@ -25,6 +26,8 @@ export interface Ties {
   start: Uint32Array;
   to: Uint32Array;
   w: Float32Array;
+  /** Per tie, the part of it that is time in voice together, 0 to 1. */
+  voice: Float32Array;
 }
 
 /** A flat [month, weight × 10] list summed up to a month, fading from it. */
@@ -38,14 +41,16 @@ function fadedRun(links: number[], k: number, n: number, at: number, fade: numbe
   return t;
 }
 
-export function ties(ix: Index, act: P.GraphActivity | null, at: number, fade: number): Ties {
+export function ties(ix: Index, act: P.GraphActivity | null, at: number, fade: number, voiceWeight = 1): Ties {
   const g = ix.graph;
   const np = g.people.length;
   const raw = new Map<number, number>();
-  const add = (a: number, b: number, w: number) => {
+  const rawVoice = new Map<number, number>();
+  const add = (a: number, b: number, w: number, into = raw) => {
     if (a === b || a < 0 || b < 0 || !(w > 0)) return;
     const k = a < b ? a * np + b : b * np + a;
-    raw.set(k, (raw.get(k) ?? 0) + w);
+    into.set(k, (into.get(k) ?? 0) + w);
+    if (into !== raw) raw.set(k, (raw.get(k) ?? 0) + w);
   };
   const t = act?.ties;
   if (t) {
@@ -57,6 +62,13 @@ export function ties(ix: Index, act: P.GraphActivity | null, at: number, fade: n
       k += 3 + 2 * n;
     }
     for (let k = 0; k < t.friends.length; k += 2) add(at2[t.friends[k]], at2[t.friends[k + 1]], FRIEND);
+    const v = t.voice ?? [];
+    if (voiceWeight > 0)
+      for (let k = 0; k < v.length; ) {
+        const n = v[k + 2];
+        add(at2[v[k]], at2[v[k + 1]], voiceWeight * fadedRun(v, k + 3, n, at, fade), rawVoice);
+        k += 3 + 2 * n;
+      }
   }
   for (let q = 0; q < g.places.length; q++) {
     const n = ix.qStart[q + 1] - ix.qStart[q];
@@ -80,16 +92,20 @@ export function ties(ix: Index, act: P.GraphActivity | null, at: number, fade: n
   const fill = start.slice(0, np);
   const to = new Uint32Array(start[np]);
   const w = new Float32Array(start[np]);
+  const voice = new Float32Array(start[np]);
   for (const [k, v] of raw) {
     const a = Math.floor(k / np);
     const b = k % np;
     const s = v / Math.sqrt((total[a] + SHRINK) * (total[b] + SHRINK));
+    const part = (rawVoice.get(k) ?? 0) / v;
     to[fill[a]] = b;
+    voice[fill[a]] = part;
     w[fill[a]++] = s;
     to[fill[b]] = a;
+    voice[fill[b]] = part;
     w[fill[b]++] = s;
   }
-  return { start, to, w };
+  return { start, to, w, voice };
 }
 
 /**
