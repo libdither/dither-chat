@@ -3,7 +3,8 @@
  * yours, where their clock comes from, and a bar of the day, hour by hour, of how often they are around then (and,
  * within it, write), each hour with its 80% range, their usual night shaded with its give-or-take, and the message and
  * now marked. Week shows it
- * by weekday. Set time zone keeps a zone for them when the guess is wrong. A chunk of its own (TheirTime.tsx).
+ * by weekday. Set time zone opens a world map (ZoneMap.tsx, its own chunk) to keep a zone for them when the guess is
+ * wrong. A chunk of its own (TheirTime.tsx).
  */
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
@@ -13,6 +14,7 @@ import { api } from '../api.ts';
 import { useLayer } from '../phone.ts';
 import { answerLine, ENOUGH_TURNS } from '../theiranswer.ts';
 import { clockOffset, forgetClock, myOffset, myZone, wallClock } from '../theirclock.ts';
+import { Icon } from './icons.tsx';
 import { leaveCard, stayCard, type DayCard } from './TheirTime.tsx';
 import './theirday.css';
 
@@ -94,16 +96,24 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
     fetchAnswer();
   }, [card.identityId, card.ts, card.frame]);
 
-  // Beside the time: below it, or above where the window has no room below.
+  // Beside the time: below it, or above where the window has no room below, and kept on screen. Placed again when it
+  // changes size (the world map comes in a chunk of its own, after the card is drawn).
   useLayoutEffect(() => {
-    if (!box.current || !card.el.isConnected) return;
-    const r = card.el.getBoundingClientRect();
-    const b = box.current.getBoundingClientRect();
-    let x = Math.max(8, Math.min(innerWidth - b.width - 8, r.left - 12));
-    let y = r.bottom + 6;
-    if (y + b.height > innerHeight - 8) y = Math.max(8, r.top - b.height - 6);
-    setPos({ x, y });
-  }, [card.el, v, answer, week, zoneOpen, frame]);
+    const el = box.current;
+    if (!el || !card.el.isConnected) return;
+    const place = () => {
+      const r = card.el.getBoundingClientRect();
+      const b = el.getBoundingClientRect();
+      const x = Math.max(8, Math.min(innerWidth - b.width - 8, r.left - 12));
+      let y = r.bottom + 6;
+      if (y + b.height > innerHeight - 8) y = Math.max(8, Math.min(r.top - b.height - 6, innerHeight - b.height - 8));
+      setPos((p) => (p && p.x === x && p.y === y ? p : { x, y }));
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [card.el]);
 
   // Escape closes it: a card opened by a click is a layer (back closes it too); one shown by pointing listens itself.
   useLayoutEffect(() => {
@@ -149,7 +159,7 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
   return createPortal(
     <div
       ref={box}
-      class={`their-day ${pos ? 'shown' : ''}`}
+      class={`their-day ${pos ? 'shown' : ''} ${zoneOpen ? 'zoning' : ''}`}
       role="dialog"
       aria-label={`When ${card.name} is usually around`}
       style={pos ? { left: `${pos.x}px`, top: `${pos.y}px` } : { left: '-9999px', top: '-9999px' }}
@@ -219,10 +229,13 @@ export function TheirDay({ card, onClose }: { card: DayCard; onClose: () => void
                 {week ? 'Hide week' : 'Week'}
               </button>
             )}
-            <button type="button" class="link-btn" aria-expanded={zoneOpen} onClick={() => setZoneOpen(!zoneOpen)}>
-              {v.clock?.source === 'pinned' ? 'Change time zone' : 'Set time zone'}
+            <button type="button" class="td-zone-btn" aria-expanded={zoneOpen} onClick={() => setZoneOpen(!zoneOpen)}>
+              <Icon name="globe" size={13} />
+              {v.clock && v.clock.source !== 'rhythm' ? v.clock.zone.slice(v.clock.zone.lastIndexOf('/') + 1).replace(/_/g, ' ') : 'Set time zone'}
             </button>
-            {zoneOpen && <ZonePick current={v.clock && v.clock.source !== 'rhythm' ? v.clock.zone : null} pinned={v.clock?.source === 'pinned'} onPick={setZone} />}
+            {zoneOpen && (
+              <ZonePick current={v.clock && v.clock.source !== 'rhythm' ? v.clock.zone : null} pinned={v.clock?.source === 'pinned'} guess={v.clock?.source === 'rhythm' ? v.clock : null} onPick={setZone} />
+            )}
           </div>
         </>
       )}
@@ -369,24 +382,22 @@ function WeekGrid({ v, shift }: { v: P.TheirDayView; shift: number }) {
   );
 }
 
-/** A zone for them by hand: every zone this browser knows, or back to what they say or what is guessed. */
-function ZonePick({ current, pinned, onPick }: { current: string | null; pinned: boolean; onPick: (zone: string | null) => void }) {
-  const zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? [];
-  return (
-    <div class="td-zone">
-      <select aria-label="Their time zone" value={current ?? ''} onChange={(e) => (e.currentTarget.value ? onPick(e.currentTarget.value) : undefined)}>
-        <option value="">Pick a time zone…</option>
-        {zones.map((z) => (
-          <option key={z} value={z}>
-            {z.replace(/_/g, ' ')}
-          </option>
-        ))}
-      </select>
-      {pinned && (
-        <button type="button" class="link-btn" onClick={() => onPick(null)}>
-          Use what they say, or the guess
-        </button>
-      )}
-    </div>
-  );
+type ZoneMapView = typeof import('./ZoneMap.tsx').ZoneMap;
+let zoneMap: Promise<ZoneMapView> | null = null;
+
+/** The world map to pick a zone on, loaded the first time it opens. */
+function ZonePick(props: Parameters<ZoneMapView>[0]) {
+  const [M, setM] = useState<{ View: ZoneMapView } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useLayoutEffect(() => {
+    (zoneMap ??= import('./ZoneMap.tsx').then((m) => m.ZoneMap)).then(
+      (View) => setM({ View }),
+      () => {
+        zoneMap = null;
+        setFailed(true);
+      },
+    );
+  }, []);
+  if (M) return <M.View {...props} />;
+  return <div class="td-line">{failed ? 'Could not load the map.' : 'Loading the map…'}</div>;
 }

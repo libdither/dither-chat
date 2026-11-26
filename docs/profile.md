@@ -405,7 +405,8 @@ Your own messages, and someone in your own zone, show none.
 2. A zone a profile of theirs states: `PersonAbout.timeZone` (Zulip, Matrix's `m.tz`), or an older adapter's "Time
    zone" fact, from any of their identities' kept profiles. Where none is kept and they are on Zulip or Matrix, the hub
    asks for their profile in the background, two at a time and each identity once per hub run (not when one was kept
-   in the last 7 days); the answer says `asking` and the app asks again shortly.
+   in the last 7 days); the answer says `asking` and the app asks again shortly. An ask that kept no profile (its
+   account not connected yet, just after a start, or the network erring) is tried again 5 s later, up to 5 times.
 3. A whole-hour offset guessed from when they are around, over the last 90 days. What places someone is where they
    never are: work leaves a gap on weekdays that weekends fill, but nothing fills a night. The hub takes the share of
    their days they were around in each UTC hour (a day's weight halved every three weeks back, so a change of clocks for summer
@@ -445,6 +446,13 @@ Your time slide the same day by the difference. Week shows a row a weekday. The 
 the gaps of 3 to 20 hours that cover the middle of their quietest six hours, each with its spread (1.4826 × the median
 absolute deviation), said from 7 nights. `GET /api/people/:id/day?tz=<your zone>` answers a `TheirDayView`, in their
 zone where it is known, else in yours. `PUT /api/people/:id/zone {zone}` sets or clears (`null`) a zone by hand.
+
+**Setting their zone**: the card's globe button (Set time zone, or the zone's city once one is named) opens a world map
+(ui/ZoneMap.tsx, a chunk of its own, loaded when it opens) with each zone's main city as a dot and night shaded where
+it is night now. The cities on the same clock as the one pointed at or picked are lit, and before that those on the
+guessed clock, so a guess of UTC+9 shows where they might be. Pointing shows the nearest city with its time and UTC
+offset; a click or a tap picks it, a search finds any zone this browser knows, and Set keeps it. The map is Natural
+Earth's 1:110m land and tzdata's zone1970.tab, made into ui/zonemap-data.ts by scripts/gen-zone-map.ts.
 
 DITHER_DEMO_SCENARIO=clocks adds a Discord group of friends abroad with six weeks of messages and reactions on their own hours
 (Tokyo, Berlin, and one in Chicago), and a direct chat with each whose last message, yours, waits on them; with `zulip`
