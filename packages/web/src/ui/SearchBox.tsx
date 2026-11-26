@@ -131,7 +131,7 @@ export function SearchBox({
   onDown,
   busy,
   onFocusBox,
-  onBlurBox,
+  onClear,
   hint,
   ...rest
 }: {
@@ -144,10 +144,10 @@ export function SearchBox({
   onDown?: () => void;
   /** A search is on its way: a small spinner at the box's end. */
   busy?: boolean;
-  /** The box was focused (the phone's inbox box opens the search page from here). */
+  /** The box was focused (the inbox's box starts loading search's chunk). */
   onFocusBox?: () => void;
-  /** The box lost the cursor (the inbox's box lets go of what it handed to the search page). */
-  onBlurBox?: () => void;
+  /** Empties the box: a ✕ at its end while it holds words, and Escape (the inbox's box, which narrows the list). */
+  onClear?: () => void;
   /** A key that opens this box, shown at its end while it is empty: a computer's inbox box shows Ctrl K. */
   hint?: string;
   class?: string;
@@ -197,7 +197,7 @@ export function SearchBox({
         enterkeyhint={(rest.enterkeyhint ?? 'search') as any}
         value={value}
         onFocus={(e) => (setOpen(true), track(e), onFocusBox?.())}
-        onBlur={() => (setTimeout(() => setOpen(false), 120), onBlurBox?.())}
+        onBlur={() => setTimeout(() => setOpen(false), 120)}
         onClick={track}
         onKeyUp={track}
         onInput={(e) => {
@@ -209,6 +209,7 @@ export function SearchBox({
         onKeyDown={(e) => {
           const input = e.target as HTMLInputElement;
           if (e.key === 'Escape' && open && items.length) return (e.preventDefault(), e.stopPropagation(), setOpen(false));
+          if (e.key === 'Escape' && onClear && value) return (e.preventDefault(), e.stopPropagation(), onClear());
           if (e.key === 'ArrowDown' && (!open || !items.length)) return onDown && (e.preventDefault(), onDown());
           if (!open || !items.length) return;
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -223,6 +224,11 @@ export function SearchBox({
       />
       {hint && !value && <kbd class="search-hint" aria-hidden="true">{hint}</kbd>}
       {busy && <span class="search-spin" aria-hidden="true" />}
+      {onClear && value && (
+        <button type="button" class="icon-btn small search-clear" aria-label="Clear" title="Clear (Esc)" data-track="search (clear)" onMouseDown={(e) => e.preventDefault()} onClick={onClear}>
+          <Icon name="x" size={14} />
+        </button>
+      )}
       {open && items.length > 0 && (
         <div class="search-suggest" role="listbox" onMouseDown={(e) => e.preventDefault()}>
           {!value.trim() && recentSearches().length > 0 && (
