@@ -69,6 +69,9 @@ jobs:
       # Every Escape handler says it took the key, and verify-back.ts covers every page and layer (scripts/check-escape.ts,
       # docs/desktop.md "Escape and back").
       - run: bun run check:escape
+      # A component Preact may skip reads what says the hub's data it shows changed (scripts/check-redraws.ts,
+      # docs/perf.md "What redraws").
+      - run: bun run check:redraws
 
   # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts). All but mail-load's,
   # which runs beside it in test-hub-mail.

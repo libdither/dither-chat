@@ -7,7 +7,7 @@
 | Job | What it runs | The same locally |
 |---|---|---|
 | `changes` | decides what the pull request needs (scripts/ci-changes.ts) | `git diff --name-only origin/main... \| bun scripts/ci-changes.ts` |
-| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused code, Escape handlers | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip`, `bun run check:escape` |
+| `typecheck` | tsc on every project at once (scripts/typecheck.ts), then the checks below: test hygiene, stylesheets, import cycles, unused code, Escape handlers, redraws | `bun run typecheck`, `bun run check:tests`, `bun run check:css`, `bun run check:cycles`, `bun run knip`, `bun run check:escape`, `bun run check:redraws` |
 | `test-hub` | the hub's tests but mail-load's, its files on 4 workers (`bun test --parallel=4`) | `bun scripts/test-all.ts hub -- --path-ignore-patterns=test/mail-load.test.ts` |
 | `test-hub-mail` | the hub's mail-load tests (60k messages; 20 to 30 s, as long as the rest of the hub's) | `bun scripts/test-all.ts hub -- test/mail-load.test.ts` |
 | `test-packages` | every other package's tests, all at once | `bun scripts/test-all.ts --except hub` |
@@ -261,6 +261,14 @@ so an Escape the moment its popover is drawn would go past it and leave the page
 every route view in routes.ts and every component that opens a layer (`pushLayer` or `useLayer`), or names it in its
 `UNCOVERED` with the reason. A new page or overlay fails the check until its way back is checked, or the reason it
 cannot be is written down.
+
+### Redraws
+
+`bun run check:redraws` (scripts/check-redraws.ts, a few seconds) finds a component that may show stale data: one
+Preact may skip drawing again, that reads the hub's data while it renders and none of the signals that move when it
+changes (docs/perf.md "What redraws"). It follows calls through the web app with TypeScript's checker, so a helper in
+model.ts that reads `db` counts for the component that calls it. `--why` prints how each reaches the data.
+scripts/redraws-known.json lists the ones found when it began; it should only shrink.
 
 ### Unused code
 
