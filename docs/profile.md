@@ -405,7 +405,8 @@ Your own messages, and someone in your own zone, show none.
 2. A zone a profile of theirs states: `PersonAbout.timeZone` (Zulip, Matrix's `m.tz`), or an older adapter's "Time
    zone" fact, from any of their identities' kept profiles. Where none is kept and they are on Zulip or Matrix, the hub
    asks for their profile in the background, two at a time and each identity once per hub run (not when one was kept
-   in the last 7 days); the answer says `asking` and the app asks again shortly.
+   in the last 7 days); the answer says `asking` and the app asks again shortly. An ask that kept no profile (its
+   account not connected yet, just after a start, or the network erring) is tried again 5 s later, up to 5 times.
 3. A whole-hour offset guessed from when they are around, over the last 90 days. What places someone is where they
    never are: work leaves a gap on weekdays that weekends fill, but nothing fills a night. The hub takes the share of
    their days they were around in each UTC hour (a day's weight halved every three weeks back, so a change of clocks for summer

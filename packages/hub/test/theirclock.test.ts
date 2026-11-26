@@ -185,6 +185,60 @@ describe('clocks from the database', () => {
     expect(asked).toEqual(['idn_matrix']);
   });
 
+  test('an ask that kept no profile (its account not connected yet) is tried again, and its zone used once kept', async () => {
+    const db = world();
+    let now = NOW;
+    let online = false;
+    let ended!: () => void;
+    let end = new Promise<void>((r) => (ended = r));
+    const asked: string[] = [];
+    const c = new Clocks({
+      db,
+      now: () => now,
+      askProfile: async (id) => {
+        asked.push(id);
+        // Like people.ts with the account not connected: an answer, but nothing asked of the network or kept.
+        if (online) db.query('INSERT INTO about VALUES (?, ?, ?, ?)').run(id, 'acc_m', JSON.stringify({ timeZone: 'America/Denver' }), now);
+        queueMicrotask(ended);
+      },
+    });
+    const settle = async () => {
+      await end;
+      // The ask's .finally runs after it ends.
+      await Promise.resolve();
+      end = new Promise<void>((r) => (ended = r));
+    };
+    expect(c.clocks(['idn_matrix'], 0).asking).toEqual(['idn_matrix']);
+    await settle();
+    // Too soon to ask again, but still asking, so the app asks again shortly.
+    expect(c.clocks(['idn_matrix'], 0).asking).toEqual(['idn_matrix']);
+    expect(asked).toEqual(['idn_matrix']);
+    online = true;
+    now += 5_000;
+    expect(c.clocks(['idn_matrix'], 0).asking).toEqual(['idn_matrix']);
+    await settle();
+    const v = c.clocks(['idn_matrix'], 0);
+    expect(v.clocks.idn_matrix).toEqual({ source: 'profile', zone: 'America/Denver', network: 'matrix' });
+    expect(v.asking).toBeUndefined();
+    expect(asked).toEqual(['idn_matrix', 'idn_matrix']);
+  });
+
+  test('an ask that never keeps a profile stops after five tries', async () => {
+    let now = NOW;
+    let ended!: () => void;
+    const asked: string[] = [];
+    const c = new Clocks({ db: world(), now: () => now, askProfile: async (id) => void (asked.push(id), queueMicrotask(ended)) });
+    for (let i = 0; i < 5; i++) {
+      const end = new Promise<void>((r) => (ended = r));
+      expect(c.clocks(['idn_matrix'], 0).asking).toEqual(['idn_matrix']);
+      await end;
+      await Promise.resolve();
+      now += 5_000;
+    }
+    expect(c.clocks(['idn_matrix'], 0).asking).toBeUndefined();
+    expect(asked.length).toBe(5);
+  });
+
   test('a zone set by hand wins over a profile and a guess, for every identity of the person, until cleared', () => {
     let pins: Record<string, string> = {};
     const c = new Clocks({ db: world(), now: () => NOW, pins: { get: () => pins, set: (m) => (pins = m) } });

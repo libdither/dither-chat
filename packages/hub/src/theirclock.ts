@@ -18,6 +18,12 @@ const DAY_WINDOW = 90;
 const ZONE_NETWORKS = new Set<P.Network>(['zulip', 'matrix']);
 /** A profile asked this recently is not asked again for a zone. */
 const ASKED_FRESH = 7 * DAY;
+/**
+ * An ask that kept no profile (its account not connected yet, as just after a start, or the network erring) is tried
+ * again this long after, this many times in all; meanwhile the app is told it is still asking, so it asks again too.
+ */
+const RETRY_MS = 5_000;
+const TRIES = 5;
 /** A guess is shown only when the offset is this likely to be within an hour of it, from at least this many days. */
 const SHOW_SURE = 0.65;
 const SHOW_DAYS = 10;
@@ -346,6 +352,8 @@ export class Clocks {
   private queue: string[] = [];
   /** Queued or being asked. */
   private pending = new Set<string>();
+  /** Asks that kept no profile: how many, and when the last ended. */
+  private failed = new Map<string, { n: number; at: number }>();
   private inFlight = 0;
   /** What else the authors of one clocks() call did, read for all of them at once. */
   private pre: Map<string, Moment[]> | null = null;
@@ -459,7 +467,7 @@ export class Clocks {
 
   /**
    * Ask for a profile of theirs on a network whose profiles say a zone, unless one was kept lately: two at a time, each
-   * identity once per hub run. Whether one is on its way.
+   * identity once per hub run, or again (RETRY_MS, TRIES) when an ask kept nothing. Whether one is on its way.
    */
   private askForZone(ids: string[]): boolean {
     const ask = this.d.askProfile;
@@ -469,6 +477,15 @@ export class Clocks {
     for (const r of nets) {
       if (!ZONE_NETWORKS.has(r.network)) continue;
       if (this.asked.has(r.id)) {
+        const f = this.failed.get(r.id);
+        if (f && !this.pending.has(r.id) && f.n < TRIES) {
+          if (this.now() - f.at >= RETRY_MS) {
+            this.queue.push(r.id);
+            this.pending.add(r.id);
+          }
+          any = true;
+          continue;
+        }
         any ||= this.pending.has(r.id);
         continue;
       }
@@ -487,11 +504,15 @@ export class Clocks {
     while (this.inFlight < 2 && this.queue.length) {
       const id = this.queue.shift()!;
       this.inFlight++;
+      const from = this.now();
       void this.d.askProfile!(id)
         .catch(() => {})
         .finally(() => {
           this.inFlight--;
           this.pending.delete(id);
+          const kept = this.d.db.query('SELECT MAX(fetched_at) AS at FROM about WHERE target_id = ?').get(id) as Row | null;
+          if (kept?.at != null && kept.at >= from) this.failed.delete(id);
+          else this.failed.set(id, { n: (this.failed.get(id)?.n ?? 0) + 1, at: this.now() });
           for (const [k, v] of this.kept) if (v.ids.includes(id)) this.kept.delete(k);
           this.pump();
         });
