@@ -36,7 +36,7 @@
     "sync.missed.events": { "measured": 3, "budget": 3, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" }
   },
   "web": {
-    "startup.bytes": { "measured": 943055, "budget": 961917 },
+    "startup.bytes": { "measured": 962105, "budget": 981347, "reason": "The tidier profile (docs/profile.md \"A person\"): its rules for Between you, accounts with their connections, People in common and the one-column order are in styles.css, which the first screen loads" },
     "startup.gzip": { "measured": 288187, "budget": 293950, "reason": "Loading said plainly (docs/sync.md \"What the inbox says\", \"Opening a chat\"): the status beside \"Inbox\" (InboxStatus.tsx, statusline.ts), the first start's orb filling with its bytes (firstload.ts) and the line over the message box while a chat opens (OpenBar.tsx, waits.ts), all drawn from the first screen" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 8020, "budget": 8181, "reason": "index.html's socket asks from the snapshot's journal position (read from localStorage), so the hub's catch-up comes as the socket's first frame (docs/sync.md, On the socket)" },
