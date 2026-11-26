@@ -117,7 +117,7 @@ export function VoiceCard({ base, self }: { base: string; self: boolean }) {
 }
 
 /** Someone they are tied to: from the people graph's ties, from a profile's friends list, or both. */
-export interface Tie {
+interface Tie {
   key: string;
   identityId: string;
   strength: number;
