@@ -78,7 +78,8 @@ import { CalibrationRow } from './Calibration.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
-import { focusSearch, preloadSearch } from './SearchLazy.tsx';
+import { InboxFoundLazy, preloadSearch } from './SearchLazy.tsx';
+import { filterRows, hasOperators, rowStandsFor } from '../inboxfilter.ts';
 import { counting, rendered } from '../perf.ts';
 import { memo, sameProps } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
@@ -694,11 +695,20 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
   if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
   // A mail list is the Mail filter's, however it was opened (Ctrl+K, a link).
   if (mail) filter = 'mail';
-  const rows = mail ? [] : shownInbox(filter);
-  const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
-  /** The box has opened the search page and is handing it what is typed, until the page's box takes the cursor. */
-  const handing = useRef(false);
+  // Words in the box narrow the list in place, by name, at every key (docs/search.md "In the inbox").
+  const finding = !mail && !!q.trim();
+  // from:, in:, has: and the rest ask for messages, not a name: the list gives the room to them.
+  const asking = finding && hasOperators(q);
+  const listed = mail || asking ? [] : shownInbox(filter);
+  const rows = finding ? filterRows(listed, q) : listed;
+  // With a filter on, the rows it leaves out that hold the words are a tap away.
+  const outside = finding && !asking && filter !== 'all' ? filterRows(shownInbox('all'), q).length - rows.length : 0;
+  const [drawn, more] = useShown(rows.length);
+  const full = () => {
+    rememberSearch(q.trim());
+    go({ view: 'search', q: q.trim() });
+  };
   const scroll = useRef<HTMLDivElement>(null);
   // A row and its ↩ button move as one (ReplyMark.tsx), and a channel row with the threads under it; anything else keyed by its own data-row.
   useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] [data-row])');
@@ -736,37 +746,23 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
       <div class="inbox-search">
         {mail ? <MailListSearch list={mail} /> : <SearchBox
           value={q}
-          setValue={(t) => {
-            // Results come as you type (docs/search.md): the first letter opens the search page, whose box takes the
-            // cursor. Until it has, keys still land here, so this box keeps the whole of what was typed and each key
-            // replaces the page's query with it; it lets go once the cursor has moved (a fast typist's keys between
-            // the two went missing when it emptied at the first).
-            setQ(t);
-            if (!handing.current && !t.trim()) return;
-            go({ view: 'search', q: t }, handing.current);
-            if (!handing.current) (handing.current = true), focusSearch.value++;
-          }}
-          onBlurBox={() => {
-            handing.current = false;
-            setQ('');
-          }}
-          // A phone opens the search page at the tap, keyboard and all, with what Ctrl+K would jump to as you type. A
-          // computer starts loading the page (a chunk of its own), so it is there by the first key.
-          onFocusBox={() => (phone.value ? (go({ view: 'search', q: '' }), focusSearch.value++) : preloadSearch())}
-          placeholder="Search all messages"
+          setValue={setQ}
+          onClear={() => setQ('')}
+          // The cursor stays here, on a phone too: the list narrows under it. What it finds beyond its rows is search's
+          // chunk (InboxFound), loaded from the focus so it is there by the first key.
+          onFocusBox={preloadSearch}
+          onDown={() => scroll.current?.querySelector<HTMLElement>(WALK)?.focus()}
+          placeholder="Search chats and messages"
           hint={phone.value || filter !== 'all' ? undefined : 'Ctrl K'}
-          submit={(t) => {
-            if (!t) return;
-            rememberSearch(t);
-            go({ view: 'search', q: t });
-          }}
+          // Enter: the full results, on the search page.
+          submit={(t) => t && full()}
         />}
         <InboxFilterButton filter={filter} />
       </div>
       {/* Mail is chats (docs/mail.md "Mail as chats"): with the Mail filter on, its other lists are a tap away. */}
       {filter === 'mail' && <MailListChips on={mail ?? null} />}
-      {mail ? <MailSidebarLazy list={mail} active={activeConv} /> : <div class="side-scroll" ref={scroll}>
-        {accounts.length > 0 && (
+      {mail ? <MailSidebarLazy list={mail} active={activeConv} /> : <div class="side-scroll" ref={scroll} onKeyDown={finding ? (e) => walkFound(e, scroll.current) : undefined}>
+        {!finding && accounts.length > 0 && (
           <>
             <SectionHead id="inbox-att" label="Needs you" count={accounts.length} />
             {!isCollapsed('inbox-att') &&
@@ -792,15 +788,37 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
           </>
         )}
         {/* Chat requests, notices and the questions about notifications are not mail: the Mail filter leaves them out. */}
-        {filter !== 'mail' && <RequestsRow />}
-        {filter !== 'mail' && <NoticesRow />}
-        {filter !== 'mail' && <CalibrationRow />}
+        {!finding && filter !== 'mail' && <RequestsRow />}
+        {!finding && filter !== 'mail' && <NoticesRow />}
+        {!finding && filter !== 'mail' && <CalibrationRow />}
         {rows.slice(0, drawn).map(row)}
         {more}
-        {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
+        {!rows.length && !finding && <p class="inbox-empty">{EMPTY[filter]}</p>}
+        {finding && !asking && !rows.length && <p class="inbox-empty inbox-found-none">No chat in the inbox is named “{q.trim()}”.</p>}
+        {outside > 0 && (
+          <button class="link-btn inbox-found-outside" data-track="inbox search: more without the filter" onClick={() => setPrefs({ inboxFilter: 'all' })}>
+            {outside} more with no filter
+          </button>
+        )}
+        {finding && <InboxFoundLazy q={q} skip={rowStandsFor(rows)} onFull={full} />}
       </div>}
     </div>
   );
+}
+
+/** What Up and Down walk while the inbox is narrowed: its rows, then what was found beyond them. */
+const WALK = 'button.row, .search-jump-row, .inbox-found-full, .inbox-hit, .inbox-found-more';
+
+/** Up and Down through the narrowed inbox; Up from the first goes back to the box. */
+function walkFound(e: KeyboardEvent, list: HTMLElement | null) {
+  if ((e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || !list) return;
+  const all = [...list.querySelectorAll<HTMLElement>(WALK)];
+  const i = all.indexOf(document.activeElement as HTMLElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const next = all[i + (e.key === 'ArrowDown' ? 1 : -1)];
+  if (next) next.focus();
+  else if (e.key === 'ArrowUp') list.closest('.inbox-side')?.querySelector<HTMLInputElement>('.inbox-search input')?.focus();
 }
 
 // ------------------------------------------------------------------ people
