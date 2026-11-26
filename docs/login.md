@@ -47,7 +47,8 @@ set one, and the hub logs the command at each start. A demo world (`--demo`, bel
   The hub keeps only its sha256, with when it was made and last used, the user agent and the address, in
   `<data>/auth.sqlite` (0600), apart from the hub's database.
 - It slides: it ends 90 days after its last use, and a year after it signed in at the latest. Its last use is written
-  at most once a minute; the cookie's Max-Age is renewed at most once a day.
+  at most once a minute; the cookie's Max-Age is renewed at most once a day. When that write fails (a full disk), the
+  request still goes through, and the cookie is renewed on a later request, once the last use is saved.
 - Settings → Signed-in devices lists them, signs one out, or all others, or this one. From the machine:
   `cli.ts sessions` and `cli.ts revoke-sessions [id]` (they open `auth.sqlite` directly, so they work while the hub runs).
 
