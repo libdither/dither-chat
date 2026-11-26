@@ -70,6 +70,17 @@ test('a reply goes through the normal send, and clears the notification', async 
   expect(w.opened).toEqual([]);
 });
 
+test('a reply names the message it answers, and one the hub holds says so and keeps the text', async () => {
+  const row = { clientId: 'hub-1', state: 'held', hold: { count: 2, ids: ['msg_2', 'msg_3'] } };
+  const w = worker({ fetch: async () => Response.json({ ok: true, queued: true, row }, { status: 202 }) });
+  await w.click({ conversationId: 'cnv_1', replyTo: 'msg_1', messageId: 'msg_1' }, 'reply', 'on my way');
+  expect(w.fetched[0].body).toEqual({ body: 'on my way', replyTo: 'msg_1', seenUpTo: { id: 'msg_1' } });
+  expect(w.shown[0].title).toBe('Reply waiting');
+  expect(w.shown[0].o.body).toBe('2 new messages came in. Open the chat to send it, edit it or cancel it. You wrote: on my way');
+  expect(w.shown[0].o.data).toEqual({ conversationId: 'cnv_1', keep: true });
+  expect(w.closed).toEqual([]);
+});
+
 test('a refusal shows what the hub said, and keeps what was typed', async () => {
   const w = worker({ fetch: async () => Response.json({ error: 'Sending to encrypted Matrix rooms is not supported yet' }, { status: 409 }) });
   await w.click({ conversationId: 'cnv_1' }, 'reply', 'hello');

@@ -664,7 +664,8 @@ Their notifications go:
 - **Never what is kept.** A notification whose data has `keep` is closed by no read, here or elsewhere, by no
   `cleared` and by no clear push: only a tap or a swipe ends it. That is a reminder you set on a network
   (Discord's "Remind me") and the summary when quiet hours end (`Notifier.message` kind `held`, which also says
-  `keep` on the page's `notify`), and "Reply not sent" (`sw.js` `sendReply`), the only copy of what you typed. They
+  `keep` on the page's `notify`), and "Reply not sent" and "Reply waiting" (`sw.js` `sendReply`), the only copy of
+  what you typed in the notification. They
   share their chat's tag and show no message's time.
 - **From the Android app.** A push `{ clear: tag, upTo }` for each read, only to registrations that said they take
   it (`clears: true` on `POST /api/push/subscribe`, the Android app from 0.7): an older app would show an empty

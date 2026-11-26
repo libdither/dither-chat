@@ -207,7 +207,9 @@ that only to a receiver registered while the app runs, so it is registered when 
   was read. Opening the conversation in the app cancels it whole too, and tells the system it is on screen
   (`setLocusContext`).
 - **Reply** sends through the hub, then re-posts the notification (recovered from the one showing) with what you wrote
-  as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed.
+  as its newest message, quietly, and reports the shortcut as used. On failure it says why, with what you typed. It
+  names the message it answers, and one the hub held because more came into the chat says "Reply waiting", with what
+  you typed ([sync.md](sync.md#the-send-queue)).
 
 **A row of the ranked list** is a plain notification: no shortcut and no `MessagingStyle`, so it stays out of the
 Conversations section.

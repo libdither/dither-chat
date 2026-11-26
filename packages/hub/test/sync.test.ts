@@ -827,7 +827,7 @@ describe('sends', () => {
     expect(sent.filter((x) => x.t === 'send').length).toBe(before + 2);
   });
 
-  test('the socket says which message a send became, as soon as the network named it, and journals nothing for it', async () => {
+  test('the socket says which message a send became, as soon as the network named it, and journals only the send queue', async () => {
     const conv = cnv(d1, 'general');
     const frames: P.ClientEvent[][] = [];
     const sock = new WebSocket(`ws://127.0.0.1:${port}/api/live`);
@@ -844,6 +844,7 @@ describe('sends', () => {
     sock.close();
     const told = frames.flat().filter((e) => e.t === 'sent');
     expect(told).toEqual([{ t: 'sent', conversationId: conv, clientId: 'tmp-quick~1', messageId: a.messageId }]);
-    expect(store.journal.position().seq).toBe(seq);
+    // The `sent` event is of the moment; the send queue's list is kept (sendqueue.ts).
+    expect([...new Set(store.journal.since(seq).map((r) => r.kind))]).toEqual(['sends']);
   });
 });

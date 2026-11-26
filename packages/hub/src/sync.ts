@@ -13,6 +13,7 @@ import type { Store } from './store.ts';
 import type { UsageStore } from './usage.ts';
 import type { Devices } from './devices.ts';
 import type { MailHub } from './mail/index.ts';
+import type { SendQueue } from './sendqueue.ts';
 import { requestViews } from './add.ts';
 
 type Row = Record<string, any>;
@@ -31,6 +32,7 @@ interface SyncContext {
   devices?: Devices;
   mail?: MailHub;
   boot: string;
+  sends?: SendQueue;
 }
 
 export function syncResponse(ctx: SyncContext, req: P.SyncRequest, now = Date.now()): P.SyncResponse {
@@ -119,6 +121,7 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
   if (list('rules')) out.push({ t: 'rules', rules: store.rules() });
   if (list('devices') && ctx.devices) out.push({ t: 'devices', devices: ctx.devices.list() });
   if (list('requests')) out.push({ t: 'requests', requests: requestViews(store) });
+  if (list('sends') && ctx.sends) out.push(ctx.sends.event());
 
   if (attention && list('attention')) {
     const xs = of('attention');

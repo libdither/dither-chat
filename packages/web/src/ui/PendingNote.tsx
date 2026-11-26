@@ -1,46 +1,77 @@
 /**
- * The line under a send not yet through: what it is doing, and what you can do about it (docs/sync.md "A send in
- * doubt"). A send in doubt (it went to the hub, and no answer said whether it went out) waits for you: Send again (a
- * new send) or Discard. A send under way for a moment, or waiting for the hub, has a tick to let it go again by itself
- * if the hub drops: off by default, since a send the hub lost track of may be out already.
+ * The line under a send not yet in its chat (docs/sync.md "The send queue"): its mark (a clock while only this device
+ * has it, one tick once the hub has it, two once the network named the message), what it is doing, and what you can
+ * do about it. A held send (the chat moved on while it waited) shows Send, Edit and Cancel, and its countdown while a
+ * device shows the chat; one in doubt shows Send again and Discard; one refused shows Try again and Discard.
  */
 import { useEffect, useState } from 'preact/hooks';
-import { discardSend, pending, retrySend, setAutoResend } from '../state.ts';
+import { refill } from '../mail/chats.ts';
+import { sendNote, type ShownSend } from '../sendrows.ts';
+import { discardSend, hubSends, retrySend, sendAction } from '../state.ts';
+import { Icon } from './icons.tsx';
 
-type Pending = (typeof pending.value)[number];
+const hubNow = () => Date.now() + hubSends.value.offset;
+let refills = 0;
 
-/** How long a send is under way before its tick shows: a quick send never flashes one. */
-const TICK_AFTER_MS = 1500;
-
-const DOUBT_NOTE = 'May have been sent: the hub stopped answering while sending. Check the chat before sending again.';
-
-export function PendingNote({ p }: { p: Pending }) {
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setSlow(true), TICK_AFTER_MS);
-    return () => clearTimeout(t);
-  }, [p.tempId]);
-  const note = p.failed ? `Failed: ${p.failed}` : p.unsure ? DOUBT_NOTE : p.queued ? 'Waiting for the hub, sends when it is back' : p.uploading ? 'Uploading…' : 'Sending…';
-  const stuck = !!(p.failed || p.unsure);
+/** The mark itself, with what it means as its title. */
+function Mark({ s }: { s: ShownSend }) {
+  const [icon, title] =
+    s.mark === 'device'
+      ? (['clock', 'Only on this device so far'] as const)
+      : s.mark === 'hub'
+        ? (['check', 'The hub has it'] as const)
+        : s.mark === 'network'
+          ? (['checks', 'Sent: the network has it'] as const)
+          : s.mark === 'held'
+            ? (['pause', 'Held for you'] as const)
+            : s.mark === 'unsure'
+              ? (['alert', 'May have been sent'] as const)
+              : (['alert', 'Not sent'] as const);
   return (
-    <>
-      <span class="pending-note">{note}</span>
-      {stuck && (
+    <span class={`send-mark ${s.mark}`} title={title} aria-label={title}>
+      <Icon name={icon} size={12} />
+    </span>
+  );
+}
+
+export function PendingNote({ s }: { s: ShownSend }) {
+  // A countdown redraws every second while it runs.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (s.holdUntil === undefined) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [s.holdUntil]);
+  const now = hubNow();
+  const act = (a: 'send' | 'cancel' | 'edit') =>
+    void sendAction(s.key, a, (row) => (refill.value = { place: row.conversationId, text: row.body, seq: ++refills, append: true }));
+  return (
+    <span class="pending-line">
+      <Mark s={s} />
+      <span class="pending-note">{sendNote(s, now)}</span>
+      {s.mark === 'held' && (
         <span class="pending-actions">
-          <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
-            {p.unsure ? 'Send again' : 'Try again'}
+          <button class="btn ghost small" onClick={() => act('send')}>
+            Send
           </button>
-          <button class="btn ghost small" onClick={() => discardSend(p.tempId)}>
+          <button class="btn ghost small" onClick={() => act('edit')} title={s.files.length ? 'Its files are not put back: attach them again' : undefined}>
+            Edit
+          </button>
+          <button class="btn ghost small" onClick={() => act('cancel')}>
+            Cancel
+          </button>
+        </span>
+      )}
+      {(s.mark === 'unsure' || s.mark === 'failed') && (
+        <span class="pending-actions">
+          <button class="btn ghost small" onClick={() => (s.from === 'device' ? retrySend(s.key) : act('send'))}>
+            {s.mark === 'unsure' ? 'Send again' : 'Try again'}
+          </button>
+          <button class="btn ghost small" onClick={() => (s.from === 'device' ? discardSend(s.key) : act('cancel'))}>
             Discard
           </button>
         </span>
       )}
-      {!stuck && (slow || p.queued || p.autoResend) && (
-        <label class="pending-auto" title="Off: if the hub stops answering while this is being sent, it waits for you rather than going again, so it is never sent twice">
-          <input type="checkbox" checked={!!p.autoResend} onChange={(e) => setAutoResend(p.tempId, (e.target as HTMLInputElement).checked)} />
-          Resend automatically if the hub drops
-        </label>
-      )}
-    </>
+    </span>
   );
 }

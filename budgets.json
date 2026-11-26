@@ -3,7 +3,7 @@
   "hub": {
     "bootstrap.bytes": { "measured": 384404, "budget": 392093 },
     "bootstrap.zstd": { "measured": 41583, "budget": 42415 },
-    "bootstrap.fields": { "measured": 17463, "budget": 17463 },
+    "bootstrap.fields": { "measured": 17466, "budget": 17466, "reason": "The send queue: the bootstrap carries the open sends (sends: rows and the hub clock), so every device shows the same ticks and held sends" },
     "bootstrap.conversations": { "measured": 574, "budget": 574 },
     "bootstrap.identities": { "measured": 146, "budget": 146 },
     "bootstrap.persons": { "measured": 51, "budget": 51 },

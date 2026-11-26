@@ -26,7 +26,8 @@ import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { Jobs } from './jobs.ts';
 import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
-import { realClock } from './clock.ts';
+import { type Clock, realClock } from './clock.ts';
+import { SendQueue, type QueueBody } from './sendqueue.ts';
 import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
 import { infoFor, MediaInfo, mediaKey } from './mediainfo.ts';
@@ -217,6 +218,10 @@ interface ServerOpts {
    * if any (/calendar/*, GET /api/plans, the bootstrap's `calendar`), and `sync` after the accounts change.
    */
   calendar?: { link(): CalendarLink | undefined; sync(): void };
+  /** A send waits for you and no device shows its chat (sendqueue.ts): main.ts notifies it. */
+  onSendHeld?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
+  /** The send queue's clock (sendqueue.ts): a test's own, so a countdown takes no time. */
+  clock?: Clock;
   /** A reminder set on a network came due (saved.ts): main.ts notifies it like an alert. */
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
   /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
@@ -423,8 +428,13 @@ export class HubServer {
   readonly auth: Auth;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
-  /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
+  /**
+   * Send later's sends by its id for them (sendlater.ts), so one retried after a lost answer goes out once. Chat sends
+   * from the app go through the send queue instead, which keeps them in the database (sendqueue.ts).
+   */
   private sends = new Map<string, { at: number; done: Promise<Response> }>();
+  /** Each chat's sends, kept until the network has them, in order, held when the chat moved on (sendqueue.ts). */
+  readonly queue: SendQueue;
   /** Messages a viewed receipt was asked for (once each; viewed). */
   private viewedSent = new Set<string>();
 
@@ -530,7 +540,16 @@ export class HubServer {
       },
     });
     // Files waiting to be sent later stay; a reminder that came due on a network notifies (saved.ts).
-    this.uploads.held = () => this.sendExtras.later.heldUploads();
+    this.queue = new SendQueue(store, {
+      send: (cid, b) => this.sendNow(cid, b),
+      watched: (cid) => this.shown(cid),
+      broadcast: (evs) => this.broadcast(evs),
+      files: (ids) => this.uploads.names(ids),
+      dropFiles: (ids) => this.uploads.remove(ids),
+      told: (row) => this.heldTold(row),
+      clock: opts.clock,
+    });
+    this.uploads.held = () => new Set([...this.sendExtras.later.heldUploads(), ...this.queue.heldUploads()]);
     store.reminderDue = (r) => {
       const w = reminderWords(store.db, r);
       const cid = w.conversationId;
@@ -613,7 +632,10 @@ export class HubServer {
         },
         close(ws) {
           const d = ws.data;
-          if (d.kind === 'client') self.clients.delete(ws as ServerWebSocket<ClientData>);
+          if (d.kind === 'client') {
+            self.clients.delete(ws as ServerWebSocket<ClientData>);
+            if (ws.data.kind === 'client' && ws.data.watching) self.queue.watchChanged();
+          }
           else if (d.kind === 'adapter') self.sup.detach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') self.calls.close(ws as ServerWebSocket<CallSocketData>);
           else if (d.kind === 'voice') self.calls.voiceClose(ws as ServerWebSocket<VoiceSocketData>);
@@ -661,6 +683,7 @@ export class HubServer {
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
+    this.queue.start();
     this.timelines.start();
     this.follows.start();
     this.collector.start();
@@ -671,6 +694,7 @@ export class HubServer {
     clearInterval(this.flushTimer);
     clearInterval(this.pruneTimer);
     this.sendExtras.later.stop();
+    this.queue.stop();
     this.timelines.stop();
     this.follows.stop();
     this.importer.stop();
@@ -858,7 +882,7 @@ export class HubServer {
   }
 
   private syncContext() {
-    return { store: this.store, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot };
+    return { store: this.store, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot, sends: this.queue };
   }
 
   /**
@@ -1244,7 +1268,7 @@ export class HubServer {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
       const calendar = this.opts.calendar?.link();
-      return ok({ ...s.bootstrap({ edgesInConversations: url.searchParams.get('edges') === 'spaces' }), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap({ edgesInConversations: url.searchParams.get('edges') === 'spaces' }), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), sends: (({ t: _, ...q }) => q)(this.queue.event()), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
     if (path === '/api/plans' && method === 'GET') {
@@ -1846,7 +1870,7 @@ export class HubServer {
         const r = this.chatRoute(id, b);
         if (typeof r === 'string') return bad(r, 409);
         const { route: _, ...rest } = b;
-        return this.sendOnce(r.conversationId, { ...rest, accountId: r.accountId });
+        return this.queueSend(r.conversationId, { ...rest, accountId: r.accountId });
       }
       if (m[2] === '/read' && method === 'POST') {
         const b = await body<{ upToTs?: number }>();
@@ -2153,7 +2177,25 @@ export class HubServer {
         return fail(e);
       }
     }
-    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') return this.sendOnce(m[1], await body<SendBody>());
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/send$/)) && method === 'POST') return this.queueSend(m[1], await body<QueueBody>());
+    if ((m = path.match(/^\/api\/sends\/([\w~#.:-]+)$/)) && method === 'POST') {
+      const b = await body<Partial<P.SendAction>>();
+      try {
+        return ok(this.queue.act(m[1], b.action as P.SendAction['action']));
+      } catch (e) {
+        return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+      }
+    }
+    if (path === '/api/send-settings') {
+      if (method === 'PUT') {
+        try {
+          return ok(this.queue.setSettings(await body<Partial<P.SendSettings>>()));
+        } catch (e) {
+          return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+        }
+      }
+      return ok(this.queue.settings());
+    }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/forward$/)) && method === 'POST') {
       const b = await body<P.ForwardRequest>();
       const r = await forwardMessage(
@@ -2829,7 +2871,57 @@ export class HubServer {
     }
   }
 
-  /** A send retried after its answer was lost goes out once: the retry gets the first one's answer. */
+  /**
+   * A chat send into the send queue (sendqueue.ts). A send with `ack: 'hub'` is answered as soon as the hub has it,
+   * with its row; one without (the service worker's reply, the Android app, older pages) after the network's answer,
+   * as before the queue. A refusal the hub can see at once (no such chat, no account that can write here) is answered
+   * at once and makes no row.
+   */
+  private async queueSend(conversationId: string, b: QueueBody): Promise<Response> {
+    const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
+    if (!this.store.nativeOf('conversation', conversationId)) return bad('no such conversation', 404);
+    const known = typeof b.clientId === 'string' && b.clientId ? this.queue.get(b.clientId.slice(0, 64)) : null;
+    if (!known || known.state === 'failed') {
+      const accountId = this.pickAccount(conversationId, b.accountId);
+      if (!accountId) return bad('no connected account can send here', 409);
+      const refused = this.sendRefusal(conversationId, accountId);
+      if (refused) return bad(refused, 409);
+    }
+    let row: P.SendRow;
+    try {
+      row = this.queue.accept(conversationId, b);
+    } catch (e) {
+      return bad((e as Error).message, (e as { status?: number }).status ?? 500);
+    }
+    if (b.ack === 'hub') return Response.json({ ok: true, queued: true, row } satisfies P.SendAccepted);
+    return this.queue.answer(row.clientId);
+  }
+
+  /** Some device shows this chat at its newest message, as its page last said (phones count: a held send counts down). */
+  private shown(conversationId: string, now = Date.now()): boolean {
+    for (const ws of this.clients) {
+      const w = ws.data.watching;
+      if (w && now - w.at <= 2 * WATCH_EVERY && w.conversationIds.includes(conversationId)) return true;
+    }
+    return false;
+  }
+
+  /** A send waits for you and no device shows its chat: a notification says so (main.ts), naming what came. */
+  private heldTold(row: P.SendRow) {
+    const s = this.store;
+    const conv = s.conversationViews([row.conversationId])[0];
+    const where = conv?.name ? ` to ${conv.name}` : '';
+    const n = row.hold?.count ?? 0;
+    const last = row.hold?.ids.at(-1);
+    this.opts.onSendHeld?.({
+      title: `Your message${where} is waiting`,
+      body: `${n} new message${n === 1 ? '' : 's'} came in since you wrote "${row.body.slice(0, 80)}". Open the chat to send it, change it or cancel it.`,
+      conversationId: row.conversationId,
+      messageId: last ?? '',
+    });
+  }
+
+  /** Send later's send (sendlater.ts): a retry after its answer was lost goes out once, by the first one's answer. */
   private async sendOnce(conversationId: string, b: SendBody): Promise<Response> {
     const key = typeof b.clientId === 'string' && b.clientId ? `${conversationId}|${b.clientId.slice(0, 64)}` : null;
     const now = Date.now();
@@ -2911,7 +3003,8 @@ export class HubServer {
     const native = (result as { nativeId?: unknown } | undefined)?.nativeId;
     const messageId = typeof native === 'string' && native ? hubId('msg', conv.network, native) : undefined;
     // On the socket too, which on a slow link may beat this answer to the page that sent it (web outbox.ts).
-    if (messageId && typeof b.clientId === 'string' && b.clientId) {
+    // Not for an id the hub made itself (sendqueue.ts): no page has it.
+    if (messageId && typeof b.clientId === 'string' && b.clientId && !b.clientId.startsWith('hub-')) {
       s.dirty.extra.push({ t: 'sent', conversationId, clientId: b.clientId.slice(0, 64), messageId });
       this.flush();
     }
@@ -3343,6 +3436,8 @@ export class HubServer {
     if (m?.t !== 'watching' || !Array.isArray(m.conversationIds)) return;
     const ids = m.conversationIds.filter((x): x is string => typeof x === 'string').slice(0, 20);
     ws.data.watching = ids.length ? { label: String(m.label ?? '').slice(0, 100), conversationIds: ids, at: now } : undefined;
+    // A held send counts down while its chat is shown, and stops where it no longer is (sendqueue.ts).
+    this.queue.watchChanged();
   }
 
   /**

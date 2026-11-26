@@ -7,7 +7,8 @@ import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrive
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { afterFailure, clientIdOf, ECHO_SKEW, mayBeOut, openOutbox, restoredState, sendAgain, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
+import { afterFailure, openOutbox, restoredState, type OutboxEntry, type SendMedia } from './outbox.ts';
+import { seenUpTo } from './sendrows.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
@@ -54,6 +55,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   changed('inbox');
 }
 
+/** A send this device keeps until the hub has it in its queue (outbox.ts); then the hub's row is shown (sendrows.ts). */
 interface PendingSend {
   tempId: string;
   conversationId: string;
@@ -62,27 +64,17 @@ interface PendingSend {
   accountId?: string;
   failed?: string;
   files?: string[];
-  /** Waiting for the hub to be reachable again; it goes out then, by itself. */
+  /** Waiting for the hub to be reachable again; it goes to the hub then, by itself. */
   queued?: boolean;
-  /**
-   * In doubt: it went to the hub and no answer said whether it went out. It waits for you (Send again or Discard),
-   * and goes by itself when its message is here (outbox.ts).
-   */
-  unsure?: boolean;
-  /** Goes again by itself, the same send, if the hub drops mid-send (you ticked it; outbox.ts OutboxEntry). */
-  autoResend?: boolean;
   /** Its files are still uploading (uploadsOf has their progress). */
   uploading?: boolean;
-  /** The hub took it; the copy stays until its message is here (outbox.ts). */
-  acked?: boolean;
-  /** The hub's id for the message it became, when its answer (or its `sent` event) said. */
-  messageId?: string;
-  /** When it last went to the hub: from then on it may be out on the network. */
-  postedAt?: number;
-  /** Its message is here before the hub's answer: not shown, and gone when the answer comes. */
-  echoed?: boolean;
 }
 export const pending = signal<PendingSend[]>([]);
+/**
+ * The hub's send queue as it last said (docs/sync.md "The send queue"): every device's sends not yet in their chats.
+ * `offset`: the hub's clock less this device's, for a countdown's seconds.
+ */
+export const hubSends = signal<{ rows: P.SendRow[]; offset: number }>({ rows: [], offset: 0 });
 /** Who is typing where, live only (typing.ts). */
 export const typing = signal<TypingState>({});
 
@@ -292,6 +284,7 @@ export function applyBootstrap(b: P.Bootstrap) {
   // A calendar account on the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
   if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
   noticesBoot.value = b.notices ?? null;
+  if (b.sends) setHubSends(b.sends.rows, b.sends.now);
   loaded.value = true;
   changed('meta');
   mailChanged();
@@ -316,7 +309,7 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
 }
 
 /** Events that change nothing in `db` the lists show: typing, toasts, read progress and status dots have signals of their own. */
-const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar', 'presence']);
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'sends', 'plans', 'calendar', 'presence']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
@@ -422,8 +415,6 @@ export function applyEvents(events: P.ClientEvent[]) {
           timelineChanged();
         }
         if (m.triage && m.triage.decision !== 'silent' && m.triage.decision !== 'drop') mergeInbox([m]);
-        // Perhaps the message a pending copy became: matched below, once the frame is applied.
-        if (pending.value.length && isSelfIdentity(m.authorId)) noteEcho(m);
         break;
       }
       case 'notify':
@@ -455,12 +446,9 @@ export function applyEvents(events: P.ClientEvent[]) {
       case 'voice':
         applyVoice(ev.channels);
         break;
-      case 'sent': {
-        // Which message a send of this page's became, ahead of the answer to its POST: settled below by id.
-        const tempId = ev.clientId.replace(/~\d+$/, '');
-        if (pending.value.some((p) => p.tempId === tempId && !p.messageId)) setPending(tempId, { messageId: ev.messageId });
+      case 'sends':
+        setHubSends(ev.rows, ev.now);
         break;
-      }
       case 'resync':
         void bootstrap();
         void loadPlans();
@@ -480,7 +468,6 @@ export function applyEvents(events: P.ClientEvent[]) {
     if (t && !t.loading && !t.messages.some((m) => m.id === last)) void catchUp(key);
   }
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
-  settle();
   if (meta) changed('meta');
   else {
     if (opened) changed('open');
@@ -704,8 +691,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     console.warn('timeline not loaded', key, e);
   } finally {
     t.loading = false;
-    settle();
-    timelineChanged(key);
+      timelineChanged(key);
     persistSoon();
   }
 }
@@ -934,7 +920,6 @@ function applyTimelines(r: Extract<P.SyncResponse, { sync: unknown }>) {
     // One that moved here while away goes from the timeline that held it before.
     if (tl.key.startsWith('c:') || tl.key.startsWith('k:')) for (const m of tl.messages) for (const k of leaveOtherTimelines(timelines.values(), m, streamChannelOf(db, m.conversationId))) timelineChanged(k);
   }
-  settle();
 }
 
 /**
@@ -981,10 +966,12 @@ export const uploadsOf = (tempId: string): UploadJob[] => sendUploads.get(tempId
 type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[]; media?: SendMedia; /** docs/sending.md */ silent?: boolean; mentionReplied?: boolean };
 /** Sends kept on this device until the hub has them (outbox.ts): a reload or the app being closed does not lose them. */
 const outbox = openOutbox(typeof indexedDB === 'undefined' ? undefined : indexedDB);
-/** Sends not yet through, by tempId: what they need to go out again. The outbox keeps the same. */
+/** Sends not yet with the hub, by tempId: what they need to go out again. The outbox keeps the same. */
 const outgoing = new Map<string, OutboxEntry>();
-/** On their way now: a send goes out once at a time, whoever asks. */
+/** On their way now: a send goes to the hub once at a time, whoever asks. */
 const delivering = new Set<string>();
+/** Each conversation's sends go to the hub one after another, in the order they were made: the hub keeps that order. */
+const postChains = new Map<string, Promise<void>>();
 const setPending = (tempId: string, patch: Partial<PendingSend>) => (pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
 const pendingOf = (e: OutboxEntry): PendingSend => ({
   tempId: e.tempId,
@@ -994,12 +981,39 @@ const pendingOf = (e: OutboxEntry): PendingSend => ({
   accountId: e.accountId,
   files: e.files?.map((f) => f.name),
   failed: e.failed,
-  ...(e.postedAt !== undefined ? { postedAt: e.postedAt } : {}),
-  ...(e.autoResend ? { autoResend: true } : {}),
 });
 
+/** This install of the app (activity.ts deviceId, read here without importing it): its own earlier sends never hold a send. */
+function thisDevice(): string | undefined {
+  try {
+    return localStorage.getItem('dither-chat:device') ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing).
+ * The hub's send queue, as it says it now. A device copy the hub has a row for is through: the hub's row is shown in
+ * its place from now on, and nothing of the copy is kept.
+ */
+function setHubSends(rows: P.SendRow[], hubNow: number) {
+  hubSends.value = { rows, offset: hubNow - Date.now() };
+  const known = new Set(rows.map((r) => r.clientId));
+  const through = pending.value.filter((p) => known.has(p.tempId) && !delivering.has(p.tempId));
+  for (const p of through) forget(p.tempId);
+  if (through.length) pending.value = pending.value.filter((p) => !through.includes(p));
+}
+
+/** One row the hub answered with, put in the list at once: the socket's own list may come a moment later. */
+function putHubSend(row: P.SendRow) {
+  const { rows, offset } = hubSends.value;
+  const i = rows.findIndex((r) => r.clientId === row.clientId);
+  if (i >= 0 && rows[i].updatedAt > row.updatedAt) return;
+  hubSends.value = { rows: i >= 0 ? rows.map((r, k) => (k === i ? row : r)) : [...rows, row], offset };
+}
+
+/**
+ * Shown at once as on this device. Without the hub it waits, and goes to the hub when it is back (flushOutgoing).
  *
  * More files than the network takes in one message go as several sends, each with as many as it takes, in order: the
  * words and the reply with the first (docs/uploads.md, "More files than a message takes"). Each is a send of its own,
@@ -1009,28 +1023,32 @@ export async function send(conversationId: string, body: string, opts: SendOpts 
   const network = db.conversations.get(conversationId)?.network;
   const per = network && splitsFiles(network) ? ATTACHMENT_LIMITS[network].files : 0;
   const files = opts.files ?? [];
-  if (!per || files.length <= per) return sendOne(conversationId, body, opts, Date.now());
+  // What you could see as you pressed Send: the hub holds the send if more came into the chat by the time it goes.
+  const seen = seenUpTo(conversationId, timelines.values()) ?? undefined;
+  if (!per || files.length <= per) return sendOne(conversationId, body, opts, Date.now(), seen);
   const fileRuns = fileBatches(files, per);
   const uploadRuns = opts.uploads ? fileBatches(opts.uploads, per) : [];
   const now = Date.now();
   // All shown at once, a millisecond apart so they keep their order; then each goes once the one before is through.
   const ids = await Promise.all(
     fileRuns.map((run, k) =>
-      queueSend(conversationId, k ? '' : body, { ...opts, files: run, uploads: uploadRuns[k], ...(k ? { replyTo: undefined, mentionReplied: undefined } : {}) }, now + k),
+      queueSend(conversationId, k ? '' : body, { ...opts, files: run, uploads: uploadRuns[k], ...(k ? { replyTo: undefined, mentionReplied: undefined } : {}) }, now + k, seen),
     ),
   );
-  for (const id of ids) if (id) await deliver(id);
+  for (const id of ids) if (id) await deliverInOrder(id);
 }
 
-async function sendOne(conversationId: string, body: string, opts: SendOpts, ts: number) {
-  const tempId = await queueSend(conversationId, body, opts, ts);
-  if (tempId) await deliver(tempId);
+async function sendOne(conversationId: string, body: string, opts: SendOpts, ts: number, seen?: P.SeenUpTo) {
+  const tempId = await queueSend(conversationId, body, opts, ts, seen);
+  if (tempId) await deliverInOrder(tempId);
 }
 
-/** Kept and shown as pending; the tempId to deliver now, or null when it waits for the hub. */
-async function queueSend(conversationId: string, body: string, opts: SendOpts, ts: number): Promise<string | null> {
+/** Kept and shown as on this device; the tempId to deliver now, or null when it waits for the hub. */
+async function queueSend(conversationId: string, body: string, opts: SendOpts, ts: number, seen?: P.SeenUpTo): Promise<string | null> {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
-  const e: OutboxEntry = { tempId, conversationId, body, ts, accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}) };
+  const e: OutboxEntry = { tempId, conversationId, body, ts, accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}), ...(seen ? { seenUpTo: seen } : {}) };
+  // Sends that wait for the hub in this chat go first, when it is back: this one waits behind them.
+  const behind = pending.value.some((p) => p.conversationId === conversationId && p.queued);
   pending.value = [...pending.value, pendingOf(e)];
   outgoing.set(tempId, e);
   if (opts.uploads?.length) {
@@ -1041,19 +1059,29 @@ async function queueSend(conversationId: string, body: string, opts: SendOpts, t
   }
   // Kept before it goes, so that closing the app meanwhile cannot lose it; a slow IndexedDB does not hold it up long.
   await Promise.race([outbox.put(e), new Promise((r) => setTimeout(r, 500))]);
-  if (!connected.value) {
+  if (!connected.value || behind) {
     setPending(tempId, { queued: true });
-    probe();
+    if (!connected.value) probe();
+    else void flushOutgoing();
     return null;
   }
   return tempId;
+}
+
+/** To the hub after the ones before it in its chat. */
+function deliverInOrder(tempId: string): Promise<void> {
+  const conv = outgoing.get(tempId)?.conversationId ?? '';
+  const next = (postChains.get(conv) ?? Promise.resolve()).then(() => deliver(tempId));
+  postChains.set(conv, next);
+  void next.finally(() => postChains.get(conv) === next && postChains.delete(conv));
+  return next;
 }
 
 async function deliver(tempId: string) {
   const o = outgoing.get(tempId);
   if (!o || delivering.has(tempId)) return;
   delivering.add(tempId);
-  setPending(tempId, { queued: false, failed: undefined, unsure: undefined });
+  setPending(tempId, { queued: false, failed: undefined });
   // Each file's upload: the composer's, still going or done, or one carrying on from what the hub has. `again`:
   // the hub let them expire, so each begins anew.
   const uploadAll = async (again = false) => {
@@ -1077,25 +1105,29 @@ async function deliver(tempId: string) {
     }
     void outbox.put(o);
   };
-  // clientId: a retry after a lost answer, or after a reload, goes out once (server.ts).
-  const clientId = clientIdOf(o);
-  // Whether it went to the hub this time: from then on, no answer leaves it in doubt (outbox.ts afterFailure).
-  let posted = false;
   const post = () => {
-    posted = true;
-    // A message of ours that comes after this may be this send's (settle). Kept too: a reload meanwhile finds it in
-    // doubt rather than sending it again.
-    o.postedAt = Date.now();
-    setPending(tempId, { postedAt: o.postedAt });
-    void outbox.put(o);
-    const body = { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) };
-    // Given up with its socket, when that is found dead: its connection likely died too. The retry after the next
-    // catch-up carries the same clientId, so the hub answers it with the first one's answer rather than sending twice.
-    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body, signal: link.signal });
+    // `ack: 'hub'`: answered as soon as the hub has it in its queue (one tick). The clientId is kept by the hub for
+    // good, so going again after a lost answer, or after a reload, is the same send, never a second one.
+    const body = {
+      body: o.body,
+      accountId: o.accountId,
+      replyTo: o.replyTo,
+      attachments: o.attachments,
+      clientId: o.tempId,
+      ack: 'hub',
+      pressedAt: o.ts,
+      device: thisDevice(),
+      ...(o.seenUpTo ? { seenUpTo: o.seenUpTo } : {}),
+      ...o.media,
+      ...(o.silent ? { silent: true } : {}),
+      ...(o.mentionReplied === false ? { mentionReplied: false } : {}),
+    };
+    // Given up with its socket, when that is found dead: it goes again after the next catch-up, under the same id.
+    return api<P.SendAccepted>(`/api/conversations/${o.conversationId}/send`, { body, signal: link.signal });
   };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
-    let r: P.SendResult;
+    let r: P.SendAccepted;
     try {
       r = await post();
     } catch (e: any) {
@@ -1104,31 +1136,20 @@ async function deliver(tempId: string) {
       await uploadAll(true);
       r = await post();
     }
+    // The hub has it: from now on its row is shown, here and on every device.
+    if (r?.row) putHubSend(r.row);
     forget(tempId);
-    setPending(tempId, { acked: true, ...(r?.messageId ? { messageId: r.messageId } : {}) });
-    settle();
-    // A message that never comes back (a network that does not echo it) leaves no copy behind for long.
-    setTimeout(() => (pending.value = pending.value.filter((x) => x.tempId !== tempId)), 30_000);
+    pending.value = pending.value.filter((x) => x.tempId !== tempId);
   } catch (e: any) {
-    // The hub refused it before it reached the network: a message that looked like its own was another send.
-    if (!mayBeOut(e)) (o.postedAt = undefined), setPending(tempId, { postedAt: undefined, echoed: undefined });
-    // Its message is here, so it went out, whatever the answer says (504, or no answer at all): nothing to retry.
-    else if (pending.value.some((x) => x.tempId === tempId && x.echoed)) {
+    // The hub said it has it after all (its list came on the socket meanwhile): nothing to keep.
+    if (hubSends.value.rows.some((r) => r.clientId === tempId)) {
       forget(tempId);
       pending.value = pending.value.filter((x) => x.tempId !== tempId);
       return;
     }
-    const next = afterFailure(e, { posted, online: connected.value, autoResend: o.autoResend });
-    // Never went to the hub, or you asked for it to go again by itself: it waits for the hub, and goes when it is back.
-    if (next === 'queued') {
+    if (afterFailure(e, { online: connected.value }) === 'queued') {
       setPending(tempId, { queued: true });
       probe();
-    } else if (next === 'doubt') {
-      // It may be out (no answer, or the hub's 504): it waits for you, or for its message (docs/sync.md).
-      o.unsure = true;
-      void outbox.put(o);
-      setPending(tempId, { unsure: true });
-      if (!connected.value) probe();
     } else {
       o.failed = e.message;
       void outbox.put(o);
@@ -1139,21 +1160,21 @@ async function deliver(tempId: string) {
   }
 }
 
-/** A send that is through: nothing of it is kept any more but its copy, until its message is here. */
+/** A send the hub has: nothing of it is kept on this device any more. */
 function forget(tempId: string) {
   outgoing.delete(tempId);
   sendUploads.delete(tempId);
   void outbox.remove(tempId);
 }
 
-/** One at a time, oldest first: the batches of one send (and sends in a row) arrive in the order they were made. */
+/** One at a time, oldest first: the batches of one send (and sends in a row) reach the hub in the order they were made. */
 let flushing = false;
 async function flushOutgoing() {
   if (flushing) return;
   flushing = true;
   try {
     for (let next; (next = pending.value.filter((p) => p.queued && !delivering.has(p.tempId)).sort((a, b) => a.ts - b.ts)[0]); ) {
-      await deliver(next.tempId);
+      await deliverInOrder(next.tempId);
       // Still queued: the hub went away again, and its coming back flushes the rest.
       if (pending.value.some((p) => p.tempId === next.tempId && p.queued)) break;
     }
@@ -1162,31 +1183,15 @@ async function flushOutgoing() {
   }
 }
 
-/** A refused send, again; or, asked for, one in doubt (as a new send: outbox.ts sendAgain). */
+/** A send the hub refused before taking it, again. */
 export function retrySend(tempId: string) {
   const o = outgoing.get(tempId);
   if (!o) return;
-  sendAgain(o);
+  o.failed = undefined;
   void outbox.put(o);
-  setPending(tempId, { postedAt: undefined, unsure: undefined });
-  if (connected.value) return void deliver(tempId);
+  if (connected.value) return void deliverInOrder(tempId);
   setPending(tempId, { failed: undefined, queued: true });
   probe();
-}
-
-/**
- * Whether a send goes again by itself, the same send, if the hub drops mid-send (off by default: it then waits for
- * you). Turned off while one already cut off waits for the hub, that one is in doubt now.
- */
-export function setAutoResend(tempId: string, on: boolean) {
-  const o = outgoing.get(tempId);
-  if (!o) return;
-  o.autoResend = on || undefined;
-  const p = pending.value.find((x) => x.tempId === tempId);
-  const doubt = !on && !!p?.queued && o.postedAt !== undefined;
-  if (doubt) o.unsure = true;
-  void outbox.put(o);
-  setPending(tempId, { autoResend: on || undefined, ...(doubt ? { queued: false, unsure: true } : {}) });
 }
 
 /** A refused send, thrown away, and its files with it. */
@@ -1201,68 +1206,34 @@ export function discardSend(tempId: string) {
 }
 
 /**
- * Sends kept from before this start (a reload, the app closed meanwhile): shown again where they were, and the ones
- * that never went to the hub sent once it is caught up with, as before the reload. One cut off on its way to the hub
- * is in doubt (outbox.ts restoredState), and waits for you.
+ * Something you pressed on a send the hub has (sendqueue.ts): Send (held, in doubt, refused), Cancel, or Edit (the hub
+ * cancels it, and its text comes back to the box, `refillBox`).
+ */
+export async function sendAction(clientId: string, action: P.SendAction['action'], refillBox?: (row: P.SendRow) => void) {
+  try {
+    const row = await api<P.SendRow>(`/api/sends/${encodeURIComponent(clientId)}`, { body: { action } satisfies P.SendAction });
+    putHubSend(row);
+    if (action === 'edit') refillBox?.(row);
+  } catch (e) {
+    toast({ kind: 'error', title: action === 'send' ? 'Not sent' : 'Could not do that', body: (e as Error).message });
+  }
+}
+
+/**
+ * Sends kept from before this start (a reload, the app closed meanwhile): shown again where they were, and sent to
+ * the hub once it is caught up with, under the same clientId. The hub answers a send it already has with its row.
  */
 export async function restoreOutbox() {
   const kept = (await outbox.all()).filter((e) => !outgoing.has(e.tempId));
   if (!kept.length) return;
   const shown = kept.map((e) => {
     outgoing.set(e.tempId, e);
-    const st = restoredState(e);
-    // So that Send again is a new send (outbox.ts sendAgain).
-    if (st.unsure && !e.unsure) (e.unsure = true), void outbox.put(e);
-    return { ...pendingOf(e), ...st };
+    return { ...pendingOf(e), ...restoredState(e) };
   });
   pending.value = [...pending.value, ...shown].sort((a, b) => a.ts - b.ts);
   // The sync after connecting sends them; if it is already done, now.
   if (connected.value && synced && !held) void flushOutgoing();
   else if (!connected.value) probe();
-}
-
-/** Messages already matched to a pending copy. */
-const claimed = new Set<string>();
-/** Our own messages that came lately on the socket, and when, for a copy whose answer comes after its message. */
-let echoes: Echo[] = [];
-const echoOf = (m: P.MessageView, seen?: number): Echo => ({ id: m.id, conversationId: m.conversationId, body: m.body, ts: m.ts, attachments: m.attachments.length, accountId: ownAccount(m)?.id, ...(seen ? { seen } : {}) });
-
-function noteEcho(m: P.MessageView) {
-  const now = Date.now();
-  // An edit or a reaction brings it again: when it first came is what counts.
-  const seen = echoes.find((e) => e.id === m.id)?.seen ?? now;
-  echoes = [...echoes.filter((e) => e.id !== m.id && now - e.ts < 5 * 60_000).slice(-99), echoOf(m, seen)];
-}
-
-/**
- * The pending copies whose message is here now (outbox.ts says which). One the hub answered goes; one still waiting
- * for its answer is hidden, and deliver lets it go when the answer comes; one that failed or waits for the hub went out
- * after all, so it goes, and nothing of it is kept.
- */
-function settle() {
-  const sent = pending.value.filter((p) => p.acked || p.messageId || p.postedAt !== undefined);
-  if (!sent.length) return;
-  const ids = new Set(sent.map((p) => p.messageId).filter(Boolean));
-  const convs = new Set(sent.map((p) => p.conversationId));
-  const since = Math.min(...sent.map((p) => p.ts)) - ECHO_SKEW;
-  const known = new Map<string, Echo>();
-  for (const t of timelines.values())
-    for (const m of t.messages) if (ids.has(m.id) || (m.ts >= since && convs.has(m.conversationId) && isSelfIdentity(m.authorId))) known.set(m.id, echoOf(m));
-  for (const e of echoes) known.set(e.id, e);
-  const gone = new Set(settled(sent, [...known.values()], claimed));
-  for (const id of claimed) if (claimed.size > 500) claimed.delete(id);
-  if (!gone.size) return;
-  const was = pending.value;
-  let next = was;
-  for (const p of was) {
-    if (!gone.has(p.tempId) || (p.echoed && !p.acked)) continue;
-    if (!p.acked && delivering.has(p.tempId)) next = next.map((x) => (x === p ? { ...p, echoed: true } : x));
-    else {
-      if (!p.acked) forget(p.tempId);
-      next = next.filter((x) => x !== p);
-    }
-  }
-  if (next !== was) pending.value = next;
 }
 
 export async function openDirect(accountId: string, peer: string): Promise<P.OpenedDirect> {

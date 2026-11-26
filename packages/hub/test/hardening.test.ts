@@ -346,8 +346,15 @@ describe('the server', () => {
     expect(store.accounts().length).toBe(1);
   });
 
+  /** A conversation of its own for each test: an earlier test's send in doubt holds up the ones behind it (sendqueue.ts). */
+  const convOf = (nativeId: string) => {
+    const acc = store.accounts()[0];
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId, shape: 'group', name: nativeId } });
+    return store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = ?`, nativeId)!.id;
+  };
+
   test('a send whose answer never came is not sent again by a retry', async () => {
-    const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+    const conv = convOf('c-lost');
     const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'once', clientId: 'tmp-1' }) });
     answer = new Error('adapter timed out on send');
     const first = await send();
@@ -371,8 +378,8 @@ describe('the server', () => {
     ['an adapter of the hub dropped mid-send', new Error('adapter disconnected mid-command')],
   ];
   for (const [n, [what, err]] of inDoubt.entries()) {
-    test(`in doubt when ${what}: 504 unsure, and a repeat under the same clientId is not sent again`, async () => {
-      const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+    test(`in doubt when ${what}: 504 unsure, a repeat under the same clientId is not sent again, Send again is`, async () => {
+      const conv = convOf(`c-doubt${n}`);
       const body = `doubt ${what}`;
       const send = (clientId: string) => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body, clientId }) });
       answer = err;
@@ -384,15 +391,22 @@ describe('the server', () => {
       expect(repeat.status).toBe(504);
       expect((await repeat.json()).code).toBe('unsure');
       expect(sent.filter((c: any) => c.body === body).length).toBe(1);
-      // A new id is a new send, the person's call: it goes.
-      const again = await send(`tmp-doubt${n}~1`);
+      // A new send waits behind the one in doubt (the chat's order): the hub has it, nothing goes.
+      const behind = await send(`tmp-doubt${n}-next`);
+      expect(behind.status).toBe(202);
+      expect(sent.filter((c: any) => c.body === body).length).toBe(1);
+      // Send again is the person's call: the same row goes, then the one behind it.
+      const again = await fetch(`${url}/api/sends/tmp-doubt${n}`, { method: 'POST', body: JSON.stringify({ action: 'send' }) });
       expect(again.status).toBe(200);
-      expect(sent.filter((c: any) => c.body === body).length).toBe(2);
+      await hub.queue.settled(`tmp-doubt${n}-next`);
+      expect(hub.queue.get(`tmp-doubt${n}`)!.state).toBe('sent');
+      expect(hub.queue.get(`tmp-doubt${n}-next`)!.state).toBe('sent');
+      expect(sent.filter((c: any) => c.body === body).length).toBe(3);
     });
   }
 
   test('a refusal that did nothing is not in doubt: the same clientId may go again', async () => {
-    const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+    const conv = convOf('c-refused');
     const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'refused first', clientId: 'tmp-refused' }) });
     answer = lost('offline', 'the account is not connected');
     const first = await send();
@@ -402,8 +416,8 @@ describe('the server', () => {
     expect(sent.filter((c: any) => c.body === 'refused first').length).toBe(2);
   });
 
-  test('without a clientId, a send in doubt still answers 504 unsure (nothing to keep it under)', async () => {
-    const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+  test('without a clientId, a send in doubt still answers 504 unsure (the hub made it an id)', async () => {
+    const conv = convOf('c-noid');
     answer = lost('timeout', 'the manager did not answer');
     const res = await fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'no id' }) });
     answer = 'ok';

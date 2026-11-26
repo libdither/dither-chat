@@ -325,9 +325,9 @@ export interface SendResult {
 
 /**
  * The answer (504) to a send the hub handed on and then lost track of: the account stopped answering, the connection to
- * it dropped, or the accounts manager gave up waiting. It may or may not have gone out. The hub keeps this answer under
- * the send's `clientId` (15 minutes), so a repeat of the same send gets it again rather than going out a second time; a
- * new send is the person's call (docs/sync.md "A send in doubt").
+ * it dropped, or the accounts manager gave up waiting. It may or may not have gone out. The hub keeps the send's row
+ * under its `clientId` for good (state `unsure`), so a repeat of the same send gets this again rather than going out a
+ * second time; sending it again is the person's call (docs/sync.md "The send queue").
  */
 export interface SendUnsure {
   error: string;
@@ -1659,6 +1659,8 @@ export interface Bootstrap {
   boot?: string;
   /** Status dots: everyone's presence as last heard (PresenceNowView). Absent from hubs that predate them. */
   presence?: PresenceNowView[];
+  /** The send queue, as its `sends` event has it. Absent from hubs that predate it. */
+  sends?: { rows: import('./sendqueue.ts').SendRow[]; now: number };
 }
 
 /**
@@ -1768,6 +1770,12 @@ export type ClientEvent =
    * pending copy by id before the answer to its POST arrives. Of the moment, like `typing`: not journaled.
    */
   | { t: 'sent'; conversationId: string; clientId: string; messageId: string }
+  /**
+   * The hub's send queue (docs/sync.md "The send queue"): every send still open (queued, sending, held, in doubt,
+   * failed) and the ones sent in the last two minutes, whole. `now` is the hub's clock, for a countdown's seconds.
+   * Journaled as a list.
+   */
+  | { t: 'sends'; rows: import('./sendqueue.ts').SendRow[]; now: number }
   /**
    * Status dots: presence that changed (`items`) or became unknown (`removed`, identity ids), at most once every two
    * seconds (hub presence.ts). `replace`: these are all of them. Journaled per identity, like attention.

@@ -46,7 +46,7 @@ function busy(): string[] {
     layers: layerCount(),
     menus: document.querySelectorAll('.menu-anchor > .menu').length,
     detached: !!document.querySelector('.jump-latest'),
-    sending: pending.value.filter((p) => !p.failed && !p.acked).length,
+    sending: pending.value.filter((p) => !p.failed).length,
   });
 }
 

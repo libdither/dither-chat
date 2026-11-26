@@ -16,6 +16,7 @@ import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
 import { LoudnessSettingsLazy } from './LoudnessLazy.tsx';
 import { PrivacySettings } from './Privacy.tsx';
+import { SendingSettings } from './SendingSettings.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { IndexingSettings } from './Indexing.tsx';
 import { AdversarialSettings } from './Adversarial.tsx';
@@ -375,6 +376,7 @@ export function SettingsPane() {
         </Later>
 
         <Later>
+          <SendingSettings />
           <PrivacySettings />
           <HistorySettings />
           <IndexingSettings />

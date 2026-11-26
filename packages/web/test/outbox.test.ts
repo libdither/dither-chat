@@ -1,7 +1,7 @@
-/** src/outbox.ts: sends kept on the device across a reload, and which message replaces a pending copy. */
+/** src/outbox.ts: sends kept on the device across a reload, until the hub has them, and what a failed POST becomes. */
 import { expect, test } from 'bun:test';
 import { IDBFactory } from 'fake-indexeddb';
-import { afterFailure, clientIdOf, ECHO_SKEW, mayBeOut, openOutbox, restoredState, sendAgain, settled, type Echo, type OutboxEntry, type Sent } from '../src/outbox.ts';
+import { afterFailure, openOutbox, restoredState, type OutboxEntry } from '../src/outbox.ts';
 
 const entry = (tempId: string, x: Partial<OutboxEntry> = {}): OutboxEntry => ({ tempId, conversationId: 'cnv_a', body: 'hi', ts: 1000, ...x });
 
@@ -43,191 +43,28 @@ test('without IndexedDB it still works, in memory, as before', async () => {
   expect(await o.all()).toEqual([]);
 });
 
-// ------------------------------------------------------------------ matching
-
-const sent = (tempId: string, x: Partial<Sent> = {}): Sent => ({ tempId, conversationId: 'cnv_a', body: 'hi', ts: 10_000, acked: true, ...x });
-const echo = (id: string, x: Partial<Echo> = {}): Echo => ({ id, conversationId: 'cnv_a', body: 'hi', ts: 10_500, attachments: 0, ...x });
-
-test('by the id the hub answered with, whatever the network did to the text', () => {
-  const claimed = new Set<string>();
-  // The network turned :) into an emoji and a name into a mention.
-  expect(settled([sent('t1', { body: 'hi :) @sam', messageId: 'msg_1' })], [echo('msg_1', { body: 'hi 🙂 <@123>' })], claimed)).toEqual(['t1']);
-  expect([...claimed]).toEqual(['msg_1']);
-});
-
-test('a copy with an id waits for its own message, not one with the same text', () => {
-  expect(settled([sent('t1', { messageId: 'msg_2' })], [echo('msg_1')], new Set())).toEqual([]);
-});
-
-test('two identical sends are two copies: one message replaces one of them', () => {
-  const claimed = new Set<string>();
-  const both = [sent('t1', { ts: 10_000 }), sent('t2', { ts: 10_100 })];
-  // Without ids (a network that did not say), by text: the first message takes the first copy only.
-  expect(settled(both, [echo('msg_1')], claimed)).toEqual(['t1']);
-  // The same message again (a later frame, a sync) takes nothing more.
-  expect(settled([both[1]], [echo('msg_1')], claimed)).toEqual([]);
-  expect(settled([both[1]], [echo('msg_1'), echo('msg_2', { ts: 10_600 })], claimed)).toEqual(['t2']);
-  // With ids, each its own.
-  const ids = [sent('t3', { messageId: 'msg_3' }), sent('t4', { messageId: 'msg_4' })];
-  expect(settled(ids, [echo('msg_4')], new Set())).toEqual(['t4']);
-});
-
-test('a copy not yet sent to the hub is matched by nothing', () => {
-  // Waiting for the hub, or still uploading: no message can be its own yet.
-  expect(settled([sent('t1', { acked: false })], [echo('msg_1', { seen: 11_000 })], new Set())).toEqual([]);
-  expect(settled([sent('t1', { messageId: 'msg_1' })], [echo('msg_1')], new Set())).toEqual(['t1']);
-});
-
-// ------------------------------------------------------------------ the message before the answer (a slow link)
-
-/** Sent to the hub at `postedAt`, no answer yet. */
-const posted = (tempId: string, x: Partial<Sent> = {}): Sent => sent(tempId, { acked: false, postedAt: 10_050, ...x });
-
-test('its message before the answer: the copy is matched at once, and is that message\'s when the answer comes', () => {
-  const claimed = new Set<string>();
-  const e = echo('msg_1', { seen: 10_400 });
-  expect(settled([posted('t1')], [e], claimed)).toEqual(['t1']);
-  expect([...claimed]).toEqual(['msg_1']);
-  // Hidden meanwhile (state.ts). The answer names it, or does not: either way it goes.
-  expect(settled([posted('t1', { echoed: true, acked: true, messageId: 'msg_1' })], [e], claimed)).toEqual(['t1']);
-  expect(settled([posted('t1', { echoed: true, acked: true })], [e], claimed)).toEqual(['t1']);
-  // Still waiting for its answer: nothing more to do.
-  expect(settled([posted('t1', { echoed: true })], [e], claimed)).toEqual([]);
-});
-
-test('the answer before its message: matched by id when the message comes, as before', () => {
-  const claimed = new Set<string>();
-  const s = posted('t1', { acked: true, messageId: 'msg_1' });
-  expect(settled([s], [], claimed)).toEqual([]);
-  // Another message of ours with the same text is not it.
-  expect(settled([s], [echo('msg_0', { seen: 10_300 })], claimed)).toEqual([]);
-  expect(settled([s], [echo('msg_0', { seen: 10_300 }), echo('msg_1', { seen: 10_600 })], claimed)).toEqual(['t1']);
-  // The hub's `sent` event names it before the answer: by id too.
-  expect(settled([posted('t2', { messageId: 'msg_2' })], [echo('msg_2', { seen: 10_600 })], new Set())).toEqual(['t2']);
-});
-
-test('two identical quick sends: each copy takes its own message, in send order', () => {
-  const claimed = new Set<string>();
-  const both = [posted('t1', { ts: 10_000, postedAt: 10_010 }), posted('t2', { ts: 10_100, postedAt: 10_110 })];
-  const first = echo('msg_1', { ts: 10_300, seen: 10_400 });
-  expect(settled(both, [first], claimed)).toEqual(['t1']);
-  // The first message again (an edit, a later frame) takes nothing more; the second takes the second copy.
-  expect(settled([both[1]], [first], claimed)).toEqual([]);
-  expect(settled([both[1]], [first, echo('msg_2', { ts: 10_350, seen: 10_450 })], claimed)).toEqual(['t2']);
-  // Both in one frame: one each.
-  expect(settled(both, [echo('msg_3', { ts: 10_300, seen: 10_400 }), echo('msg_4', { ts: 10_350, seen: 10_400 })], new Set())).toEqual(['t1', 't2']);
-});
-
-test('the same text sent earlier from another device does not take the copy', () => {
-  // "ok" from the laptop came on the socket before this "ok" went to the hub, dated within the skew.
-  const laptop = echo('msg_0', { body: 'ok', ts: 9_000, seen: 9_100 });
-  const s = posted('t1', { body: 'ok' });
-  expect(settled([s], [laptop], new Set())).toEqual([]);
-  // Nor once the hub took it without saying which message it became.
-  expect(settled([{ ...s, acked: true }], [laptop], new Set())).toEqual([]);
-  // Read from a page (when it came is not known): not before the answer.
-  expect(settled([s], [echo('msg_0', { body: 'ok', ts: 10_200 })], new Set())).toEqual([]);
-  // Dated well before the copy, even if it came after: not it either.
-  expect(settled([s], [echo('msg_0', { body: 'ok', ts: 10_000 - ECHO_SKEW - 1, seen: 10_400 })], new Set())).toEqual([]);
-  // Its own message after it: that one.
-  expect(settled([s], [laptop, echo('msg_1', { body: 'ok', seen: 10_400 })], new Set())).toEqual(['t1']);
-});
-
-test('before the answer, only plainly the same message: its text, its files, its account', () => {
-  const after = { seen: 10_400 };
-  expect(settled([posted('t1')], [echo('msg_1', { ...after, body: 'hi there' })], new Set())).toEqual([]);
-  // The network changed the text (an emoji, a mention): left to the answer's id.
-  expect(settled([posted('t1', { body: 'hi :)' })], [echo('msg_1', { ...after, body: 'hi 🙂' })], new Set())).toEqual([]);
-  expect(settled([posted('t1', { body: 'look', files: ['a.png', 'b.png'] })], [echo('msg_1', { ...after, body: 'look', attachments: 1 })], new Set())).toEqual([]);
-  expect(settled([posted('t1', { body: 'look', files: ['a.png', 'b.png'] })], [echo('msg_1', { ...after, body: 'look', attachments: 2 })], new Set())).toEqual(['t1']);
-  expect(settled([posted('t1')], [echo('msg_1', { ...after, attachments: 1 })], new Set())).toEqual([]);
-  expect(settled([posted('t1', { accountId: 'acc_a' })], [echo('msg_1', { ...after, accountId: 'acc_b' })], new Set())).toEqual([]);
-  expect(settled([posted('t1', { accountId: 'acc_a' })], [echo('msg_1', { ...after, accountId: 'acc_a' })], new Set())).toEqual(['t1']);
-  expect(settled([posted('t1')], [echo('msg_1', { ...after, conversationId: 'cnv_b' })], new Set())).toEqual([]);
-});
-
-test('a failed send whose message came anyway is matched; a refused one is not', () => {
-  // No answer, a 504 ("it may have been sent"), an error after the hub handed it on: it may be out, and keeps postedAt,
-  // so its message coming later means it went (state.ts then drops the copy and its outbox entry).
-  expect(mayBeOut(new TypeError('Failed to fetch'))).toBe(true);
-  expect(mayBeOut(Object.assign(new Error('The network did not answer in time'), { status: 504 }))).toBe(true);
-  expect(mayBeOut(Object.assign(new Error('adapter failed'), { status: 500 }))).toBe(true);
-  expect(settled([posted('t1')], [echo('msg_1', { seen: 20_000 })], new Set())).toEqual(['t1']);
-  // A refusal: the hub never sent it. postedAt is cleared, so a message like it is another send's.
-  for (const status of [400, 404, 409, 410, 413]) expect(mayBeOut(Object.assign(new Error('no'), { status }))).toBe(false);
-  expect(settled([sent('t1', { acked: false, postedAt: undefined })], [echo('msg_1', { seen: 20_000 })], new Set())).toEqual([]);
-});
-
-// ------------------------------------------------------------------ a send in doubt (docs/sync.md "A send in doubt")
+// ------------------------------------------------------------------ a failed POST (docs/sync.md "The send queue")
 
 const noAnswer = () => new TypeError('Failed to fetch');
 const hubSays = (status: number, message = 'x') => Object.assign(new Error(message), { status });
 
-test('never sent to the hub: it waits for the hub and goes by itself, after a reload too', () => {
-  // The hub not reached, the app offline, or an upload failed on the way: the POST was never made.
-  expect(afterFailure(noAnswer(), { posted: false, online: true })).toBe('queued');
-  expect(afterFailure(new Error('whatever'), { posted: false, online: false })).toBe('queued');
-  expect(afterFailure(hubSays(502), { posted: false, online: true })).toBe('queued');
-  // Kept from before a reload without ever going: shown waiting, and flushed (only `queued` ones are: state.ts).
+test('no answer: it waits on the device and goes to the hub again when it is back, under the same id', () => {
+  // The hub keeps every clientId for good, so the same send again is answered with what the hub has: never in doubt here.
+  for (const e of [noAnswer(), new DOMException('aborted', 'AbortError'), hubSays(502), hubSays(503), hubSays(504)]) expect(afterFailure(e, { online: true })).toBe('queued');
+  expect(afterFailure(new Error('gone'), { online: false })).toBe('queued');
+});
+
+test('a refusal, or the hub\'s own error, is failed: shown with the reason', () => {
+  for (const status of [400, 404, 409, 410, 413, 500]) expect(afterFailure(hubSays(status), { online: true })).toBe('failed');
+});
+
+test('kept from before a reload: failed as it was, else waiting to go to the hub', () => {
   expect(restoredState(entry('tmp-1'))).toEqual({ queued: true });
+  expect(restoredState(entry('tmp-1', { failed: 'no' }))).toEqual({ failed: 'no' });
 });
 
-test('sent to the hub and no answer: in doubt, never sent again by itself, after a reload neither', () => {
-  for (const e of [noAnswer(), new DOMException('aborted', 'AbortError'), hubSays(502), hubSays(503)]) expect(afterFailure(e, { posted: true, online: true })).toBe('doubt');
-  expect(afterFailure(new Error('gone'), { posted: true, online: false })).toBe('doubt');
-  // The hub's own "it may have been sent" (504): in doubt.
-  expect(afterFailure(hubSays(504, 'The hub lost track of this send'), { posted: true, online: true })).toBe('doubt');
-  // Restored: in doubt as it was; and one cut off mid-send (the app closed with the POST under way) is in doubt too,
-  // not sent again on the next catch-up. Neither is `queued`, so the flush passes it by.
-  expect(restoredState(entry('tmp-1', { unsure: true, postedAt: 1500 }))).toEqual({ unsure: true });
-  expect(restoredState(entry('tmp-1', { postedAt: 1500 }))).toEqual({ unsure: true });
-  // A refusal or the hub's own error is failed, as before: shown with the reason.
-  expect(afterFailure(hubSays(409), { posted: true, online: true })).toBe('failed');
-  expect(afterFailure(hubSays(500), { posted: true, online: true })).toBe('failed');
-  expect(restoredState(entry('tmp-1', { failed: 'no', postedAt: 1500 }))).toEqual({ failed: 'no' });
-});
-
-test('marked "resend automatically": the hub dropping queues it again, under the same clientId', () => {
-  const e = entry('tmp-1', { autoResend: true, postedAt: 1500 });
-  const id = clientIdOf(e);
-  expect(afterFailure(noAnswer(), { posted: true, online: true, autoResend: true })).toBe('queued');
-  expect(afterFailure(new Error('gone'), { posted: true, online: false, autoResend: true })).toBe('queued');
-  expect(restoredState(e)).toEqual({ queued: true });
-  // Nothing about it changed: it goes as the same send, which the hub sends once.
-  expect(clientIdOf(e)).toBe(id);
-  // The hub's 504 is not the hub dropping: it is there, and says it may be out. Still in doubt.
-  expect(afterFailure(hubSays(504), { posted: true, online: true, autoResend: true })).toBe('doubt');
-});
-
-test('its message coming clears a send in doubt by itself', () => {
-  // In doubt keeps postedAt: a message of ours with its text that came on the socket after it is its own.
-  const doubt = sent('t1', { acked: false, postedAt: 10_050 });
-  expect(settled([doubt], [echo('msg_1', { seen: 15_000 })], new Set())).toEqual(['t1']);
-  // Or the hub's `sent` event named it (messageId): by id, whatever the text.
-  expect(settled([{ ...doubt, messageId: 'msg_2' }], [echo('msg_2', { body: 'changed by the network' })], new Set())).toEqual(['t1']);
-  // A message from before it went is another send's.
-  expect(settled([doubt], [echo('msg_1', { seen: 10_000 })], new Set())).toEqual([]);
-});
-
-test('Send again is a new send: a new clientId, no longer in doubt', () => {
-  const e = entry('tmp-1', { unsure: true, postedAt: 1500 });
-  const before = clientIdOf(e);
-  sendAgain(e);
-  expect(clientIdOf(e)).toBe('tmp-1~1');
-  expect(clientIdOf(e)).not.toBe(before);
-  expect(e).toMatchObject({ unsure: false, postedAt: undefined, failed: undefined });
-  // Twice in doubt, twice again: each a new id.
-  e.unsure = true;
-  sendAgain(e);
-  expect(clientIdOf(e)).toBe('tmp-1~2');
-  // Try again after a plain failure keeps the id: the hub sent nothing under it.
-  const f = entry('tmp-2', { failed: 'refused' });
-  sendAgain(f);
-  expect(clientIdOf(f)).toBe('tmp-2');
-});
-
-test('in doubt, when it went, and the resend tick are kept across a reload', async () => {
+test('what you could see when you pressed Send is kept with it', async () => {
   const idb = new IDBFactory();
-  await openOutbox(idb).put(entry('tmp-1', { unsure: true, postedAt: 1500, autoResend: true }));
-  expect(await openOutbox(idb).all()).toEqual([entry('tmp-1', { unsure: true, postedAt: 1500, autoResend: true })]);
+  await openOutbox(idb).put(entry('tmp-1', { seenUpTo: { id: 'msg_1', ts: 900 } }));
+  expect(await openOutbox(idb).all()).toEqual([entry('tmp-1', { seenUpTo: { id: 'msg_1', ts: 900 } })]);
 });
