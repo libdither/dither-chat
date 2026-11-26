@@ -779,6 +779,7 @@ export class HubServer {
     const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
+    const mark = this.store.journal.mark();
     try {
       frame = timedWrite('flush', () =>
         this.store.db
@@ -791,8 +792,11 @@ export class HubServer {
     } catch (e) {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
       // the store gave up goes out and into the journal on its own.
+      // The journal's rows went with the transaction: it takes back what it thought written, and what it cannot write now
+      // (a full disk) it holds for the next frame, so this one still reaches every connected device.
       console.error('flush: one transaction failed; sending what changed as it is', e);
       jobFailed('flush', e);
+      this.store.journal.undo(mark);
       frame = this.record(events);
       s.fail(e);
     }
