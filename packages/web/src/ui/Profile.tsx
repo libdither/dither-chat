@@ -27,6 +27,7 @@ import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { CloseCard, VoiceCard } from './VoiceClose.tsx';
+import { Between, type BetweenRow, DesignBar, PeopleList, profileDesign, Section, Tabs } from './ProfileDesigns.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
@@ -940,7 +941,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     </>
   );
 
-  const main = (
+  const accountsCard = (
     <>
       {several && (
         <Card title="Accounts" icon="idBadge" count={ids.length} class="pf-accounts">
@@ -966,7 +967,17 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {mergeUi}
         </Card>
       )}
+    </>
+  );
+
+  const sameBox = (
+    <>
       {!isSelf && sameSide && <SameBox side={sameSide} />}
+    </>
+  );
+
+  const aboutCard = (
+    <>
       <Card title="About" icon="info" extra={asking ? <span class="pf-asking">Asking…</span> : undefined}>
         {editable.map(({ i, account }) => (
           <>
@@ -1071,13 +1082,21 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </p>
         ))}
       </Card>
+    </>
+  );
 
+  const postsCard = (
+    <>
       {said.some((a) => a.posts?.length) && (
         <Card title="Recent posts" icon="send" count={said.reduce((n, a) => n + (a.posts?.length ?? 0), 0)} class="pf-posts">
           <RecentPostsLazy abouts={said} />
         </Card>
       )}
+    </>
+  );
 
+  const activityCard = (
+    <>
       <ActivityCard
         path={changesPath}
         chartPath={chartPath}
@@ -1087,8 +1106,17 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         at={live && heard === live ? live.at : undefined}
         presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       />
-      <VoiceCard base={person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`} self={isSelf} />
+    </>
+  );
 
+  const voiceCard = (
+    <>
+      <VoiceCard base={person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`} self={isSelf} />
+    </>
+  );
+
+  const inCommonCard = (
+    <>
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (
         <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={sharedSpaces.length + groupChats.length}>
           {sharedSpaces.length > 0 && (
@@ -1145,15 +1173,33 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           )}
         </Card>
       )}
+    </>
+  );
 
+  const storiesEl = (
+    <>
       {ids
         .filter((i) => i.network === 'signal' && !isSelfIdentity(i.id))
         .map((i) => (
           <Stories identityId={i.id} network={i.network} />
         ))}
-      {!!profile.events?.length && <EventsCard events={profile.events} />}
-      {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
+    </>
+  );
 
+  const eventsCard = (
+    <>
+      {!!profile.events?.length && <EventsCard events={profile.events} />}
+    </>
+  );
+
+  const mailCard = (
+    <>
+      {profile.mail && <MailCard mail={profile.mail} list={withList(person?.id ?? first.id)} name={name} />}
+    </>
+  );
+
+  const recentCard = (
+    <>
       {(profile.recent.length > 0 || chatNets.length > 0) && (
         <Card title="Recent messages" icon="send" count={profile.recent.length || undefined}>
           {!profile.recent.length && <p class="pf-empty">None stored. The hub only has what your accounts have fetched.</p>}
@@ -1174,17 +1220,35 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </div>
         </Card>
       )}
+    </>
+  );
+
+  const historyCard = (
+    <>
       <HistoryCard path={`${changesPath}?except=status,presence,voice`} person />
     </>
   );
 
-  const side = (
+  const friendsCard = (
     <>
       {isSelf ? <FriendsCard said={said} of={(a) => a.friends} /> : <FriendsCard said={said} of={(a) => a.mutualFriends} mutual />}
+    </>
+  );
+
+  const closeCard = (
+    <>
       {!isSelf && <CloseCard base={person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`} />}
+    </>
+  );
 
+  const safetyCard = (
+    <>
       {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
+    </>
+  );
 
+  const connectionsCard = (
+    <>
       {!isSelf && (
         <ConnectionsCard
           ids={ids}
@@ -1196,7 +1260,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           }}
         />
       )}
+    </>
+  );
 
+  const oneAccountCard = (
+    <>
       {!several && (
         <Card title="Accounts" icon="idBadge">
           {ids.map((i) => {
@@ -1222,7 +1290,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {mergeUi}
         </Card>
       )}
+    </>
+  );
 
+  const notifyCard = (
+    <>
       {!isSelf && (
         <Card title="Notifications" icon="bell">
           <label class="toggle-row">
@@ -1241,12 +1313,400 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </label>
         </Card>
       )}
+    </>
+  );
 
+  const noteCard = (
+    <>
       <Card title="Note" icon="pencil">
         <textarea class="input pf-note" rows={3} placeholder="Only you see this. It stays on the hub." value={profile.note ?? ''} onChange={(e) => patch({ note: (e.target as HTMLTextAreaElement).value })} />
       </Card>
     </>
   );
+
+  const main = (
+    <>
+      {accountsCard}
+      {sameBox}
+      {aboutCard}
+      {postsCard}
+      {activityCard}
+      {voiceCard}
+      {inCommonCard}
+      {storiesEl}
+      {eventsCard}
+      {mailCard}
+      {recentCard}
+      {historyCard}
+    </>
+  );
+
+  const side = (
+    <>
+      {friendsCard}
+      {closeCard}
+      {safetyCard}
+      {connectionsCard}
+      {oneAccountCard}
+      {notifyCard}
+      {noteCard}
+    </>
+  );
+
+  // ---- the draft designs' merged blocks (ProfileDesigns.tsx)
+  const design = profileDesign.value;
+  const base = person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`;
+  const ended = (identityId: string, accountId: string) => {
+    change(accountId, identityId, 'stranger');
+    const a = abouts[identityId];
+    if (a && a.accountId === accountId) learn({ ...a, relationship: 'stranger' });
+  };
+  // Their accounts, each with how yours stand with it: the Connections card folded into Accounts.
+  const accountsMerged = (
+    <Card title="Accounts" icon="idBadge" count={ids.length > 1 ? ids.length : undefined} class="pf-accounts pfd-accounts">
+      <div class="pf-acct-list">
+        {tiles.map((i) => {
+          const r = reach(i);
+          const mine = conns.filter((c) => c.identityId === i.id);
+          return (
+            <div class="pfd-acct" data-same={identityName(i.id) === name || undefined}>
+              <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />
+              {mine.length > 0 && <ProfileConnections identities={ids} list={mine} onEnded={ended} />}
+            </div>
+          );
+        })}
+      </div>
+      {!isSelf && person && several && (
+        <p class="pf-acct-note">
+          {speaker ? (
+            <span>
+              <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now'}.
+            </span>
+          ) : (
+            <>No account speaks for them yet.</>
+          )}
+        </p>
+      )}
+      {mergeUi}
+    </Card>
+  );
+  const msgRow = (m: P.ProfileView['recent'][number]): BetweenRow => {
+    const c = db.conversations.get(m.conversationId);
+    return {
+      key: m.id,
+      ts: m.ts,
+      kind: 'chat',
+      el: (
+        <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
+          {c && !isQuietConv(c) ? <PlaceIcon c={c} size={24} /> : <NetBadge network={m.network} size={24} />}
+          <span class="pf-row-text">
+            <small class="pf-msg-where">{c ? (c.shape === 'direct' ? `Direct message · ${netName(c.network)}` : c.variant === 'feed' ? `${netName(c.network)} notifications` : c.variant === 'posts' ? `${netName(c.network)} posts` : convLabel(c)) : 'Unknown'}</small>
+            <span class="pf-msg-body">{m.feed ? feedLine(m.feed, m.body, m.network) : plainBody(m.body, m.network) || (m.attachments.length ? 'Attachment' : m.kind === 'encrypted' ? 'Encrypted message' : '')}</span>
+          </span>
+          <span class="pf-row-time">{ago(m.ts)}</span>
+        </button>
+      ),
+    };
+  };
+  const mailRow = (t: P.MailThreadView): BetweenRow => ({
+    key: t.id,
+    ts: t.lastAt,
+    kind: 'mail',
+    el: (
+      <button
+        class={`pf-row pf-msg pf-mail-row ${t.unread ? 'unread' : ''}`}
+        onClick={() => {
+          db.mail.threads.set(t.id, t);
+          go({ view: 'inbox', conv: t.id });
+        }}
+        title={fullTime(t.lastAt)}
+      >
+        <NetBadge network="email" size={24} />
+        <span class="pf-row-text">
+          <small class="pf-msg-where">
+            Mail · {senderLine(t)}
+            {t.count > 1 ? ` · ${t.count}` : ''}
+          </small>
+          <span class="pf-msg-body">
+            <b>{t.subject || '(no subject)'}</b>
+            {t.preview ? ` — ${t.preview}` : ''}
+          </span>
+        </span>
+        <span class="pf-row-time">{ago(t.lastAt)}</span>
+      </button>
+    ),
+  });
+  const betweenRows = [...profile.recent.map(msgRow), ...(profile.mail?.threads ?? []).map(mailRow)];
+  const mailTotal = profile.mail?.total ?? 0;
+  const betweenEl = (
+    <Between
+      rows={betweenRows}
+      foot={
+        mailTotal > 0 && (
+          <button class="link-btn" onClick={() => go({ view: 'inbox', mail: withList(person?.id ?? first.id) })}>
+            {mailTotal > (profile.mail?.threads.length ?? 0) ? `All ${mailTotal.toLocaleString()} mail threads` : 'All mail'}
+          </button>
+        )
+      }
+    />
+  );
+  const betweenCard = betweenRows.length > 0 && (
+    <Card title={isSelf ? 'Your messages' : 'Between you'} icon="send" count={profile.recent.length + mailTotal || undefined} class="pfd-between-card">
+      {betweenEl}
+    </Card>
+  );
+  const placesN = sharedSpaces.length + groupChats.length;
+  const placesEl = placesN > 0 && (
+    <div class="pf-rows pfd-places">
+      {sharedSpaces.map(({ s, messages, nick, roles }) => {
+        const est = counts[s.id]?.observed ? counts[s.id] : undefined;
+        return (
+          <button class="pf-row" onClick={() => go({ view: 'space', space: s.id })} title={s.name}>
+            <Avatar id={s.id} name={s.name} url={s.icon} size={24} square network={s.network} />
+            <span class="pf-row-text">
+              <b>{s.name}</b>
+              <small>{[nick && `as ${nick}`, est ? countText(est) : messages ? `${messages.toLocaleString()} messages` : 'member', roles?.length ? roles.slice(0, 2).map((r) => r.name).join(', ') : null].filter(Boolean).join(' · ')}</small>
+            </span>
+          </button>
+        );
+      })}
+      {groupChats.map(({ c, messages, lastTs }) => (
+        <button class="pf-row" onClick={() => openConv(c)}>
+          <PlaceIcon c={c} size={24} />
+          <span class="pf-row-text">
+            <b>{convTitle(c)}</b>
+            <small>
+              {kindLabel(c)}
+              {messages ? ` · ${messages.toLocaleString()} from ${isSelf ? 'you' : 'them'}` : ''}
+            </small>
+          </span>
+          {lastTs && <span class="pf-row-time">{ago(lastTs)}</span>}
+        </button>
+      ))}
+    </div>
+  );
+  const peopleRows = isSelf ? null : <PeopleList base={base} said={said} />;
+  const peopleFaces = isSelf ? null : <PeopleList base={base} said={said} faces shown={16} />;
+  // Friends and places you share, in one card.
+  const commonCard = (faces: boolean) => (
+    <>
+      {isSelf && friendsCard}
+      {(!isSelf || placesN > 0) && (
+        <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={placesN || undefined} class="pfd-common">
+          {!isSelf && <h4 class="pfd-h">People</h4>}
+          {faces ? peopleFaces : peopleRows}
+          {placesN > 0 && <h4 class="pfd-h">Places</h4>}
+          {placesEl}
+        </Card>
+      )}
+    </>
+  );
+  const yoursCard = (
+    <Card title={isSelf ? 'Note' : 'Yours'} icon="pencil" class="pfd-yours">
+      {!isSelf && (
+        <label class="toggle-row">
+          <input
+            type="checkbox"
+            checked={rule?.level === 'all'}
+            onChange={async (e) => {
+              const on = (e.target as HTMLInputElement).checked;
+              setRule('person', await ensure(), on ? 'all' : null);
+            }}
+          />
+          <span>
+            <b>Always alert</b>
+            <small>Every message of theirs, everywhere.</small>
+          </span>
+        </label>
+      )}
+      <textarea class="input pf-note" rows={2} placeholder="A note only you see" value={profile.note ?? ''} onChange={(e) => patch({ note: (e.target as HTMLTextAreaElement).value })} />
+    </Card>
+  );
+  const rest = (
+    <>
+      {voiceCard}
+      {postsCard}
+      {storiesEl}
+      {eventsCard}
+    </>
+  );
+  // At a glance: how you stand, what you share, when you last heard from them, in a sentence or three.
+  const placeNames = [...sharedSpaces.map((x) => x.s.name), ...groupChats.map((x) => convTitle(x.c))];
+  const mutualNames = onePerPerson(said.flatMap((a) => a.mutualFriends ?? []).filter((i) => !isSelfIdentity(i))).map((i) => db.persons.get(db.identities.get(i)?.personId ?? '')?.name ?? identityName(i));
+  const when = (ts: number) => {
+    const a = ago(ts);
+    return a === 'now' ? 'just now' : /\d[mh]$/.test(a) ? `${a} ago` : `on ${a}`;
+  };
+  const newest = [...profile.recent].sort((a, b) => b.ts - a.ts)[0];
+  const newestConv = newest && db.conversations.get(newest.conversationId);
+  const STANDING: Record<string, string> = { friend: 'friends on', contact: 'in your contacts on', following: 'you follow them on', follower: 'they follow you on', requested: 'you asked them on', blocked: 'blocked on' };
+  const standingText = connectionTags(conns)
+    .map((t) => `${STANDING[t.kind] ?? t.label} ${andList(t.networks.map(netName))}`)
+    .join(', ');
+  const standing = standingText.charAt(0).toUpperCase() + standingText.slice(1);
+  const glance = !isSelf && (
+    <p class="pfd-glance">
+      {conns.length > 0 && <span>{standing}. </span>}
+      {(placeNames.length > 0 || mutualNames.length > 0) && (
+        <span>
+          You share {placeNames.length > 0 && <b>{andList([...placeNames.slice(0, 3), ...(placeNames.length > 3 ? [`${placeNames.length - 3} more`] : [])])}</b>}
+          {placeNames.length > 0 && mutualNames.length > 0 && ' and '}
+          {mutualNames.length > 0 && (
+            <>
+              {mutualNames.length} friend{mutualNames.length === 1 ? '' : 's'} ({andList(mutualNames.slice(0, 3))}
+              {mutualNames.length > 3 ? '…' : ''})
+            </>
+          )}
+          .{' '}
+        </span>
+      )}
+      {newest && (
+        <span>
+          Last heard {when(newest.ts)}{newestConv ? (newestConv.shape === 'direct' ? ` in your ${netName(newestConv.network)} chat` : ` in ${convTitle(newestConv)}`) : ''}
+          {mailTotal > 0 && profile.mail?.threads[0] ? `; last mail ${when(profile.mail.threads[0].lastAt)}` : ''}.
+        </span>
+      )}
+    </p>
+  );
+  const ago1 = betweenRows.length ? ago(Math.max(...betweenRows.map((r) => r.ts))) : null;
+  const linesOf = {
+    between: [profile.recent.length && `${profile.recent.length} messages`, mailTotal && `${mailTotal} mail`, ago1 && `latest ${ago1}`].filter(Boolean).join(' · '),
+    common: [sharedSpaces.length && `${sharedSpaces.length} server${sharedSpaces.length === 1 ? '' : 's'}`, groupChats.length && `${groupChats.length} group${groupChats.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ') || 'people',
+    accounts: (
+      <>
+        {nets.map((n) => (
+          <NetGlyph network={n} size={11} decorative />
+        ))}{' '}
+        {ids.length} account{ids.length === 1 ? '' : 's'}
+        {conns.length ? ` · ${connectionTags(conns).map((t) => t.label.toLowerCase()).join(', ')}` : ''}
+      </>
+    ),
+  };
+  const layout =
+    design === 'a' ? (
+      <Columns
+        main={
+          <>
+            {glance}
+            {sameBox}
+            {aboutCard}
+            {betweenCard}
+            {activityCard}
+            {rest}
+            {historyCard}
+          </>
+        }
+        side={
+          <>
+            {accountsMerged}
+            {commonCard(false)}
+            {safetyCard}
+            {yoursCard}
+          </>
+        }
+      />
+    ) : design === 'b' ? (
+      <div class="pfd-one">
+        {glance}
+        {sameBox}
+        <Tabs
+          tabs={[
+            {
+              key: 'overview',
+              label: 'Overview',
+              body: (
+                <>
+                  {aboutCard}
+                  {activityCard}
+                  {rest}
+                </>
+              ),
+            },
+            { key: 'between', label: isSelf ? 'Messages' : 'Between you', count: profile.recent.length + mailTotal, body: betweenEl ?? <p class="pf-empty">Nothing yet.</p> },
+            {
+              key: 'common',
+              label: isSelf ? 'Friends and places' : 'In common',
+              count: placesN,
+              body: (
+                <div class="pfd-two">
+                  <div>
+                    <h4 class="pfd-h">People</h4>
+                    {isSelf ? friendsCard : peopleRows}
+                  </div>
+                  <div>
+                    <h4 class="pfd-h">Places</h4>
+                    {placesEl || <p class="pf-empty">None.</p>}
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'accounts',
+              label: 'Accounts',
+              count: ids.length,
+              body: (
+                <>
+                  {accountsMerged}
+                  {safetyCard}
+                  {yoursCard}
+                </>
+              ),
+            },
+            { key: 'history', label: 'History', body: historyCard },
+          ]}
+        />
+      </div>
+    ) : design === 'c' ? (
+      <div class="pfd-one pfd-digest">
+        {glance}
+        {sameBox}
+        {aboutCard}
+        {betweenRows.length > 0 && (
+          <Section title={isSelf ? 'Your messages' : 'Between you'} line={linesOf.between} open>
+            {betweenEl}
+          </Section>
+        )}
+        <Section title={isSelf ? 'Friends and places' : 'In common'} line={linesOf.common} open>
+          {isSelf ? friendsCard : peopleFaces}
+          {placesEl}
+        </Section>
+        <Section title="Accounts" line={linesOf.accounts}>
+          {accountsMerged}
+          {safetyCard}
+        </Section>
+        <Section title="Activity" line={status?.text ?? 'when they are around'}>
+          {activityCard}
+          {voiceCard}
+        </Section>
+        <Section title="More" line="posts, stories, events, notes, history">
+          {postsCard}
+          {storiesEl}
+          {eventsCard}
+          {yoursCard}
+          {historyCard}
+        </Section>
+      </div>
+    ) : design === 'd' ? (
+      <div class="pfd-three">
+        <div>
+          {glance}
+          {sameBox}
+          {aboutCard}
+          {accountsMerged}
+          {safetyCard}
+          {yoursCard}
+        </div>
+        <div>
+          {betweenCard}
+          {activityCard}
+          {rest}
+          {historyCard}
+        </div>
+        <div>{commonCard(true)}</div>
+      </div>
+    ) : (
+      <Columns main={main} side={side} />
+    );
 
   return (
     <ProfilePage title={name} label={`${name}'s profile`} onBack={onBack}>
@@ -1256,7 +1716,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           No direct chat yet, and no connected account can start one on {chatNets.map(netName).join(' or ')}. Start it in the network's own app; it appears here once it exists.
         </p>
       )}
-      <Columns main={main} side={side} />
+      <div class={`pfd pfd-${design || 'now'}`}>{layout}</div>
+      <DesignBar />
       {ownPicture && pe && <pe.PictureDrop open={setPicturing} />}
       {pe && picturing && editing.current && <pe.PictureEditor target={editing.current} start={picturing} onClose={() => setPicturing(null)} />}
     </ProfilePage>

@@ -1383,7 +1383,7 @@ export class HubServer {
         const voice = personVoice(s.db, ids, (i) => ((keyOf.get(i) as { person_id: string | null } | null)?.person_id ?? i) as string);
         return ok({ voice, identities: s.identitiesByIds(voice?.with.map((w) => w.identityId) ?? []) });
       }
-      const close = closeTo(s, await this.closeness.get(), key, graphTuning(s.db));
+      const close = closeTo(s, await this.closeness.get(), key, graphTuning(s.db), Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 12)));
       return ok({ close, identities: s.identitiesByIds(close.map((c) => c.identityId)) });
     }
     if (path === '/api/graph/tuning' && method === 'GET') return ok(graphTuning(s.db));
