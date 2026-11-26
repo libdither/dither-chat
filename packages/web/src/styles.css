@@ -657,6 +657,29 @@ button.inbox-status:hover {
   flex: 1;
   min-width: 0;
   margin: 0;
+  container-type: inline-size;
+}
+/* A narrow box ends its placeholder in "…" rather than cutting it, and gives the key hint's room to the words. */
+.inbox-search .search input {
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.search-hint {
+  flex: none;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  background: var(--bg-center);
+  pointer-events: none;
+}
+@container (max-width: 200px) {
+  .search-hint {
+    display: none;
+  }
 }
 /* Three classes: over .icon-btn.small, which comes later. */
 .inbox-search .icon-btn.inbox-filter-btn {
