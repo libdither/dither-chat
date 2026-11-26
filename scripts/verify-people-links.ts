@@ -224,10 +224,10 @@ try {
 
   // 6. A profile: how each account stands with them, and Remove friend after a question.
   await open(`#/p/${ravi.personId}`, '.profile-page');
-  await p.until(`!!document.querySelector('.pf-standing .pf-link-row') && !document.querySelector('.pf-asking')`, 10000);
-  check((await count('.pf-standing .pf-link-row[data-rel="friend"]')) === 2, 'Ravi: a friend of both Discord accounts', await text('.pf-standing'));
-  check((await text('.pf-standing [data-remove]')) === 'Remove friend | Remove friend', 'each with Remove friend', await text('.pf-standing [data-remove]'));
-  await show('.pf-standing');
+  await p.until(`!!document.querySelector('.pf-accounts .pf-link-row') && !document.querySelector('.pf-asking')`, 10000);
+  check((await count('.pf-accounts .pf-link-row[data-rel="friend"]')) === 2, 'Ravi: a friend of both Discord accounts', await text('.pf-accounts'));
+  check((await text('.pf-accounts [data-remove]')) === 'Remove friend | Remove friend', 'each with Remove friend', await text('.pf-accounts [data-remove]'));
+  await show('.pf-accounts');
   await shot('links-06-profile-desktop');
   await click(`.pf-link-row[data-account="${DMAIN}"] [data-remove="friend"]`);
   await p.until(`!!document.querySelector('[data-remove-dialog="friend"]')`, 5000);
@@ -236,11 +236,11 @@ try {
   await click('[data-confirm-remove="friend"]');
   await p.until(`!document.querySelector('.pf-link-row[data-account="${DMAIN}"]')`, 8000);
   check(!(await get(`/api/people?relationship=friend&account=${DMAIN}`)).links.some((l: any) => l.identityId === ravi.id), 'removed on main');
-  check((await count('.pf-standing .pf-link-row')) === 1, 'and still a friend of alt', await text('.pf-standing'));
+  check((await count('.pf-accounts .pf-link-row')) === 1, 'and still a friend of alt', await text('.pf-accounts'));
   await phone();
   await open(`#/p/${ravi.personId}`, '.profile-page');
-  await p.until(`!!document.querySelector('.pf-standing .pf-link-row')`, 10000);
-  await show('.pf-standing');
+  await p.until(`!!document.querySelector('.pf-accounts .pf-link-row')`, 10000);
+  await show('.pf-accounts');
   await fits('the profile');
   await shot('links-06-profile-phone');
   await click(`.pf-link-row[data-account="${DALT}"] [data-remove="friend"]`);

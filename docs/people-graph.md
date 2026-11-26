@@ -149,8 +149,8 @@ Off, the graph is the force layout described above.
 
 A person's card says **Why this size**: a bar for each signal, what it added, and the score as a percentage of the
 most anyone has, then their circle and who they are most tied to ("(voice)" after someone when most of the tie is
-time in voice together). A profile's **Close to** card lists the same ties, with what each counted (docs/profile.md
-"Close to").
+time in voice together). A profile's **In common** card lists the same ties with the friends you share, with what each counted
+(docs/profile.md "People in common").
 
 The key's **How, and tune it** opens a panel that explains each signal and has a slider for each weight (0 to 3) and
 for how fast talk fades (3 to 60 months), and, with the voice log on, **Voice together**: how much time in voice

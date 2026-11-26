@@ -12572,56 +12572,6 @@ a.pf-link:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pf-spaces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
-}
-.pf-space {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  background: var(--bg-center);
-  border: 1px solid var(--border-soft);
-  text-align: left;
-  min-width: 0;
-}
-.pf-space:hover {
-  border-color: var(--border);
-  background: var(--bg-hover);
-}
-.pf-space-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.pf-space-text b {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pf-space-text small {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Seen and estimated message counts: two lines rather than cut off. */
-.pf-space-text small.pf-msgcount {
-  white-space: normal;
-  line-height: 1.3;
-}
-.pf-roles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
 .pf-role {
   --role: var(--text-faint);
   display: inline-flex;
@@ -12685,7 +12635,7 @@ a.pf-link:hover {
   align-self: flex-start;
   margin-top: 2px;
 }
-/* The Mail card (mail/people.ts): a thread you have read is not bold. */
+/* A mail thread in Between you (mail/people.ts): its subject bold only while unread. */
 .pf-mail-row:not(.unread) .pf-row-text b {
   font-weight: 500;
 }
@@ -12725,12 +12675,6 @@ a.pf-link:hover {
 }
 .pf-person:hover {
   background: var(--bg-hover);
-}
-.pf-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
 }
 /* A person's several accounts (Profile.tsx AccountRow): a row each, its picture, name, handle, and Main or Picture
    when it speaks for them; Edit opens its menu's choices as buttons under it. */
@@ -19053,4 +18997,180 @@ h1:hover > .pair-nick-edit,
 /* The inbox row's loudness edge: how loud its latest message was, as a thin bar on its left. */
 .conv-row[data-loud] {
   box-shadow: inset 3px 0 0 color-mix(in oklab, var(--accent) var(--loud-mix), transparent);
+}
+
+/* The profile's tighter cards and merged parts (Profile.tsx): the glance, Between you, Accounts with your standing under
+   each, In common. */
+.pf-cols .pf-card {
+  padding: 10px 12px;
+  gap: 7px;
+}
+.pf-main,
+.pf-side,
+.pf-lead {
+  gap: 10px;
+}
+.pf-lead {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* One column: each side's lead (the glance, About, Between you, Accounts, In common) before the rest. */
+@media (max-width: 900px) {
+  .pf-cols {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .pf-main,
+  .pf-side {
+    display: contents;
+  }
+  .pf-lead {
+    order: -1;
+  }
+}
+.pf-cols {
+  padding-bottom: 24px;
+}
+.pf-sub-h {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pf-people-sum {
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pf-people-sum b {
+  color: var(--text);
+}
+.pf-tie .pf-row-text small {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pf-meter {
+  width: 42px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  flex: none;
+  overflow: hidden;
+}
+.pf-meter i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.pf-more {
+  align-self: flex-start;
+  font-size: 12px;
+}
+.pf-ties {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf-between-foot {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.pf-between-foot:empty {
+  display: none;
+}
+.pf-between {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf-between .pf-msg-body b {
+  font-weight: 600;
+}
+.pf-glance {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.pf-glance b {
+  color: var(--text);
+  font-weight: 600;
+}
+.pf-acct-item .pf-acct {
+  padding: 4px 6px;
+  align-items: center;
+}
+/* An account named as the person: its handle leads, on one line with its buttons. */
+.pf-acct-item[data-same] .pf-acct-name {
+  display: none;
+}
+.pf-acct-item[data-same] .pf-acct-text {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 8px;
+}
+.pf-acct-item[data-same] .pf-acct-handle {
+  order: -1;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-item[data-same] .pf-acct-top {
+  flex: none;
+}
+.pf-acct-item[data-same] .pf-acct-edit {
+  flex-basis: 100%;
+}
+/* How yours stand with it, a line each under it, its button small. */
+.pf-acct-item .pf-conn-list {
+  margin: 0;
+  padding: 0;
+}
+.pf-acct-item .pf-conn-title,
+.pf-acct-item .pf-link-row > :first-child {
+  display: none;
+}
+.pf-acct-item .pf-links-list {
+  margin: -2px 6px 6px 52px;
+}
+.pf-acct-item .pf-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.pf-acct-item .pf-link-what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-item .pf-link-what b {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-text, var(--accent));
+}
+.pf-acct-item .pf-link-row .btn {
+  padding: 1px 6px;
+  font-size: 11px;
+  min-height: 0;
+  color: var(--text-faint);
 }
