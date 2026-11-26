@@ -1889,6 +1889,26 @@ button.inbox-status:hover {
   font-size: 11px;
   color: var(--text-faint);
 }
+/* The author's own time, where it is not yours (ui/TheirTime.tsx): "~" before a guess, a moon at night for them. */
+.msg-their-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.msg-their-time::before {
+  content: '·';
+  margin-right: 3px;
+}
+.msg-their-time:hover,
+.msg-their-time:focus-visible {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
 .msg-edited {
   font-size: 10px;
   color: var(--text-faint);

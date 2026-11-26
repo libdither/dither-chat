@@ -1,0 +1,159 @@
+/* Their usual day, by a message's time (TheirDay.tsx, docs/profile.md "Their time"). */
+.their-day {
+  position: fixed;
+  z-index: 900;
+  width: 328px;
+  max-width: calc(100vw - 16px);
+  padding: 10px 12px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.35;
+  opacity: 0;
+}
+.their-day.shown {
+  opacity: 1;
+  animation: td-in 0.1s ease-out;
+}
+@keyframes td-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+.td-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.td-when b {
+  font-size: 15px;
+  font-weight: 650;
+}
+.td-when span {
+  color: var(--text-dim);
+}
+.td-frames {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex: none;
+}
+.td-frames button {
+  padding: 2px 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.td-frames button.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.td-line {
+  margin: 4px 0;
+  color: var(--text-dim);
+}
+.td-dim {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.td-bar,
+.td-week {
+  display: block;
+  margin: 8px 0 4px;
+  max-width: 100%;
+  height: auto;
+}
+.td-track {
+  fill: var(--bg-hover);
+}
+/* Their night: its likely middle solid, its give-or-take paler. */
+.td-night {
+  fill: color-mix(in oklab, var(--text) 16%, transparent);
+}
+.td-night-edge {
+  fill: color-mix(in oklab, var(--text) 8%, transparent);
+}
+/* Around in that hour; its solid part, wrote. */
+.td-col {
+  fill: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.td-wrote {
+  fill: color-mix(in oklab, var(--accent) 80%, transparent);
+}
+.td-range {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.7;
+}
+.td-msg {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.td-now {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.td-tick {
+  fill: var(--text-faint);
+  font-size: 9px;
+}
+.td-key {
+  display: flex;
+  gap: 12px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.td-key i {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 2px;
+}
+.td-key .k-msg {
+  width: 2px;
+  height: 10px;
+  background: var(--accent);
+}
+.td-key .k-now {
+  width: 0;
+  height: 10px;
+  border-left: 1px dashed var(--text-faint);
+}
+.td-key .k-night {
+  width: 12px;
+  height: 9px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--text) 16%, transparent);
+}
+.td-cell {
+  fill: var(--accent);
+}
+.td-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 6px;
+}
+.td-zone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  width: 100%;
+}
+.td-zone select {
+  max-width: 100%;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 12px;
+}

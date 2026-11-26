@@ -36,7 +36,7 @@ import { JXL } from './jxlformat.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
-import { clampDays, parseZone } from './activitychart.ts';
+import { clampDays, offsetAt, parseZone } from './activitychart.ts';
 import { compress, PackedFiles, pickEncoding } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { firstLink, unfurl } from './unfurl.ts';
@@ -62,6 +62,7 @@ import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { Clocks } from './theirclock.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
@@ -372,6 +373,8 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** What time it is for someone, and their usual day (theirclock.ts, docs/profile.md "Their time"). */
+  readonly clocks: Clocks;
   /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
   readonly matches: SameMatches;
   /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
@@ -476,6 +479,12 @@ export class HubServer {
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
+    this.clocks = new Clocks({
+      db: store.db,
+      pins: { get: store.zonePins, set: store.setZonePins },
+      askProfile: (id) => this.people.get(id),
+      logged: () => ({ presence: store.logsPresence(), statuses: store.logsStatuses() }),
+    });
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
     this.searchThread = opts.searchFile ? new SearchThread({ store, file: opts.searchFile, secret: opts.secret, log: (l) => console.log(l) }) : null;
@@ -1471,6 +1480,24 @@ export class HubServer {
       const days = clampDays(url.searchParams.get('days'));
       const v = s.activityChart(m[1].startsWith('idn_') ? { identityId: m[1] } : { personId: m[1] }, days, zone);
       return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    // Their time: each author's clock, and someone's usual day by hour (theirclock.ts, docs/profile.md "Their time").
+    if (path === '/api/people/clocks' && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const ids = (url.searchParams.get('ids') ?? '').split(',').filter((x) => /^[\w-]{1,80}$/.test(x)).slice(0, 100);
+      return ok(this.clocks.clocks(ids, offsetAt(zone, Date.now()) / 60_000));
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/day$/)) && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const v = this.clocks.day(m[1], zone);
+      return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/zone$/)) && method === 'PUT') {
+      const b = await body<Partial<P.ZonePinBody>>();
+      if (b.zone !== null && typeof b.zone !== 'string') return bad('zone: an IANA name, or null');
+      return this.clocks.pin(m[1], b.zone) ? ok() : bad('nobody by that id, or no such zone', 404);
     }
     // What changed (docs/history.md): a place's name, description, settings and members; a person's names, pictures
     // and profile across their identities.

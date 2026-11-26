@@ -392,6 +392,64 @@ The presence band, the status marks and the grid's Online need adversarial featu
 leaves the fields out otherwise rather than sending zeros. Until then a line under the chart says they appear once
 those are turned on, with a link to Settings → Adversarial features. The rest needs nothing turned on.
 
+### Their time
+
+Where someone's clock differs from yours, their messages show their time beside yours: "3:06 PM · ~10:06 PM", "~"
+before a guess and a moon while it is night for them (10 at night to 7 in the morning), with the weekday when their
+date is not yours (ui/TheirTime.tsx, web theirclock.ts). A grouped message shows only yours, in the gutter on hover.
+Your own messages, and someone in your own zone, show none.
+
+**Their clock** (hub theirclock.ts), best first:
+
+1. A zone you set on their card (Set time zone), kept per person in the hub's meta (`zone_pins`).
+2. A zone a profile of theirs states: `PersonAbout.timeZone` (Zulip, Matrix's `m.tz`), or an older adapter's "Time
+   zone" fact, from any of their identities' kept profiles. Where none is kept and they are on Zulip or Matrix, the hub
+   asks for their profile in the background, two at a time and each identity once per hub run (not when one was kept
+   in the last 7 days); the answer says `asking` and the app asks again shortly.
+3. A whole-hour offset guessed from when they are around, over the last 90 days. What places someone is where they
+   never are: work leaves a gap on weekdays that weekends fill, but nothing fills a night. The hub takes the share of
+   their days they were around in each UTC hour (a day's weight halved every three weeks back, so a change of clocks for summer
+   or winter is soon outweighed), finds the stretch of hours around the quietest that stays under 30% of their usual
+   hour's rate, and takes its middle as 4 in the morning for them. How sure it is (the chance the true offset is within
+   an hour) comes from how far people's nights differ (1.2 hours), how much longer than 8 hours the stretch is (someone
+   who writes only in the evening, or only at work, could be anywhere in it), how few days there are, and how plainly
+   quiet it is; your own offset is a little likelier. A guess shows only when it is at least 65% sure, from 10 days or
+   more, and two hours or more from yours.
+
+   Around is anything they did that the hub logs with a time, each a moment: a message (the first and last of each
+   hour, read from the author index alone; system lines they made count too), a reaction (the network's time, or when
+   the hub heard it), a read or play of a message (not a delivery: that is their phone), a poll vote, a call they
+   started, and while those are logged (adversarial features, docs/history.md), a status they set and coming online
+   (or to do not disturb) or leaving it. Idle to offline is left out: often a laptop's lid or a lost connection, hours
+   after they went. So is any minute in which 40 or more people's presence changed at once: an account's fresh
+   snapshot after a restart, not people coming and going (about 6 a minute is usual). Edits were tried and left out:
+   they added little beyond the messages they edit.
+
+   Checked against the message times on a copy of a real hub: right to the hour for its owner and for the people whose
+   profiles state a zone. With the rest of what they do, about a sixth more people get a guess (986 to 1,153); of the
+   172 sure from messages alone (75%, 20 days), 170 stay within an hour, and reactions and reads alone place 47 of 55
+   of them within an hour.
+   Made-up people (hub demo-clocks.ts `rhythmTimes`) keeping ordinary hours come out within an hour in every zone
+   tried, and people who write only in the evening or at work are never shown. What rhythm cannot tell apart, it gets
+   wrong: a night owl who sleeps from 3 to 11 reads as someone three zones west, which is what Set time zone is for.
+
+`GET /api/people/clocks?ids=<identity ids>&tz=<your zone>` answers a `TheirClocksView` for up to 100 authors at once;
+the app asks for a chat's authors as their messages are drawn and keeps the answers three hours.
+
+**Their usual day**: pointing at either time for a moment (or a click on theirs, a tap on a phone, which keeps it open;
+back and Escape close it) shows a card (ui/TheirDay.tsx, its own chunk): the message's time in their time or yours,
+where their clock comes from, and a bar of the day, hour by hour, of the share of the days they were around in that
+hour (its solid part the days they wrote), each with its 80% (Wilson) range as a line, their usual night shaded (its likely middle solid, its give-or-take paler),
+and the message and now marked, under it what it is from ("412 messages, 80 reactions and 31 read receipts"); "Usually quiet 11:05 PM to 7:25 AM, give or take 45 min (21 nights)". Their time and
+Your time slide the same day by the difference. Week shows a row a weekday. The night is the median start and end of
+the gaps of 3 to 20 hours that cover the middle of their quietest six hours, each with its spread (1.4826 × the median
+absolute deviation), said from 7 nights. `GET /api/people/:id/day?tz=<your zone>` answers a `TheirDayView`, in their
+zone where it is known, else in yours. `PUT /api/people/:id/zone {zone}` sets or clears (`null`) a zone by hand.
+
+DITHER_DEMO_SCENARIO=clocks adds a Discord group of friends abroad with six weeks of messages and reactions on their own hours
+(Tokyo, Berlin, and one in Chicago); with `zulip` too, the Zulip people's zones come from their profiles.
+scripts/verify-their-time.ts checks it all in a browser set to Chicago's time.
+
 ## Status dots
 
 A small dot on a person's picture says how they are on their networks right now: green online, amber idle, red do not

@@ -1386,6 +1386,65 @@ export interface ActivityChartView {
   statuses?: { at: number; hour: number; text: string | null; emoji: string | null; network: Network }[];
 }
 
+/**
+ * Someone's clock (hub theirclock.ts, docs/profile.md "Their time"): a zone you set for them, else the zone a profile of
+ * theirs states, else a fixed offset guessed from the hours they write in, with how sure the guess is.
+ */
+export type TheirClock =
+  | { source: 'pinned'; /** An IANA name, set on their card. */ zone: string }
+  | { source: 'profile'; /** An IANA name. */ zone: string; /** The network whose profile said it. */ network: Network }
+  | {
+      source: 'rhythm';
+      /** Minutes east of UTC, a whole hour. */
+      offset: number;
+      /** The chance the true offset is within an hour of it, 0 to 1. */
+      sure: number;
+      /** Days they were around (wrote, reacted, read, came online…) that it was guessed from. */
+      days: number;
+    };
+
+/** What counts as their being around, on their day (TheirDayView.counts): each a moment they did something. */
+export type TheirActivity = 'messages' | 'reactions' | 'reads' | 'votes' | 'calls' | 'statuses' | 'presence';
+
+/**
+ * GET /api/people/clocks?ids=<identity ids>&tz=<your zone>: each author's clock, null where none is known or the
+ * guess is too unsure to show. `asking`: ids whose profile is being asked for a zone now; ask again for them shortly.
+ */
+export interface TheirClocksView {
+  clocks: Record<string, TheirClock | null>;
+  asking?: string[];
+}
+
+/**
+ * GET /api/people/:id/day?tz=<your zone> (:id a person or an identity): when they are usually around, over the last
+ * 90 days, by hour of the day in `frame` (their zone, or yours when theirs is not known). Around is anything they did
+ * that the hub logs with a time (TheirActivity): a message, a reaction, a read receipt, a vote, a call, a status set,
+ * coming online or leaving (the last two only while presence is logged). Shares are of the days observed that had any
+ * of it in that hour, in percent, with an 80% interval, and the share that had a message: [share, low, high, wrote].
+ */
+export interface TheirDayView {
+  clock: TheirClock | null;
+  /** The zone the hours are in: theirs when `clock` is set, else yours. Its offset now, minutes east of UTC. */
+  frame: { theirs: boolean; zone: string; offsetNow: number };
+  /** Days observed (from the first thing they did in the window, or the window's start), and what they did in them, by kind. */
+  days: number;
+  counts: Partial<Record<TheirActivity, number>>;
+  hours: [share: number, low: number, high: number, wrote: number][];
+  /** Weekday by hour, 7 × 24, Monday first, and how many of each weekday were observed. */
+  week: [share: number, low: number, high: number][];
+  weekDays: number[];
+  /**
+   * Their usual night: when they go quiet and when they are around again, in minutes after midnight in `frame`, each
+   * with its spread (minutes, about one standard deviation), from `nights` nights. Absent with fewer than 7.
+   */
+  quiet?: { from: number; to: number; fromSpread: number; toSpread: number; nights: number };
+}
+
+/** PUT /api/people/:id/zone: set their zone by hand (an IANA name), or null to go back to what is said or guessed. */
+export interface ZonePinBody {
+  zone: string | null;
+}
+
 /** POST /api/directs: a direct conversation, opened or found. */
 export interface OpenedDirect {
   conversation: ConversationView | null;
