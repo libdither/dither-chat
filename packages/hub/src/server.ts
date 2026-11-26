@@ -1,4 +1,5 @@
 import { calibrationStats } from './checkinstats.ts';
+import { unknownOutcome } from './outcome.ts';
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
@@ -325,8 +326,6 @@ async function reportAnswer(req: Request, route: string, res: Response, trace: s
   reportError({ source: 'request', where: `${req.method} ${route}`, name: 'HttpError', message, status: res.status, trace });
 }
 
-/** An error after the command went to the adapter: whether it was carried out is not known. */
-const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
 
 /**
  * Which account sends into a conversation: the requested one, else the last one you used there, else any connected.
@@ -2828,9 +2827,10 @@ export class HubServer {
     } catch (e) {
       // The adapter took it and then went quiet: it may well have gone out. A retry with the same id gets this
       // answer rather than a second copy; a new send (a new id) is the person's call.
-      if (key && unknownOutcome(e)) {
-        const answer = Response.json({ error: 'The network did not answer in time. It may have been sent: look before sending it again.', unknown: true }, { status: 504 });
-        this.sends.set(key, { at: now, done: Promise.resolve(answer) });
+      // Without a clientId there is nothing to keep it under, but the answer says the same.
+      if (unknownOutcome(e)) {
+        const answer = Response.json({ error: 'The hub lost track of this send: it may have been sent. Look in the chat before sending it again.', unknown: true, code: 'unsure' } satisfies P.SendUnsure, { status: 504 });
+        if (key) this.sends.set(key, { at: now, done: Promise.resolve(answer) });
         return answer.clone();
       }
       if (key) this.sends.delete(key);

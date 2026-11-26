@@ -323,6 +323,18 @@ export interface SendResult {
   messageId?: string;
 }
 
+/**
+ * The answer (504) to a send the hub handed on and then lost track of: the account stopped answering, the connection to
+ * it dropped, or the accounts manager gave up waiting. It may or may not have gone out. The hub keeps this answer under
+ * the send's `clientId` (15 minutes), so a repeat of the same send gets it again rather than going out a second time; a
+ * new send is the person's call (docs/sync.md "A send in doubt").
+ */
+export interface SendUnsure {
+  error: string;
+  unknown: true;
+  code: 'unsure';
+}
+
 export interface TriageView {
   decision: TriageDecision;
   /** Its importance, 0 to 1 (the model's `important` chance): the phone's list and the inbox sort by it. */

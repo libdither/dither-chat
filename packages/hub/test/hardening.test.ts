@@ -281,7 +281,8 @@ describe('the server', () => {
   let url = '';
   let hub: HubServer;
   let store: Store;
-  let answer: 'ok' | 'timeout' = 'ok';
+  /** What the next send's command does: answer, or fail with this error. */
+  let answer: 'ok' | Error = 'ok';
   const sent: unknown[] = [];
 
   beforeAll(() => {
@@ -291,7 +292,7 @@ describe('the server', () => {
       online: () => true,
       command: async (_id: string, c: any) => {
         sent.push(c);
-        if (answer === 'timeout') throw new Error('adapter timed out on send');
+        if (answer !== 'ok') throw answer;
         return { nativeId: 'n' };
       },
       created: async () => {},
@@ -322,7 +323,7 @@ describe('the server', () => {
   test('a send whose answer never came is not sent again by a retry', async () => {
     const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
     const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'once', clientId: 'tmp-1' }) });
-    answer = 'timeout';
+    answer = new Error('adapter timed out on send');
     const first = await send();
     expect(first.status).toBe(504);
     expect((await first.json()).unknown).toBe(true);
@@ -330,6 +331,58 @@ describe('the server', () => {
     const retry = await send();
     expect(retry.status).toBe(504);
     expect(sent.filter((c: any) => c.body === 'once').length).toBe(1);
+  });
+
+  // As the accounts manager's client and the manager fail a call (dither-accounts client CallFailed: a code and a
+  // message): each may have been carried out.
+  const lost = (code: string, message: string) => Object.assign(new Error(message), { code });
+  const inDoubt: [string, Error][] = [
+    ["the manager's client gave up waiting (its call timer)", lost('timeout', 'the manager did not answer')],
+    ['the connection to the manager dropped mid-call', lost('unsure', 'the connection to the manager dropped while this was under way: it may or may not have gone through, and it was not sent again')],
+    ["the manager's client was closed with the call waiting", lost('offline', 'closed')],
+    ['the manager gave up on the account', lost('timeout', 'no answer to send in 120 s')],
+    ["the account's connection was lost while it had the call", lost('offline', 'the account was lost while it had this call (closed): it may or may not have happened, and it was not sent again')],
+    ['an adapter of the hub dropped mid-send', new Error('adapter disconnected mid-command')],
+  ];
+  for (const [n, [what, err]] of inDoubt.entries()) {
+    test(`in doubt when ${what}: 504 unsure, and a repeat under the same clientId is not sent again`, async () => {
+      const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+      const body = `doubt ${what}`;
+      const send = (clientId: string) => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body, clientId }) });
+      answer = err;
+      const first = await send(`tmp-doubt${n}`);
+      expect(first.status).toBe(504);
+      expect(await first.json()).toMatchObject({ unknown: true, code: 'unsure' } satisfies Partial<P.SendUnsure>);
+      answer = 'ok';
+      const repeat = await send(`tmp-doubt${n}`);
+      expect(repeat.status).toBe(504);
+      expect((await repeat.json()).code).toBe('unsure');
+      expect(sent.filter((c: any) => c.body === body).length).toBe(1);
+      // A new id is a new send, the person's call: it goes.
+      const again = await send(`tmp-doubt${n}~1`);
+      expect(again.status).toBe(200);
+      expect(sent.filter((c: any) => c.body === body).length).toBe(2);
+    });
+  }
+
+  test('a refusal that did nothing is not in doubt: the same clientId may go again', async () => {
+    const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+    const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'refused first', clientId: 'tmp-refused' }) });
+    answer = lost('offline', 'the account is not connected');
+    const first = await send();
+    expect(first.status).toBe(500);
+    answer = 'ok';
+    expect((await send()).status).toBe(200);
+    expect(sent.filter((c: any) => c.body === 'refused first').length).toBe(2);
+  });
+
+  test('without a clientId, a send in doubt still answers 504 unsure (nothing to keep it under)', async () => {
+    const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+    answer = lost('timeout', 'the manager did not answer');
+    const res = await fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'no id' }) });
+    answer = 'ok';
+    expect(res.status).toBe(504);
+    expect((await res.json()).code).toBe('unsure');
   });
 
   test('media from a private address is refused', async () => {

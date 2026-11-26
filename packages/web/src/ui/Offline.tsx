@@ -12,7 +12,10 @@ import { phone, useLayer } from '../phone.ts';
 import { connected, offlineSince, pending, tryNow, unreachable } from '../state.ts';
 import { DitherOrb } from './Loader.tsx';
 
-/** Out of reach for a while, or a send is waiting for the hub. Short drops are not shown (state.ts NOTICE_AFTER). */
+/**
+ * Out of reach for a while, or a send is waiting for the hub. Short drops are not shown (state.ts NOTICE_AFTER). A send
+ * in doubt (`unsure`) does not count: it waits for you, not for the hub, and does not go when the hub is back.
+ */
 export const offline = computed(() => unreachable.value || (!connected.value && pending.value.some((x) => x.queued)));
 
 /** The orb whose popover is open, which it hangs from. */

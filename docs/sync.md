@@ -145,7 +145,8 @@ adapter announcing the same things again, and a send retried after a lost answer
   15 minutes with the first answer, so a send whose answer was lost goes out once. Until the hub has taken it, a send
   is kept on the device (IndexedDB, with its files, `outbox.ts`): after a reload or the system closing the app it is
   shown again and goes out after the first sync, under the same `clientId`. One the hub refused stays, with the
-  reason, to try again or discard. Its files upload as they are attached, a piece at a time ([uploads.md](uploads.md)):
+  reason, to try again or discard. One that went to the hub and got no answer is **in doubt**, and waits for you
+  ([A send in doubt](#a-send-in-doubt)). Its files upload as they are attached, a piece at a time ([uploads.md](uploads.md)):
   a send waits for the ones still uploading, an upload carries on after a reload, and the hub keeps them across its
   own restart.
 - **The pending copy** of a send goes when its message is here. The hub's answer carries `messageId`, the hub id of the
@@ -163,6 +164,33 @@ adapter announcing the same things again, and a send retried after a lost answer
   never handed it on) shows the copy again as failed. A copy whose message never comes keeps the 30 s rule.
 - `pwa.ts` used to fetch `sw.js` on every return. It now checks when the hub process changed (the sync says which
   process answered), at most every 10 minutes on a return, and hourly.
+
+### A send in doubt
+
+A send that went to the hub and got no answer may be out on the network. The hub may have handed it to the account and
+then stopped answering (its event loop held up past its call timer, while the account sent it in a fraction of a
+second), or restarted and forgotten it: sent again, it arrives twice. So the app no longer sends it again by itself.
+
+- **The hub** (`server.ts sendOnce`, `outcome.ts unknownOutcome`): a send it handed on whose outcome it cannot know
+  answers **504** `{ unknown: true, code: 'unsure' }` (protocol `SendUnsure`), and the answer is kept under the send's
+  `clientId` for 15 minutes like any other, so a repeat gets the same doubt rather than a second send. Unknown means:
+  its own adapter timed out or dropped mid-command; the accounts manager's client gave up waiting ("the manager did not
+  answer", code `timeout`), its connection dropped mid-call (code `unsure`), or it was closed with the call waiting;
+  the manager gave up on the account ("no answer to send in 120 s") or lost it while it had the call. A refusal (the
+  account not connected, not allowed) did nothing: its key goes, and the same send may go again.
+- **The app** (`outbox.ts afterFailure`): a send that went to the hub (`postedAt`, kept in the outbox entry) and got
+  no answer, lost its socket, got a proxy's 502 or 503, or got the hub's 504 is in doubt: "May have been sent: the hub
+  stopped answering while sending. Check the chat before sending again.", with **Send again** (a new send, a new
+  `clientId`: the hub answers the old one with the first answer or the same doubt) and **Discard**. It is never sent
+  by the flush after a catch-up, nor after a reload: one cut off mid-send by a reload or the app closing comes back in
+  doubt (`restoredState`). Its message coming (the hub's `sent` event, or a message of ours with its text that came
+  after it went) clears it by itself, as for any copy.
+- **Resend automatically if the hub drops**: a tick on a send under way for more than 1.5 s, or waiting for the hub,
+  off by default. Ticked, a send cut off by the hub dropping goes again by itself when it is back, under the same
+  `clientId`, as before; a hub that kept its answer sends it once, a hub that restarted may send it twice. It does not
+  cover the hub's 504: the hub is there and says it may be out. The tick is kept in the outbox entry.
+- A send that never went to the hub (made offline, or cut off while its files uploaded) keeps going by itself.
+- The rail's amber orb shows at once for a send waiting for the hub, not for one in doubt: that waits for you.
 
 ## A bad link
 
@@ -195,9 +223,10 @@ So:
   a dead one swallows it without a word. Each try takes another connection. On a link that is only slow the first try
   answers first and the rest are given up; the hub answers a catch-up from the journal, so asking twice costs nothing
   else.
-- **Sends** are given up with their socket too, and go out again after the next catch-up under the same `clientId`,
-  which the hub answers with the first one's answer: once, either way. A send has no quiet timeout of its own: the hub
-  waits for the network for up to 3 minutes with files, and says 504 itself.
+- **Sends** are given up with their socket too. One that had gone to the hub is then in doubt and waits for you
+  ([A send in doubt](#a-send-in-doubt)); one marked to resend automatically goes out again after the next catch-up
+  under the same `clientId`, which the hub answers with the first one's answer. A send has no quiet timeout of its
+  own: the hub waits for the network for up to 3 minutes with files, and says 504 itself.
 - **A late pong is not a dead socket**: the race described under Heartbeat above. A fixed wait cannot tell a socket
   that is dead from one whose pong is behind 4 s of someone else's bytes; a new socket asked for at the same moment
   can, because it waits in the same queue.
@@ -297,7 +326,9 @@ position from before them, and checks each one caught up from where it was kept 
 - `bun scripts/verify-sends.ts <demo hub> --stop "<cmd>" --start "<cmd>"`: one send is one message after its echo,
   two identical sends stay two; with the answer to a send held back 3 s (the socket not), never two on screen, by the
   hub's `sent` event and by the page alone, for two identical quick sends too, and a 504 whose message came shows no
-  failed copy; and a send made with the hub stopped survives a reload and goes out once when it is back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching.
+  failed copy; and a send made with the hub stopped survives a reload and goes out once when it is back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching, and for [a send in doubt](#a-send-in-doubt)
+  (what a failed POST becomes, what a reload restores, Send again); `bun test packages/hub/test/hardening.test.ts`
+  for the hub's side (each way the outcome is lost answers 504 `unsure` and is not sent twice).
 - `bun scripts/measure-sync.ts <hub> [--open N]` for the table above.
 - `bun scripts/verify-link.ts` for [a bad link](#a-bad-link): starts its own demo hub and proxy, and prints the numbers
   in that section's table. `bun test packages/web/test/hedged.test.ts` for giving up and asking again.

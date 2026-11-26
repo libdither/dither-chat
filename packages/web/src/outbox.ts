@@ -10,6 +10,13 @@
  * never stands for two copies. On a slow link the message can come back on the socket before the answer: a copy that
  * went to the hub then takes a message of ours that came after it, with exactly its text and files, and is hidden
  * until the answer is here. Pure apart from the IndexedDB part, so it is tested without a browser.
+ *
+ * A send that went to the hub and then got no answer may be out on the network: the hub may have sent it and then
+ * stopped answering, or restarted and forgotten it. Sent again by itself, it could arrive twice. So it is **in doubt**
+ * (`unsure`): shown as "may have been sent", never sent again by itself, until its message comes (and the copy goes)
+ * or you say Send again or Discard. Only a send you marked `autoResend` goes again by itself, under the same
+ * `clientId`. One that never reached the hub (made offline) still goes by itself when the hub is back (docs/sync.md
+ * "A send in doubt"). `afterFailure` and `restoredState` say which.
  */
 
 export interface OutboxFile {
@@ -38,11 +45,19 @@ export interface OutboxEntry {
   /** The hub refused it: shown with the reason, to try again or throw away. */
   failed?: string;
   /**
-   * The hub could not tell whether it went out (the network did not answer in time, 504). A retry you ask for then
-   * goes as a new send (`attempt`), since the hub answers the old id with the same "may have been sent".
+   * In doubt: it went to the hub and may be out, but no answer said so (no answer at all, or the hub's 504 "it may
+   * have been sent"). Never sent again by itself. Send again goes as a new send (`attempt`), since the hub answers the
+   * old id with the same doubt, or with the first answer.
    */
   unsure?: boolean;
   attempt?: number;
+  /**
+   * When it last went to the hub, by this device's clock. Kept, so that one cut off on its way (the app closed or
+   * reloaded mid-send) is in doubt after a reload rather than sent again.
+   */
+  postedAt?: number;
+  /** You asked for it to go again by itself if the hub drops mid-send (the pending copy's tick, off by default). */
+  autoResend?: boolean;
   /** A sticker, a voice message, view-once, a GIF (docs/media-kinds.md): sent with the message as they are. */
   media?: SendMedia;
 }
@@ -154,6 +169,50 @@ export interface Echo {
 export function mayBeOut(e: unknown): boolean {
   const status = (e as { status?: unknown } | null)?.status;
   return !(typeof status === 'number' && status >= 400 && status < 500);
+}
+
+/** The id a send goes to the hub under: the hub sends one id once (server.ts sendOnce). */
+export const clientIdOf = (e: Pick<OutboxEntry, 'tempId' | 'attempt'>): string => (e.attempt ? `${e.tempId}~${e.attempt}` : e.tempId);
+
+/**
+ * What a send becomes when its POST failed:
+ * - `queued`: it waits for the hub and goes by itself when it is back, under the same clientId. A send that never
+ *   went to the hub (`posted` false: the hub was not reached, an upload failed on the way), or one you marked
+ *   `autoResend`.
+ * - `doubt`: it went to the hub, and no answer came (the request died, the socket with it, a proxy's 502 or 503 for a
+ *   hub that is gone), or the hub said 504 (it lost track of it after handing it on). It may be out: it waits for you.
+ *   `autoResend` covers the hub dropping, not a 504: the hub is there and says it may have gone, so going again is a
+ *   new send that could arrive twice.
+ * - `failed`: the hub answered with an error (a refusal, 4xx, or its own 500): shown with the reason, to try again.
+ */
+export function afterFailure(e: unknown, s: { posted: boolean; online: boolean; autoResend?: boolean }): 'queued' | 'doubt' | 'failed' {
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === 'number' && status >= 400 && status < 500) return 'failed';
+  const noAnswer = e instanceof TypeError || (e as { name?: unknown } | null)?.name === 'AbortError' || !s.online || status === 502 || status === 503;
+  if (!s.posted) return noAnswer ? 'queued' : 'failed';
+  if (noAnswer) return s.autoResend ? 'queued' : 'doubt';
+  return status === 504 ? 'doubt' : 'failed';
+}
+
+/**
+ * How a send kept from before this start is shown again: in doubt as it was, failed as it was, in doubt when it was
+ * cut off on its way to the hub (unless marked `autoResend`), else waiting to go by itself.
+ */
+export function restoredState(e: OutboxEntry): { queued?: true; unsure?: true; failed?: string } {
+  if (e.unsure) return { unsure: true };
+  if (e.failed) return { failed: e.failed };
+  if (e.postedAt !== undefined && !e.autoResend) return { unsure: true };
+  return { queued: true };
+}
+
+/**
+ * Send again, asked for. After a doubt it is a new send, a new clientId: the hub answers the old one with the first
+ * answer or the same doubt, never by sending it.
+ */
+export function sendAgain(e: OutboxEntry): void {
+  e.failed = undefined;
+  if (e.unsure) (e.attempt = (e.attempt ?? 0) + 1), (e.unsure = false);
+  e.postedAt = undefined;
 }
 
 /** How much earlier than the copy its message may be dated: the network's clock, not this device's. */

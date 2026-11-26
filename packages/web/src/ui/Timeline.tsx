@@ -54,11 +54,9 @@ import {
   canDelete,
   canEdit,
   deleteMessage,
-  discardSend,
   editDrafts,
   editMessage,
   editing,
-  retrySend,
   jumpInChat,
   jumpTo,
   startEditing,
@@ -103,6 +101,7 @@ import { heldByPictures, PictureChip } from './PictureSwitch.tsx';
 import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
+import { PendingNote } from './PendingNote.tsx';
 import { TypingBar } from './Typing.tsx';
 import { HeadOrb, offline } from './Offline.tsx';
 import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
@@ -1501,7 +1500,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         {/* Not yet sent: after the newest, so only while the newest is drawn. */}
         {end === all.length &&
           mine.map((p) => (
-            <div key={p.tempId} class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`} data-temp-id={p.tempId}>
+            <div key={p.tempId} class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''} ${p.unsure ? 'unsure' : ''}`} data-temp-id={p.tempId}>
               <div class="msg-gutter" />
               <div class="msg-main">
                 <div class="msg-body">{p.body}</div>
@@ -1511,17 +1510,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
                     {p.uploading && <PendingUpload tempId={p.tempId} index={i} />}
                   </div>
                 ))}
-                <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : p.uploading ? 'Uploading…' : 'Sending…'}</span>
-                {p.failed && (
-                  <span class="pending-actions">
-                    <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
-                      Try again
-                    </button>
-                    <button class="btn ghost small" onClick={() => discardSend(p.tempId)}>
-                      Discard
-                    </button>
-                  </span>
-                )}
+                <PendingNote p={p} />
               </div>
             </div>
           ))}

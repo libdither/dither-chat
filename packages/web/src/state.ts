@@ -7,7 +7,7 @@ import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrive
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
+import { afterFailure, clientIdOf, ECHO_SKEW, mayBeOut, openOutbox, restoredState, sendAgain, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
@@ -64,6 +64,13 @@ interface PendingSend {
   files?: string[];
   /** Waiting for the hub to be reachable again; it goes out then, by itself. */
   queued?: boolean;
+  /**
+   * In doubt: it went to the hub and no answer said whether it went out. It waits for you (Send again or Discard),
+   * and goes by itself when its message is here (outbox.ts).
+   */
+  unsure?: boolean;
+  /** Goes again by itself, the same send, if the hub drops mid-send (you ticked it; outbox.ts OutboxEntry). */
+  autoResend?: boolean;
   /** Its files are still uploading (uploadsOf has their progress). */
   uploading?: boolean;
   /** The hub took it; the copy stays until its message is here (outbox.ts). */
@@ -979,7 +986,17 @@ const outgoing = new Map<string, OutboxEntry>();
 /** On their way now: a send goes out once at a time, whoever asks. */
 const delivering = new Set<string>();
 const setPending = (tempId: string, patch: Partial<PendingSend>) => (pending.value = pending.value.map((x) => (x.tempId === tempId ? { ...x, ...patch } : x)));
-const pendingOf = (e: OutboxEntry): PendingSend => ({ tempId: e.tempId, conversationId: e.conversationId, body: e.body, ts: e.ts, accountId: e.accountId, files: e.files?.map((f) => f.name), failed: e.failed });
+const pendingOf = (e: OutboxEntry): PendingSend => ({
+  tempId: e.tempId,
+  conversationId: e.conversationId,
+  body: e.body,
+  ts: e.ts,
+  accountId: e.accountId,
+  files: e.files?.map((f) => f.name),
+  failed: e.failed,
+  ...(e.postedAt !== undefined ? { postedAt: e.postedAt } : {}),
+  ...(e.autoResend ? { autoResend: true } : {}),
+});
 
 /**
  * Shown at once as pending. Without the hub it waits, and goes out when the hub is back (flushOutgoing).
@@ -1036,7 +1053,7 @@ async function deliver(tempId: string) {
   const o = outgoing.get(tempId);
   if (!o || delivering.has(tempId)) return;
   delivering.add(tempId);
-  setPending(tempId, { queued: false, failed: undefined });
+  setPending(tempId, { queued: false, failed: undefined, unsure: undefined });
   // Each file's upload: the composer's, still going or done, or one carrying on from what the hub has. `again`:
   // the hub let them expire, so each begins anew.
   const uploadAll = async (again = false) => {
@@ -1061,10 +1078,16 @@ async function deliver(tempId: string) {
     void outbox.put(o);
   };
   // clientId: a retry after a lost answer, or after a reload, goes out once (server.ts).
-  const clientId = o.attempt ? `${tempId}~${o.attempt}` : tempId;
+  const clientId = clientIdOf(o);
+  // Whether it went to the hub this time: from then on, no answer leaves it in doubt (outbox.ts afterFailure).
+  let posted = false;
   const post = () => {
-    // A message of ours that comes after this may be this send's (settle).
-    setPending(tempId, { postedAt: Date.now() });
+    posted = true;
+    // A message of ours that comes after this may be this send's (settle). Kept too: a reload meanwhile finds it in
+    // doubt rather than sending it again.
+    o.postedAt = Date.now();
+    setPending(tempId, { postedAt: o.postedAt });
+    void outbox.put(o);
     const body = { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) };
     // Given up with its socket, when that is found dead: its connection likely died too. The retry after the next
     // catch-up carries the same clientId, so the hub answers it with the first one's answer rather than sending twice.
@@ -1088,21 +1111,26 @@ async function deliver(tempId: string) {
     setTimeout(() => (pending.value = pending.value.filter((x) => x.tempId !== tempId)), 30_000);
   } catch (e: any) {
     // The hub refused it before it reached the network: a message that looked like its own was another send.
-    if (!mayBeOut(e)) setPending(tempId, { postedAt: undefined, echoed: undefined });
+    if (!mayBeOut(e)) (o.postedAt = undefined), setPending(tempId, { postedAt: undefined, echoed: undefined });
     // Its message is here, so it went out, whatever the answer says (504, or no answer at all): nothing to retry.
     else if (pending.value.some((x) => x.tempId === tempId && x.echoed)) {
       forget(tempId);
       pending.value = pending.value.filter((x) => x.tempId !== tempId);
       return;
     }
-    // No answer at all is the network, not a refusal: wait for the hub.
-    if (e instanceof TypeError || !connected.value) {
+    const next = afterFailure(e, { posted, online: connected.value, autoResend: o.autoResend });
+    // Never went to the hub, or you asked for it to go again by itself: it waits for the hub, and goes when it is back.
+    if (next === 'queued') {
       setPending(tempId, { queued: true });
       probe();
+    } else if (next === 'doubt') {
+      // It may be out (no answer, or the hub's 504): it waits for you, or for its message (docs/sync.md).
+      o.unsure = true;
+      void outbox.put(o);
+      setPending(tempId, { unsure: true });
+      if (!connected.value) probe();
     } else {
       o.failed = e.message;
-      // 504: the network took it and went quiet, so it may be out. Trying again is then your call (retrySend).
-      o.unsure = e?.status === 504;
       void outbox.put(o);
       setPending(tempId, { failed: e.message });
     }
@@ -1134,17 +1162,31 @@ async function flushOutgoing() {
   }
 }
 
-/** A refused send, again. */
+/** A refused send, again; or, asked for, one in doubt (as a new send: outbox.ts sendAgain). */
 export function retrySend(tempId: string) {
   const o = outgoing.get(tempId);
   if (!o) return;
-  o.failed = undefined;
-  // After "it may have been sent", trying again is a new send: the hub answers the old id with the same doubt.
-  if (o.unsure) (o.attempt = (o.attempt ?? 0) + 1), (o.unsure = false);
+  sendAgain(o);
   void outbox.put(o);
+  setPending(tempId, { postedAt: undefined, unsure: undefined });
   if (connected.value) return void deliver(tempId);
   setPending(tempId, { failed: undefined, queued: true });
   probe();
+}
+
+/**
+ * Whether a send goes again by itself, the same send, if the hub drops mid-send (off by default: it then waits for
+ * you). Turned off while one already cut off waits for the hub, that one is in doubt now.
+ */
+export function setAutoResend(tempId: string, on: boolean) {
+  const o = outgoing.get(tempId);
+  if (!o) return;
+  o.autoResend = on || undefined;
+  const p = pending.value.find((x) => x.tempId === tempId);
+  const doubt = !on && !!p?.queued && o.postedAt !== undefined;
+  if (doubt) o.unsure = true;
+  void outbox.put(o);
+  setPending(tempId, { autoResend: on || undefined, ...(doubt ? { queued: false, unsure: true } : {}) });
 }
 
 /** A refused send, thrown away, and its files with it. */
@@ -1159,14 +1201,21 @@ export function discardSend(tempId: string) {
 }
 
 /**
- * Sends kept from before this start (a reload, the app closed meanwhile): shown again where they were, and sent once
- * the hub is caught up with, as before the reload.
+ * Sends kept from before this start (a reload, the app closed meanwhile): shown again where they were, and the ones
+ * that never went to the hub sent once it is caught up with, as before the reload. One cut off on its way to the hub
+ * is in doubt (outbox.ts restoredState), and waits for you.
  */
 export async function restoreOutbox() {
   const kept = (await outbox.all()).filter((e) => !outgoing.has(e.tempId));
   if (!kept.length) return;
-  for (const e of kept) outgoing.set(e.tempId, e);
-  pending.value = [...pending.value, ...kept.map((e) => ({ ...pendingOf(e), queued: !e.failed }))].sort((a, b) => a.ts - b.ts);
+  const shown = kept.map((e) => {
+    outgoing.set(e.tempId, e);
+    const st = restoredState(e);
+    // So that Send again is a new send (outbox.ts sendAgain).
+    if (st.unsure && !e.unsure) (e.unsure = true), void outbox.put(e);
+    return { ...pendingOf(e), ...st };
+  });
+  pending.value = [...pending.value, ...shown].sort((a, b) => a.ts - b.ts);
   // The sync after connecting sends them; if it is already done, now.
   if (connected.value && synced && !held) void flushOutgoing();
   else if (!connected.value) probe();

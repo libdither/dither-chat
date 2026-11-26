@@ -1,7 +1,7 @@
 /** src/outbox.ts: sends kept on the device across a reload, and which message replaces a pending copy. */
 import { expect, test } from 'bun:test';
 import { IDBFactory } from 'fake-indexeddb';
-import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type Sent } from '../src/outbox.ts';
+import { afterFailure, clientIdOf, ECHO_SKEW, mayBeOut, openOutbox, restoredState, sendAgain, settled, type Echo, type OutboxEntry, type Sent } from '../src/outbox.ts';
 
 const entry = (tempId: string, x: Partial<OutboxEntry> = {}): OutboxEntry => ({ tempId, conversationId: 'cnv_a', body: 'hi', ts: 1000, ...x });
 
@@ -156,4 +156,78 @@ test('a failed send whose message came anyway is matched; a refused one is not',
   // A refusal: the hub never sent it. postedAt is cleared, so a message like it is another send's.
   for (const status of [400, 404, 409, 410, 413]) expect(mayBeOut(Object.assign(new Error('no'), { status }))).toBe(false);
   expect(settled([sent('t1', { acked: false, postedAt: undefined })], [echo('msg_1', { seen: 20_000 })], new Set())).toEqual([]);
+});
+
+// ------------------------------------------------------------------ a send in doubt (docs/sync.md "A send in doubt")
+
+const noAnswer = () => new TypeError('Failed to fetch');
+const hubSays = (status: number, message = 'x') => Object.assign(new Error(message), { status });
+
+test('never sent to the hub: it waits for the hub and goes by itself, after a reload too', () => {
+  // The hub not reached, the app offline, or an upload failed on the way: the POST was never made.
+  expect(afterFailure(noAnswer(), { posted: false, online: true })).toBe('queued');
+  expect(afterFailure(new Error('whatever'), { posted: false, online: false })).toBe('queued');
+  expect(afterFailure(hubSays(502), { posted: false, online: true })).toBe('queued');
+  // Kept from before a reload without ever going: shown waiting, and flushed (only `queued` ones are: state.ts).
+  expect(restoredState(entry('tmp-1'))).toEqual({ queued: true });
+});
+
+test('sent to the hub and no answer: in doubt, never sent again by itself, after a reload neither', () => {
+  for (const e of [noAnswer(), new DOMException('aborted', 'AbortError'), hubSays(502), hubSays(503)]) expect(afterFailure(e, { posted: true, online: true })).toBe('doubt');
+  expect(afterFailure(new Error('gone'), { posted: true, online: false })).toBe('doubt');
+  // The hub's own "it may have been sent" (504): in doubt.
+  expect(afterFailure(hubSays(504, 'The hub lost track of this send'), { posted: true, online: true })).toBe('doubt');
+  // Restored: in doubt as it was; and one cut off mid-send (the app closed with the POST under way) is in doubt too,
+  // not sent again on the next catch-up. Neither is `queued`, so the flush passes it by.
+  expect(restoredState(entry('tmp-1', { unsure: true, postedAt: 1500 }))).toEqual({ unsure: true });
+  expect(restoredState(entry('tmp-1', { postedAt: 1500 }))).toEqual({ unsure: true });
+  // A refusal or the hub's own error is failed, as before: shown with the reason.
+  expect(afterFailure(hubSays(409), { posted: true, online: true })).toBe('failed');
+  expect(afterFailure(hubSays(500), { posted: true, online: true })).toBe('failed');
+  expect(restoredState(entry('tmp-1', { failed: 'no', postedAt: 1500 }))).toEqual({ failed: 'no' });
+});
+
+test('marked "resend automatically": the hub dropping queues it again, under the same clientId', () => {
+  const e = entry('tmp-1', { autoResend: true, postedAt: 1500 });
+  const id = clientIdOf(e);
+  expect(afterFailure(noAnswer(), { posted: true, online: true, autoResend: true })).toBe('queued');
+  expect(afterFailure(new Error('gone'), { posted: true, online: false, autoResend: true })).toBe('queued');
+  expect(restoredState(e)).toEqual({ queued: true });
+  // Nothing about it changed: it goes as the same send, which the hub sends once.
+  expect(clientIdOf(e)).toBe(id);
+  // The hub's 504 is not the hub dropping: it is there, and says it may be out. Still in doubt.
+  expect(afterFailure(hubSays(504), { posted: true, online: true, autoResend: true })).toBe('doubt');
+});
+
+test('its message coming clears a send in doubt by itself', () => {
+  // In doubt keeps postedAt: a message of ours with its text that came on the socket after it is its own.
+  const doubt = sent('t1', { acked: false, postedAt: 10_050 });
+  expect(settled([doubt], [echo('msg_1', { seen: 15_000 })], new Set())).toEqual(['t1']);
+  // Or the hub's `sent` event named it (messageId): by id, whatever the text.
+  expect(settled([{ ...doubt, messageId: 'msg_2' }], [echo('msg_2', { body: 'changed by the network' })], new Set())).toEqual(['t1']);
+  // A message from before it went is another send's.
+  expect(settled([doubt], [echo('msg_1', { seen: 10_000 })], new Set())).toEqual([]);
+});
+
+test('Send again is a new send: a new clientId, no longer in doubt', () => {
+  const e = entry('tmp-1', { unsure: true, postedAt: 1500 });
+  const before = clientIdOf(e);
+  sendAgain(e);
+  expect(clientIdOf(e)).toBe('tmp-1~1');
+  expect(clientIdOf(e)).not.toBe(before);
+  expect(e).toMatchObject({ unsure: false, postedAt: undefined, failed: undefined });
+  // Twice in doubt, twice again: each a new id.
+  e.unsure = true;
+  sendAgain(e);
+  expect(clientIdOf(e)).toBe('tmp-1~2');
+  // Try again after a plain failure keeps the id: the hub sent nothing under it.
+  const f = entry('tmp-2', { failed: 'refused' });
+  sendAgain(f);
+  expect(clientIdOf(f)).toBe('tmp-2');
+});
+
+test('in doubt, when it went, and the resend tick are kept across a reload', async () => {
+  const idb = new IDBFactory();
+  await openOutbox(idb).put(entry('tmp-1', { unsure: true, postedAt: 1500, autoResend: true }));
+  expect(await openOutbox(idb).all()).toEqual([entry('tmp-1', { unsure: true, postedAt: 1500, autoResend: true })]);
 });

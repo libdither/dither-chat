@@ -14,7 +14,8 @@
  *      replaces the socket, and the catch-up, put on one of the browser's dead idle connections, is asked again on
  *      another;
  *   3. a flapping link: every connection cut as soon as the page has opened its socket again, several times over, a
- *      send made in the middle of it. Reconnects stay one per cut, the send goes out once, nothing shows twice;
+ *      send made in the middle of it. Reconnects stay one per cut, the send goes out once, nothing shows twice; a send
+ *      cut off on its way to the hub waits in doubt rather than going again (docs/sync.md "A send in doubt");
  *   4. a saturated slow link: 1.5 Mbit/s with a router's queue of 1 s and of 4 s, filled by a big download, and a
  *      probe: the pong waits behind the queue, past PONG_WAIT at 4 s. The new socket that races it waits in the same
  *      queue, so the pong wins and the socket stays, with no notice.
@@ -292,13 +293,24 @@ try {
     }
     const tStop = Date.now();
     await settled();
-    const ok = (await untilShown(from)) && (await p.until(`!document.querySelector('.msg.pending')`, 15_000).then(() => true, () => false));
+    // A send waiting for the hub goes; one in doubt (the cut came while its POST was under way) waits for you.
+    const ok = (await untilShown(from)) && (await p.until(`!document.querySelector('.msg.pending:not(.unsure)')`, 15_000).then(() => true, () => false));
     const s = (await sockets()).slice(before);
     const gaps = s.slice(1).map((x, i) => x.at - (s[i].close || s[i].dropped || s[i].at));
-    check(ok, 'after it, the message from elsewhere and the send are both there', `${Date.now() - tStop} ms after the last cut`);
+    check(ok, 'after it, the message from elsewhere is there, and the send is not waiting for the hub any more', `${Date.now() - tStop} ms after the last cut`);
     check(s.length <= CUTS + 2, 'one new socket per cut', { sockets: s.length, cuts: CUTS, msBetween: gaps });
-    check((await stored(mine)) === 1, 'the send went out once', { onHub: await stored(mine) });
+    // Where the cut fell decides which: the hub had it (its message comes, and a copy in doubt goes by itself), or it
+    // never reached the hub (in doubt, never sent by itself). Never twice, never gone without a word.
+    const onHub = await stored(mine);
+    const doubt = `[...document.querySelectorAll('.msg.pending.unsure')].filter((e) => e.textContent.includes(${JSON.stringify(mine)})).length`;
+    const outcome = onHub === 1 ? await p.until(`${doubt} === 0`, 15_000).then(() => 'sent once', () => 'sent, and still in doubt') : onHub === 0 && (await p.eval<number>(doubt)) === 1 ? 'in doubt, not sent' : `stored ${onHub}`;
+    check(outcome === 'sent once' || outcome === 'in doubt, not sent', 'the send went out once, or waits in doubt rather than going again', { outcome });
     check((await shownCount(mine)) === 1 && (await shownCount(from)) === 1, 'nothing shows twice', { mine: await shownCount(mine), from: await shownCount(from) });
+    // Out of the way of the cases after this one: Discard takes the copy in doubt away.
+    if (outcome === 'in doubt, not sent') {
+      await p.eval(`[...document.querySelectorAll('.msg.pending.unsure')].find((e) => e.textContent.includes(${JSON.stringify(mine)})).querySelectorAll('.pending-actions button')[1].click()`);
+      check(await p.until(`${doubt} === 0`, 5000).then(() => true, () => false), '…and Discard takes it away');
+    }
     const syncs = await fetches(t0, SYNC);
     note(`catch-ups: ${syncs.length} (${syncs.filter((f) => f.error).length} cut), bootstraps: ${(await fetches(t0, BOOT)).length}`);
   }
