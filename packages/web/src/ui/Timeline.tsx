@@ -43,6 +43,7 @@ import {
   markRead,
   pending,
   hubSends,
+  sentHere,
   toast,
   pref,
   quoted,
@@ -1342,10 +1343,11 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     ro.observe(el);
     return () => ro.disconnect();
   }, [tkey]);
-  // A message of your own just sent goes to the newest end, from wherever the view was (Discord does the same).
+  // A message of your own just sent goes to the newest end, from wherever the view was (Discord does the same). Only
+  // one sent from this device: the hub's rows show every device's sends, and one from the phone moves no other view.
   const sent = useRef(0);
   useLayoutEffect(() => {
-    const n = mine.length;
+    const n = mine.filter((p) => sentHere.has(p.key)).length;
     const grew = n > sent.current;
     sent.current = n;
     const el = scroller.current;

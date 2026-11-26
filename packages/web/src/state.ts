@@ -76,6 +76,8 @@ export const pending = signal<PendingSend[]>([]);
  * `offset`: the hub's clock less this device's, for a countdown's seconds.
  */
 export const hubSends = signal<{ rows: P.SendRow[]; offset: number }>({ rows: [], offset: 0 });
+/** The sends pressed on this device since the page loaded: only these take the view to the newest end (Timeline). */
+export const sentHere = new Set<string>();
 /** Who is typing where, live only (typing.ts). */
 export const typing = signal<TypingState>({});
 
@@ -1075,6 +1077,7 @@ async function sendOne(conversationId: string, body: string, opts: SendOpts, ts:
 /** Kept and shown as on this device; the tempId to deliver now, or null when it waits for the hub. */
 async function queueSend(conversationId: string, body: string, opts: SendOpts, ts: number, seen?: P.SeenUpTo): Promise<string | null> {
   const tempId = 'tmp-' + Math.random().toString(36).slice(2);
+  sentHere.add(tempId);
   const e: OutboxEntry = { tempId, conversationId, body, ts, accountId: opts.accountId, replyTo: opts.replyTo, files: opts.files?.map((f) => ({ name: f.name, type: f.type, blob: f })), ...(opts.media ? { media: opts.media } : {}), ...(opts.silent ? { silent: true } : {}), ...(opts.mentionReplied === false ? { mentionReplied: false } : {}), ...(seen ? { seenUpTo: seen } : {}) };
   // Sends that wait for the hub in this chat go first, when it is back: this one waits behind them.
   const behind = pending.value.some((p) => p.conversationId === conversationId && p.queued);
