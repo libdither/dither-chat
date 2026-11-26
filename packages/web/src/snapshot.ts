@@ -63,6 +63,8 @@ interface Snapshot {
   /** JSON text. Parsing text is faster than structured clone for this many small objects. */
   bootstrap: string;
   rest: string;
+  /** When the rest was written, where it is newer than the bootstrap (readSnapshot). */
+  restAt?: number;
 }
 
 // ------------------------------------------------------------------ building (pure, tested)
@@ -260,8 +262,8 @@ export async function readSnapshot(): Promise<Snapshot | null> {
     .catch(() => [undefined, undefined, [] as (PageRecord | IndexRecord)[]] as const);
   pages.adopt(kept);
   if (!s || s.schema !== SCHEMA) return null;
-  // savedAt stays the bootstrap's.
-  return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
+  // savedAt stays the bootstrap's; restAt says how recent the copy is.
+  return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest, restAt: r.savedAt } : s;
 }
 
 export const dropSnapshot = () => (
@@ -290,6 +292,8 @@ export const dropPages = () =>
 
 /** Set while what is on screen came from this device, not yet from the hub. */
 export let fromSnapshot = false;
+/** When the copy shown was written, while it came from this device's snapshot: "saved 8:02" (ui/InboxStatus.tsx). */
+export let copyAt = 0;
 
 /** The kept end of a conversation, given once, to show while its first page loads. */
 export function cachedTimeline(key: string): KeptPage | undefined {
@@ -310,6 +314,7 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
   if (rest.timelines?.length) pages.adoptLegacy(legacyPages(rest));
   if (loaded.value) return false;
   bootstrapAt = s.savedAt;
+  copyAt = Math.max(s.savedAt, s.restAt ?? 0);
   apply(JSON.parse(s.bootstrap) as P.Bootstrap);
   putIdentities(rest.identities);
   rest.quoted.forEach((m) => quoted.set(m.id, m));

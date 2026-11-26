@@ -144,7 +144,8 @@ adapter announcing the same things again, and a send retried after a lost answer
   beside it leaves no room for more), and the top of a timeline says "Older messages load when the hub is
   back" instead of spinning; those pages are asked for once it is. A tap on the orb says since when, and its Try now
   opens a new socket at once rather than at the end of the backoff (`ui/Offline.tsx`). Nothing covers anything, and
-  all of it goes the moment the hub answers. The loading screen is only for a first start with nothing kept.
+  all of it goes the moment the hub answers. The inbox says it too ([below](#what-the-inbox-says)), and its list goes
+  a shade quieter. The loading screen is only for a first start with nothing kept.
 - **Sends** go to the hub's queue for their chat ([The send queue](#the-send-queue)), which answers as soon as it
   has them. Until then a send is kept on the device (IndexedDB, with its files, `outbox.ts`), marked with a clock:
   without the hub it waits ("On this device: goes to the hub when it is back") and goes after the sync on
@@ -160,6 +161,13 @@ adapter announcing the same things again, and a send retried after a lost answer
   that message is here (or 30 s, for a network that never echoes it). The device copy goes as soon as the hub's row
   is there. The hub's row carries `messageId`, the hub id of the message the network says it sent (ids are derived
   from the network's, so it is known before the message is stored).
+- **Restarts**: a hub that is stopping (SIGTERM, which is how the deployer restarts it) says so to every socket first,
+  `{ t: 'stopping', usualMs }`, not journaled, and keeps when it stopped in its data dir (`restarts.json`,
+  `packages/hub/src/restarts.ts`); the next start counts the time from that stop to answering, and `usualMs` is the
+  middle of the last seven. The app then calls it a restart, not a lost link: no offline notice, a try every second
+  instead of the backoff, and "Hub restarting, back in about 9 s" beside "Inbox". Once caught up it says "Hub
+  updated" when the hub runs other code than before (`build`, its git commit, in the bootstrap and each sync answer),
+  or "Hub restarted". A restart not back within two minutes (or four usual ones) is the hub out of reach as any other.
 - `pwa.ts` used to fetch `sw.js` on every return. It now checks when the hub process changed (the sync says which
   process answered), at most every 10 minutes on a return, and hourly.
 
@@ -230,6 +238,38 @@ for you.
 **Not covered yet:** the account (dither-accounts) does not take the `clientId` as its own idempotency key, so an
 `unsure` row is still the person's call; send later and Forward do not go through the queue; two tabs of the same
 browser each keep their own device copy until the hub has it.
+
+## What the inbox says
+
+What the app is doing with the hub goes in the room the "Inbox" title leaves (`ui/InboxStatus.tsx`, its words in
+`statusline.ts`), never a bar over the list or a screen in the way, and nothing at all while all is well:
+
+| When | It says |
+|---|---|
+| A catch-up taking longer than 180 ms (on a relaunch it rarely does) | a small turning orb, "Catching up…", then "14 new · up to date" or "Up to date" for 1.6 s |
+| The hub out of reach (the notice above) | the logo's amber orb, "Offline", "since 6:01 PM · next try 3 s" (or "saved 6:01 PM" before this page ever reached the hub); a tap tries at once. Short of room (a phone's list beside a page) "since" goes, and the rail's orb still tells it |
+| The hub restarting ([above](#the-client-packageswebsrcstatets)) | "Hub restarting", "back in about 9 s" (or the seconds so far, before it knows a usual time), then "Hub updated" or "Hub restarted · up to date" |
+| A new version of the app, reloaded from its pill | "New version · up to date" once caught up |
+
+A first start with nothing kept is the loading screen: its orb fills from the bottom as the bootstrap's bytes come
+(the hub says the unpacked size in `x-uncompressed-length`, `compress.ts`), "Downloading your inbox · 1.2 of 4.0 MB",
+then runs to full while the page sets the inbox up, a step with no bytes to count: a sixth to a quarter of the wait
+on a slow phone link. That part is a CSS transition the compositor plays (`firstload.ts`), as setting the list up holds
+the page for up to a second at a time.
+
+## Opening a chat
+
+What this device kept shows at once (memory, a page fetched ahead, a kept page); a 2 px line along the foot of the row
+over the message box fills while the rest comes (`ui/OpenBar.tsx`, `waits.ts`), in steps: reaching the hub, the hub's
+page (or what changed since the kept copy), and, for Discord and the networks the hub asks for the latest on open, the
+network's answer. What the hub stored shows while the network is asked. Each step's share of the line is its usual
+time on this device (the middle of its last 15, by network for the network's step); within a step the line slows as
+it nears the step's end and never claims it done. Nothing shows for the first 180 ms, which is most opens; past 1.5 s
+the row says which step it waits on, "Waiting on your hub · 2 s" or "Waiting on Discord · 4 s", and once a step is
+three times its usual time (and 2 s), in amber with "usually 0.4 s". Nothing spins in the timeline for an open (older
+messages still have their small orb at the top). Out of reach of the hub, none of it: the row says "Offline" already.
+
+`scripts/verify-loading.ts` checks all of this in headless Chromium against a demo hub it slows, restarts and stops.
 
 ## A bad link
 

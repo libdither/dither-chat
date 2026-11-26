@@ -31,6 +31,10 @@ export function serviceWorkerSupported() {
 /** The bar: go to the new build now, whatever is open. */
 export function applyUpdate() {
   asked = true;
+  // Said once the new version has caught up (state.ts caughtUp): "New version, up to date".
+  try {
+    sessionStorage.setItem('dither-chat:app-updated', '1');
+  } catch {}
   step();
 }
 

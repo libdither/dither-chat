@@ -33,6 +33,7 @@ interface SyncContext {
   mail?: MailHub;
   boot: string;
   sends?: SendQueue;
+  build?: string;
 }
 
 export function syncResponse(ctx: SyncContext, req: P.SyncRequest, now = Date.now()): P.SyncResponse {
@@ -41,7 +42,7 @@ export function syncResponse(ctx: SyncContext, req: P.SyncRequest, now = Date.no
   const refused = j.refuse(req.v, req.epoch, req.since ?? j.seq);
   if (refused) return { full: true, reason: refused };
   const msgs: P.MessageView[] = [];
-  const out: Extract<P.SyncResponse, { sync: unknown }> = { sync: j.position(), boot: ctx.boot, events: [], timelines: [], identities: [], quoted: [] };
+  const out: Extract<P.SyncResponse, { sync: unknown }> = { sync: j.position(), boot: ctx.boot, ...(ctx.build ? { build: ctx.build } : {}), events: [], timelines: [], identities: [], quoted: [] };
 
   if (req.since !== undefined) {
     out.events = changedSince(ctx, j.since(req.since));

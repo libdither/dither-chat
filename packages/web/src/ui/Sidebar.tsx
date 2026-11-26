@@ -51,6 +51,8 @@ import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { InboxStatus } from './InboxStatus.tsx';
+import { offline } from './Offline.tsx';
 import { FolderIcon } from './Rail.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, placeLabel } from './Organize.tsx';
@@ -62,6 +64,7 @@ import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from '../pairpick.ts';
 import { chatKey } from '../chatroutes.ts';
 import { threadDialog } from '../threads.ts';
+import { showCardsOnce } from '../stream.ts';
 import { subThreads } from '../channelrows.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
@@ -694,6 +697,8 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
   const rows = mail ? [] : shownInbox(filter);
   const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
+  /** The box has opened the search page and is handing it what is typed, until the page's box takes the cursor. */
+  const handing = useRef(false);
   const scroll = useRef<HTMLDivElement>(null);
   // A row and its ↩ button move as one (ReplyMark.tsx), and a channel row with the threads under it; anything else keyed by its own data-row.
   useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] [data-row])');
@@ -721,25 +726,35 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
     return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} loud={loudOf(louds, ids)} />;
   };
   return (
-    <div class="sidebar-inner inbox-side" data-track-area="inbox">
-      <header class="side-head">
-        <h1>Inbox<NewMessageButton /></h1>
+    <div class={`sidebar-inner inbox-side ${offline.value ? 'offline' : ''}`} data-track-area="inbox">
+      {/* What the app is doing with the hub goes in the room the title leaves (InboxStatus.tsx). */}
+      <header class="side-head inbox-head">
+        <h1>Inbox</h1>
+        <InboxStatus />
+        <NewMessageButton />
       </header>
       <div class="inbox-search">
         {mail ? <MailListSearch list={mail} /> : <SearchBox
           value={q}
           setValue={(t) => {
             // Results come as you type (docs/search.md): the first letter opens the search page, whose box takes the
-            // cursor and what was typed.
-            if (t.trim()) {
-              go({ view: 'search', q: t });
-              setQ('');
-            } else setQ(t);
+            // cursor. Until it has, keys still land here, so this box keeps the whole of what was typed and each key
+            // replaces the page's query with it; it lets go once the cursor has moved (a fast typist's keys between
+            // the two went missing when it emptied at the first).
+            setQ(t);
+            if (!handing.current && !t.trim()) return;
+            go({ view: 'search', q: t }, handing.current);
+            if (!handing.current) (handing.current = true), focusSearch.value++;
+          }}
+          onBlurBox={() => {
+            handing.current = false;
+            setQ('');
           }}
           // A phone opens the search page at the tap, keyboard and all, with what Ctrl+K would jump to as you type. A
           // computer starts loading the page (a chunk of its own), so it is there by the first key.
           onFocusBox={() => (phone.value ? (go({ view: 'search', q: '' }), focusSearch.value++) : preloadSearch())}
-          placeholder={phone.value || filter !== 'all' ? 'Search all messages' : 'Search all messages (Ctrl+K)'}
+          placeholder="Search all messages"
+          hint={phone.value || filter !== 'all' ? undefined : 'Ctrl K'}
           submit={(t) => {
             if (!t) return;
             rememberSearch(t);
@@ -962,10 +977,14 @@ const ThreadRow = memo(function ThreadRow({ t, active, depth, onOpen }: { t: P.C
   );
 });
 
-/** "N more": a forum's page is its thread cards; another channel has no such page, so its thread browser opens too. */
+/**
+ * "N more": the channel opens on its thread cards for this visit (stream.ts showCardsOnce), though it opens on its
+ * stream otherwise (a Zulip channel, a Matrix room); a channel with no cards (a Discord text channel) opens its thread
+ * browser too.
+ */
 function moreThreads(c: P.ConversationView, onOpen: (c: P.ConversationView) => void) {
   onOpen(c);
-  if (c.variant !== 'forum' && c.variant !== 'media') threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
+  if (!showCardsOnce(c)) threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
 }
 
 /** The pref('collapsed') key of a channel whose threads are folded away, on this device. */
