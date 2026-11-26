@@ -2578,6 +2578,7 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) this.seedHistory(ago);
     if (firstRun) this.seedHeardReactions();
+    if (firstRun) this.seedVoice(ago);
     this.seedPresence(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
     if (this.network === 'discord') this.startThreads();
@@ -2741,6 +2742,29 @@ class DemoAdapter implements InprocAdapter {
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId, remove: true });
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
+  }
+
+  /**
+   * Evenings in the hangout voice channel over the past three weeks (kept only with the adversarial voice setting), for
+   * a profile's Voice and Close to cards and the graph's voice ties (docs/profile.md "Voice"): Lev and Mara most nights,
+   * Owl for a while, Pixelfox now and then, you twice; Lev and Mara are in it now.
+   */
+  private seedVoice(ago: (min: number) => number) {
+    if (this.key !== 'dmain') return;
+    const DAY = 24 * 60;
+    // [who, minutes ago it starts, minutes ago it ends (0: still in it)]
+    const stretches: [P.IdentityFact, number, number][] = [];
+    for (const d of [20, 17, 13, 10, 6, 3, 1]) {
+      const at = d * DAY + 180;
+      stretches.push([D.lev, at, at - 120], [D.mara, at - 5, at - 118]);
+      if (d % 2) stretches.push([D.owl, at - 30, at - 70]);
+      if (d === 10 || d === 6) stretches.push([D.pixelfox, at - 20, at - 75]);
+      if (d === 13 || d === 3) stretches.push([this.self, at - 40, at - 100]);
+    }
+    stretches.push([D.lev, 25, 0], [D.mara, 22, 0]);
+    const times = [...new Set(stretches.flatMap(([, a, b]) => [a, b]).filter((t) => t > 0))].sort((x, y) => y - x);
+    for (const t of times)
+      this.emit({ t: 'voice', conversation: ch('dither-hangout'), space: g.dither, members: stretches.filter(([, a, b]) => a >= t && b < t).map(([w]) => ({ who: w.nativeId })), ts: ago(t) });
   }
 
   /**

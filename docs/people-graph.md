@@ -41,6 +41,8 @@ worked out on `closeness-worker.ts`), `packages/web/src/graph/` (the view: `Grap
   - the servers a profile you opened said you share (`mutualSpaces`, docs/profile.md);
   - server members your accounts' clients saw — only while the adversarial "Record server members" is on
     (docs/history.md). Turned off, those links go, and people only they named go with them.
+  - who was in one of a server's voice channels, to the server — only while the adversarial "Record who is in voice
+    channels" is on, likewise.
 
 No message text or profile fields are sent: ids, names, pictures (signed media links, as the chat list has them),
 networks, which of your accounts see each place, which have a direct chat with each person and which list them as a
@@ -59,7 +61,8 @@ Each person's score is a sum of signals, each times its weight, divided by the m
 - **Talk** (most of it): the hub's closeness (`closeness.ts`), by month. A month's weight for someone is every message
   in your direct chat, theirs and yours (1 each); their messages in a group chat you are in, less the bigger the group
   (2 / people in it, groups up to 50); and in a server's channels, a reply between you either way (1.5) and their
-  mentions of you by name (1). Bots count for nothing (one bot's direct chat can send thousands of messages a month).
+  mentions of you by name (1). With the voice log on, time in a voice channel with them counts too (0.5 a minute,
+  split over the others in it). Bots count for nothing (one bot's direct chat can send thousands of messages a month).
   Each month fades by e every 18 months (the tuning's fade), then the sum is taken on a log scale.
   Time spent in your direct chat with them counts too (1 a minute, from the hub's record of visits).
 - **Places you share** past the first (log scale), **friends in common** (a fetched profile's count, or the people you
@@ -94,9 +97,9 @@ change size as you go; Now goes back. A person's card says about how many messag
 the past year, a bar a year, and how many friends you have in common; a place's, your messages and minutes there.
 
 `GET /api/graph/activity` answers `{from, to, people, mutual, places, ties}`: months as year × 12 + month, and per person
-(keyed as the graph keys them) and per place flat `[month, weight × 10]` pairs. `ties` is `{ids, links, friends}`:
+(keyed as the graph keys them) and per place flat `[month, weight × 10]` pairs. `ties` is `{ids, links, friends, voice?}`:
 the people keys it uses, `links` as runs of `[a, b, n]` (indexes into `ids`) followed by n `[month, weight × 10]`
-pairs, and `friends` as flat `[a, b]` pairs. Counts only, never message text. The page asks for it after
+pairs, `friends` as flat `[a, b]` pairs, and `voice` (with the voice log on) as `links`, for time in voice together. Counts only, never message text. The page asks for it after
 the graph, so the graph opens at once; the hub works it out on a worker on a read-only connection (about 14 s for
 ~1,200 people over ten years, ties between people included) and keeps it for 30 minutes, answering with what it has while a new run is under way.
 
@@ -108,6 +111,12 @@ A tie between two people, neither of them you (`ties.ts`), adds up:
   within 5 minutes of the other in a group chat of 60 or fewer or a thread 20 or fewer wrote in (a Zulip topic, a
   Discord thread) (0.5), by month and fading as talk with you does. Bots
   count for nothing, and pairs with less than 2 in all are left out;
+- **time in voice together** (only with the adversarial voice log on, docs/history.md): each time two people were in
+  the same voice channel for 5 minutes or more at once (hub voicetime.ts), 0.1 a minute, each moment split over the
+  others in the channel then (÷ people − 1, so two alone count it all) and moments with more than 25 in it counting
+  for nothing, at most 3 hours of it for one stretch together; by month, fading as talk does, times your **Voice
+  together** weight (below). Pairs with less than 2 in all are left out. Time in voice with you counts toward their
+  talk with you instead (0.5 a minute, split the same way);
 - **friends**: a fetched profile's friends in common with you are that person's friends too (6 each);
 - **small places they share**: a group or server of 60 people or fewer here adds 4 / (its people − 1).
 
@@ -139,10 +148,13 @@ Off, the graph is the force layout described above.
 ### How it is worked out, and tuning it
 
 A person's card says **Why this size**: a bar for each signal, what it added, and the score as a percentage of the
-most anyone has, then their circle and who they are most tied to.
+most anyone has, then their circle and who they are most tied to ("(voice)" after someone when most of the tie is
+time in voice together). A profile's **Close to** card lists the same ties, with what each counted (docs/profile.md
+"Close to").
 
 The key's **How, and tune it** opens a panel that explains each signal and has a slider for each weight (0 to 3) and
-for how fast talk fades (3 to 60 months). The graph changes as they move. **Save** keeps the tuning on the hub, for
+for how fast talk fades (3 to 60 months), and, with the voice log on, **Voice together**: how much time in voice
+together ties two people (0 to 3, 1 by default; Fit to me leaves it as it is). The graph changes as they move. **Save** keeps the tuning on the hub, for
 every device; **Defaults** forgets it.
 
 **Fit to me** finds the weights that would have best picked out who you went on to talk with. It looks back from 6
@@ -152,7 +164,8 @@ tries each weight in turn over a few values with talk held at 1, and each fade, 
 many of those people were in the top 50 on the latest window before and after; Save keeps the result.
 
 `GET /api/graph/tuning` answers `{tuning}` (null when none is saved); `PUT /api/graph/tuning` with `{tuning}` saves it
-(`{weights, fade, fitted?}`, weights 0 to 3 for each signal, fade 3 to 60 months, else 400) or forgets it with
+(`{weights, fade, voice?, fitted?}`, weights 0 to 3 for each signal, fade 3 to 60 months, `voice` 0 to 3 (1 when
+absent), else 400) or forgets it with
 `{tuning: null}`.
 
 ## Using it

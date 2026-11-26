@@ -26,6 +26,7 @@ import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } f
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
+import { CloseCard, VoiceCard } from './VoiceClose.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
@@ -1086,6 +1087,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
         at={live && heard === live ? live.at : undefined}
         presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       />
+      <VoiceCard base={person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`} self={isSelf} />
 
       {(sharedSpaces.length > 0 || groupChats.length > 0) && (
         <Card title={isSelf ? 'Your places' : 'In common'} icon="layers" count={sharedSpaces.length + groupChats.length}>
@@ -1172,13 +1174,14 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           </div>
         </Card>
       )}
-      <HistoryCard path={`${changesPath}?except=status,presence`} person />
+      <HistoryCard path={`${changesPath}?except=status,presence,voice`} person />
     </>
   );
 
   const side = (
     <>
       {isSelf ? <FriendsCard said={said} of={(a) => a.friends} /> : <FriendsCard said={said} of={(a) => a.mutualFriends} mutual />}
+      {!isSelf && <CloseCard base={person ? `/api/persons/${person.id}` : `/api/identities/${first.id}`} />}
 
       {!isSelf && extras && <extras.SafetyCard abouts={said} name={name} onChanged={learn} />}
 

@@ -2512,8 +2512,8 @@ export class Store {
       ...targets.map(() => '(target_kind = ? AND target_id = ?)'),
       ...(rolesOf.length ? [`(target_kind IN ('space', 'conversation') AND field = 'role' AND json_extract(coalesce(new, old), '$.identityId') IN (${rolesOf.map(() => '?').join(', ')}))`] : []),
     ].join(' OR ');
-    // Statuses and presence over time only with adversarial features shown.
-    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence'))`;
+    // Statuses, presence and voice over time only with adversarial features shown.
+    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence', 'voice'))`;
     const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
     const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
     const rows = this.db

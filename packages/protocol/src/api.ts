@@ -665,6 +665,41 @@ export interface GraphTies {
   ids: string[];
   links: number[];
   friends: number[];
+  /**
+   * Time in a voice channel together (adversarial voice log only), as `links` is: runs of [a, b, n, then n pairs of
+   * month and weight × 10]. A month's weight is 0.1 a minute, split over the others in the channel then (÷ people − 1);
+   * stretches together under five minutes and channels of more than 25 are left out. Absent with the log off.
+   */
+  voice?: number[];
+}
+
+/** Why two people are tied, in all (GET /api/persons/:id/close). */
+export interface CloseView {
+  /** The other side, keyed as the graph keys people (a person id, else an identity id), and one identity of theirs. */
+  key: string;
+  identityId: string;
+  /** How tied, 0 to 1 (association strength, as the graph's ties). */
+  strength: number;
+  replies: number;
+  reactions: number;
+  /** Turns one right after the other in a small group chat or thread. */
+  turns: number;
+  /** Minutes in a voice channel together. */
+  voiceMinutes: number;
+  /** A fetched profile says they are friends. */
+  friends: boolean;
+}
+
+/** A person's time in voice channels, for their profile (GET /api/persons/:id/voice); null with the voice log off. */
+export interface PersonVoiceView {
+  /** When the log first has them in voice; null if never. */
+  since: number | null;
+  /** Minutes in voice: this month (UTC), in the past 30 days, and in all the log has. */
+  minutes: { month: number; days30: number; total: number };
+  /** Their latest stretches in a channel, newest first (up to 20); `to` null while they are still in it. */
+  sessions: { conversationId: string; from: number; to: number | null }[];
+  /** Who they were in a channel with most in the past 90 days, keyed as the graph keys people, most first (up to 8). */
+  with: { key: string; identityId: string; minutes: number }[];
 }
 
 /** What the people graph's importance weighs, and how much (docs/people-graph.md "Who matters"). */
@@ -677,11 +712,13 @@ export interface GraphTuning {
   weights: Record<GraphWeightKey, number>;
   /** Talk fades by e every this many months (3 to 60). */
   fade: number;
+  /** How much time in voice together counts toward a tie between two people, 0 to 3; absent: 1. */
+  voice?: number;
   /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
   fitted?: { at: number; before: number; after: number };
 }
-/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors. */
-export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8 } as const;
+/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors, the voice log (adversarial). */
+export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8, voice: 16 } as const;
 
 /** What one of your accounts can react with in a conversation. */
 export interface ReactionContextView {
