@@ -8,12 +8,14 @@
  *
  *   bun scripts/verify-call-pair.ts <hub> --conversation <cnv> --caller <account>@computer|phone
  *     --callee <account>@computer|phone [--mode bridge|direct] [--callee-mode bridge|direct] [--seconds 15]
- *     [--login <hub password>] [--token-file <api token>] [--wav-caller f.wav] [--wav-callee f.wav]
- *     [--serial emulator-5580] [--package org.libdither.chat.verify]
+ *     [--login <hub password>] [--token-file <api token> (signs the computers in too, without --login)] [--wav-caller f.wav] [--wav-callee f.wav]
+ *     [--serial emulator-5580] [--package org.libdither.chat.verify] [--callee-conversation <cnv>]
  *
  * Only for a hub whose accounts are test accounts: it rings and joins for real. The phone end needs the debug app
  * installed (verify-android-call.ts installs it) and a UnifiedPush distributor on the emulator that reaches the hub's
  * push relay, for the ring. `--mode` is the caller's way of calling (docs/calls.md), `--callee-mode` the callee's.
+ * `--callee-conversation`: the callee's own copy of the chat, where each side has its own (a Signal DM between two
+ * accounts of the hub); the ring is looked for there.
  */
 import { androidDevice } from './android-device.ts';
 import { launch } from './browser.ts';
@@ -25,6 +27,8 @@ const opt = (name: string, d?: string) => {
 };
 const hub = (args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--')) ?? '').replace(/\/$/, '');
 const conversation = opt('conversation');
+/** The callee's own copy of the chat, where a network gives each side its own (Signal's DMs): else the same one. */
+const calleeConversation = opt('callee-conversation', conversation)!;
 const [callerAcc, callerOn] = (opt('caller') ?? '').split('@');
 const [calleeAcc, calleeOn] = (opt('callee') ?? '').split('@');
 if (!hub || !conversation || !callerAcc || !calleeAcc) throw new Error('usage: bun scripts/verify-call-pair.ts <hub> --conversation <cnv> --caller <acc>@computer|phone --callee <acc>@computer|phone');
@@ -53,8 +57,8 @@ log(`${conv.network} ${conv.shape}/${conv.variant}: ${rings ? 'the callee is run
 /** What a device's page says of its call: the same on a computer and the phone. */
 const SNAP = `(() => { const a = window.__activeCall?.value; const s = a?.stats ?? {}; return a ? { phase: a.phase, mode: a.mode, conversationId: a.conversationId, accountId: a.accountId, connected: a.self ? !!a.self.connected : null, people: a.participants?.length ?? 0, muted: a.muted, listenOnly: !!a.listenOnly, timing: a.timing, inLevel: s.inLevel ?? null, received: s.received ?? 0, stats: !!a.stats, note: a.note ?? null } : null; })()`;
 const PCS = `Promise.all((window.__pcs ?? []).map(async (pc) => { const types = {}; (await pc.getStats()).forEach((r) => { types[r.type] = (types[r.type] ?? 0) + 1; }); return { ice: pc.iceConnectionState, conn: pc.connectionState, sdpRemote: (pc.remoteDescription?.sdp ?? '').split('\\r\\n').filter((l) => l.startsWith('a=candidate')).map((l) => l.split(' ').slice(4, 8).join(' ')), types }; }))`;
-const prefsFor = (acc: string, mode: string) =>
-  `localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: ${JSON.stringify(mode)}, sendAs: { ${JSON.stringify(conversation)}: ${JSON.stringify(acc)} } }))`;
+const prefsFor = (acc: string, mode: string, conv: string) =>
+  `localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), callMode: ${JSON.stringify(mode)}, sendAs: { ${JSON.stringify(conv)}: ${JSON.stringify(acc)} } }))`;
 
 interface Device {
   name: string;
@@ -64,12 +68,22 @@ interface Device {
   close(): Promise<void>;
 }
 
-async function computer(name: string, acc: string, mode: string, wav?: string): Promise<Device> {
+async function computer(name: string, acc: string, mode: string, conv: string, wav?: string): Promise<Device> {
   const b = await launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required', ...(wav ? [`--use-file-for-fake-audio-capture=${wav}`] : [])] });
+  // A test's page errors are this run's to report, not the hub's bug watch's.
+  await b.page.send('Network.enable');
+  await b.page.send('Network.setBlockedURLs', { urls: ['*/api/errors*'] });
+  // Without a password, a session made with the service token (POST /api/sessions).
+  if (!LOGIN && TOKEN) {
+    const r = await fetch(`${hub}/api/sessions`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } });
+    if (!r.ok) throw new Error(`a session from ${hub}: ${r.status}`);
+    const { name: cookie, value } = (await r.json()) as { name: string; value: string };
+    await b.page.send('Network.setCookie', { name: cookie, value, url: `${hub}/`, httpOnly: true, sameSite: 'Lax' });
+  }
   await b.page.goto(hub);
   if (LOGIN) await b.page.eval(`fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: ${JSON.stringify(LOGIN)} }) }).then(() => true)`);
-  await b.page.eval(prefsFor(acc, mode));
-  await b.page.goto(`${hub}/?calls=1#/inbox/c/${conversation}`);
+  await b.page.eval(prefsFor(acc, mode, conv));
+  await b.page.goto(`${hub}/?calls=1#/inbox/c/${conv}`);
   const d: Device = {
     name,
     on: 'computer',
@@ -82,7 +96,7 @@ async function computer(name: string, acc: string, mode: string, wav?: string): 
 }
 
 const phone = callerOn === 'phone' || calleeOn === 'phone' ? androidDevice({ serial: opt('serial', process.env.ANDROID_SERIAL ?? 'emulator-5580')!, pkg: opt('package', 'org.libdither.chat.verify')!, hub }) : null;
-async function onPhone(name: string, acc: string, mode: string): Promise<Device> {
+async function onPhone(name: string, acc: string, mode: string, conv: string): Promise<Device> {
   const p = phone!;
   await p.freshApp(LOGIN);
   p.sh(`pm grant ${p.pkg} android.permission.RECORD_AUDIO; pm grant ${p.pkg} android.permission.POST_NOTIFICATIONS`);
@@ -91,7 +105,7 @@ async function onPhone(name: string, acc: string, mode: string): Promise<Device>
   const before = (await api('/api/push')).devices?.length ?? 0;
   await p.page(`(window.DitherAndroid.postMessage(JSON.stringify({ t: 'push.register', vapid: ${JSON.stringify((await api('/api/push')).publicKey)} })), true)`);
   check(await hostWait(async () => ((await api('/api/push')).devices?.length ?? 0) > before, 30_000), `${name}: the phone registers for push`);
-  await p.page(`(${prefsFor(acc, mode)}, location.href = '/?calls=1#/inbox/c/${conversation}', true)`);
+  await p.page(`(${prefsFor(acc, mode, conv)}, location.href = '/?calls=1#/inbox/c/${conv}', true)`);
   await p.attach();
   const d: Device = { name, on: 'phone', eval: (e) => p.page(e), until: (e, ms) => p.until(e, ms), close: async () => void p.sh(`am force-stop ${p.pkg}`) };
   check(await d.until(`!!document.querySelector('.call-join')`, 60_000), `${name}: the phone opens the chat with its Call button`);
@@ -110,9 +124,9 @@ async function hostWait(fn: () => Promise<boolean>, ms: number): Promise<boolean
 const live = (d: Device) => d.until(`window.__activeCall?.value?.phase === 'live' && (!window.__activeCall.value.self || window.__activeCall.value.self.connected)`, 45_000);
 const devices: Device[] = [];
 try {
-  const caller = callerOn === 'phone' ? await onPhone('caller', callerAcc, modes.caller) : await computer('caller', callerAcc, modes.caller, opt('wav-caller'));
+  const caller = callerOn === 'phone' ? await onPhone('caller', callerAcc, modes.caller, conversation) : await computer('caller', callerAcc, modes.caller, conversation, opt('wav-caller'));
   devices.push(caller);
-  const callee = calleeOn === 'phone' ? await onPhone('callee', calleeAcc, modes.callee) : await computer('callee', calleeAcc, modes.callee, opt('wav-callee'));
+  const callee = calleeOn === 'phone' ? await onPhone('callee', calleeAcc, modes.callee, calleeConversation) : await computer('callee', calleeAcc, modes.callee, calleeConversation, opt('wav-callee'));
   devices.push(callee);
   // Keeps each page's peer connections, so a failed hearing check can say how far the connection got.
   for (const d of devices) await d.eval(`(window.__pcs = [], window.RTCPeerConnection = class extends RTCPeerConnection { constructor(...a) { super(...a); window.__pcs.push(this); } }, true)`);
@@ -121,13 +135,15 @@ try {
 
   log('caller presses Call');
   await caller.eval(`(document.querySelector('.call-join').click(), true)`);
-  check(await live(caller), 'the caller is in the call', await caller.eval(SNAP));
+  // A ringing caller is live at once, but on a network whose call is one-to-one (Signal) its account is connected only
+  // once the callee answers: that is checked with the others below.
+  check(await (rings ? caller.until(`window.__activeCall?.value?.phase === 'live'`, 45_000) : live(caller)), 'the caller is in the call', await caller.eval(SNAP));
   check((await caller.eval(SNAP))?.accountId === callerAcc, 'the caller calls from the account asked for', (await caller.eval(SNAP))?.accountId);
 
   let callId = '';
   if (rings) {
     const rung = await hostWait(async () => {
-      const calls = ((await api(`/api/calls/ringing?conversation=${conversation}`)).calls ?? []) as any[];
+      const calls = ((await api(`/api/calls/ringing?conversation=${calleeConversation}`)).calls ?? []) as any[];
       callId = calls.find((c) => c.ringing && c.accountId === calleeAcc)?.id ?? '';
       return !!callId;
     }, 30_000);
@@ -148,10 +164,10 @@ try {
   }
   check(await live(callee), 'the callee is in the call', await callee.eval(SNAP));
   for (const d of devices) {
-    const ok = await d.until(`(window.__activeCall?.value?.participants?.length ?? 0) >= 2`, 20_000);
+    const ok = await d.until(`(window.__activeCall?.value?.participants?.length ?? 0) >= 2 && window.__activeCall.value.self?.connected !== false`, 20_000);
     check(ok, `the ${d.name} sees the other in the call`, await d.eval(SNAP));
   }
-  if (rings) check((await api(`/api/calls/ringing?conversation=${conversation}`)).calls?.find((c: any) => c.id === callId)?.ringing === false, 'the ring stopped on the network', callId);
+  if (rings) check((await api(`/api/calls/ringing?conversation=${calleeConversation}`)).calls?.find((c: any) => c.id === callId)?.ringing === false, 'the ring stopped on the network', callId);
 
   // The call's details (its stats among them) show with the dock open.
   // Hearing: the far end's sound, sampled for a while on each device that has a sound to hear (an emulator's
@@ -198,7 +214,7 @@ try {
   } else await callee.eval(`(document.querySelector('.call-btn.leave')?.click(), true)`);
   check(await callee.until(`!window.__activeCall?.value || window.__activeCall.value.phase === 'ended'`, 15_000), 'the callee is out of the call');
   if (rings) {
-    const theCall = async () => ((await api(`/api/calls/ringing?conversation=${conversation}`)).calls ?? []).find((c: any) => c.id === callId);
+    const theCall = async () => ((await api(`/api/calls/ringing?conversation=${calleeConversation}`)).calls ?? []).find((c: any) => c.id === callId);
     check(await hostWait(async () => (await theCall())?.state === 'ended', 20_000), 'the hub has the call over', await theCall());
   }
   if (phone) {
