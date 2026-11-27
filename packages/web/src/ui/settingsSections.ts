@@ -9,7 +9,6 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Your rules', 'layers', 'set-overrides'],
   ['Sending', 'send', 'set-sending'],
   ['Privacy', 'lock', 'set-privacy'],
-  ['Sending', 'image', 'set-sending'],
   ['Message history', 'clock', 'set-history'],
   ['Indexing', 'archive', 'set-indexing'],
   ['Catching up', 'refresh', 'set-catchup'],
