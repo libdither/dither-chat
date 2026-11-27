@@ -1768,10 +1768,18 @@ button.inbox-status:hover {
   margin: 6px 16px 4px;
   padding: 2px;
   align-self: flex-start;
+  /* A row wider than the page (a person on six networks, on a phone) scrolls sideways. */
+  max-width: calc(100% - 32px);
+  overflow-x: auto;
+  scrollbar-width: none;
   border-radius: 8px;
   background: var(--bg-hover, var(--border-soft));
 }
 .view-switch-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 10px;
   border: none;
   border-radius: 6px;

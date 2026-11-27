@@ -78,7 +78,7 @@ import { threadRows } from '../mail/elsewhere.ts';
 import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
-import { Avatar, Empty, FromChips, Menu, variantIcon } from './bits.tsx';
+import { Avatar, Empty, FromChips, Menu, PlaceTabs, variantIcon } from './bits.tsx';
 import { convPresence } from './PresenceDot.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
@@ -2513,17 +2513,8 @@ export function ViewSwitch({ c, shows }: { c: P.ConversationView; shows: Channel
   const vs = channelViews(c);
   if (!vs) return null;
   const many = threadWords(c).many;
-  return (
-    <div class="view-switch" role="tablist" aria-label="Show">
-      {vs.map((v) => (
-        <button key={v} role="tab" aria-selected={v === shows} class={`view-switch-btn ${v === shows ? 'on' : ''}`} data-track={`channel view ${v}`} onClick={() => setChannelView(c.id, v)}>
-          {viewLabel(c, v, many)}
-        </button>
-      ))}
-    </div>
-  );
+  return <PlaceTabs tabs={vs.map((v) => ({ id: v, label: viewLabel(c, v, many) }))} value={shows} onPick={(v) => setChannelView(c.id, v)} label="Show" track="channel view" />;
 }
-
 
 /** A person's page: the chat with them. One conversation is that conversation's page; several are one chat over them. */
 export function PersonPane({ personId, onBack }: { personId: string; onBack?: () => void }) {
