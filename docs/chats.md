@@ -27,6 +27,11 @@ So a merge, a split, a new account or a new DM changes the chat as soon as the t
 in step. Group chats that are "the same group on two networks" would need a stored link. That is not built (see
 [Not yet](#not-yet)).
 
+A network can say two of its own ids are one account (IdentityFact `sameAs`: Partiful files a chat's people under the
+chat service's ids, `stream:<id>`, beside their user ids). The hub keeps the pair (`identity_same`) and, the first time
+it hears it, puts the two with one person, the user id's; a split you make after that stays. An id said to be the same
+as your own is you: your person, and its messages are yours.
+
 ## Where a message goes
 
 Routes are listed newest first. A message without a route goes through the chat's **default route**:
@@ -41,7 +46,8 @@ except while a draft waits in the picked route's box, so the box never changes u
 
 The page adds guesses in front of that, because it knows things the hub doesn't. From first to last:
 
-1. the route of the message you are replying to;
+1. the route of the message you are editing or replying to (Edit on a page whose address is not that DM opens the DM,
+   and its message box takes the edit: `scripts/verify-edit.ts`);
 2. the route you picked on this page (a tag in the timeline, the message box's line, the list under the name), while
    the page stays at the address it was picked at;
 3. **the DM the address names**: opened as one of their DMs (from the inbox, a notification, search, a link), the

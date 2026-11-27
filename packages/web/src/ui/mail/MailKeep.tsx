@@ -29,6 +29,7 @@ function searchName(a: P.MailKeepView, kind: string | undefined): string {
 }
 
 function KeepRow({ a, reload }: { a: P.MailKeepView; reload: () => void }) {
+  mailRev.value; // the account's address, label and colour
   const [busy, setBusy] = useState(false);
   const acc = db.mail.accounts.get(a.accountId);
   const name = acc?.address ?? acc?.label ?? a.accountId;

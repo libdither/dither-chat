@@ -8,7 +8,7 @@ import { useState } from 'preact/hooks';
 import { renderSVG } from 'uqr';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
-import { api, db, toast } from '../state.ts';
+import { api, db, metaRev, toast } from '../state.ts';
 import type { MenuEntry } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { Card, Tag } from './ProfileShell.tsx';
@@ -142,6 +142,7 @@ async function blockIdentity(i: P.IdentityView, unblock: boolean, onDone: () => 
 
 /** Block or unblock a group from its page (About.blocked, capability 'block'). */
 export function GroupBlock({ conversationId, network, blocked, onDone }: { conversationId: string; network: P.Network; blocked: boolean; onDone: () => void }) {
+  metaRev.value; // what your accounts can do
   const [busy, setBusy] = useState(false);
   if (!can(network, 'block')) return null;
   const run = async () => {

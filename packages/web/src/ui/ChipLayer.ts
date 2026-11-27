@@ -4,7 +4,8 @@
  * background behind it, in a copy of the box's text laid out as the box lays it out, and makes the chip one piece:
  *
  * - the caret steps over it and never lands inside (a click there goes to the nearer end);
- * - Backspace after it, or Delete before it, takes it whole, and so does typing over a selection that cuts into it;
+ * - Backspace after it, or Delete before it, takes it whole (a word deleted from past the spaces after it, the chip and
+ *   the spaces), and so does typing over a selection that cuts into it;
  * - a copy of it reads "@Alice" anywhere, and pastes back as the chip in a message box;
  * - a click on it, once the box has the caret, opens the person's page.
  *
@@ -131,9 +132,13 @@ export function ChipLayer(props: ChipLayerProps) {
       let a = el.selectionStart;
       let b = el.selectionEnd;
       if (a === b) {
-        const c = del && now().find((c) => (t.includes('Backward') ? c.end === a : c.start === a));
-        if (!c) return;
-        [a, b] = [c.start, c.end];
+        const back = t.includes('Backward');
+        const c = del && now().find((c) => (back ? c.end === a : c.start === a));
+        // A word deleted from past a chip and the spaces after it takes the chip and the spaces, in one step to undo.
+        const word = !c && (t === 'deleteWordBackward' || t === 'deleteWordForward') ? now().find((c) => /^\s+$/.test(back ? el.value.slice(c.end, a) : el.value.slice(a, c.start))) : undefined;
+        if (word) [a, b] = back ? [word.start, a] : [a, word.end];
+        else if (!c) return;
+        else [a, b] = [c.start, c.end];
       } else {
         const [x, y] = widen(now(), a, b);
         if (x === a && y === b) return;

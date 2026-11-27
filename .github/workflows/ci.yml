@@ -6,8 +6,10 @@
 # A pull request that only changes docs (*.md, docs/) or the Android app skips the work (scripts/ci-changes.ts); a push
 # to main and a manual run always run everything. The same locally: bun run typecheck, bun run test, bun run web:build,
 # bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
-# bun scripts/verify-offline.ts, bun scripts/verify-link.ts, bun scripts/verify-arrived.ts, bun scripts/verify-timeline-scroll.ts,
-# bun scripts/verify-presence.ts, bun scripts/verify-video.ts, bun scripts/verify-calibration.ts, bun scripts/verify-back.ts, bun scripts/verify-response.ts,
+# bun scripts/verify-offline.ts, bun scripts/verify-loading.ts, bun scripts/verify-link.ts, bun scripts/verify-arrived.ts, bun scripts/verify-timeline-scroll.ts,
+# bun scripts/verify-presence.ts, bun scripts/verify-video.ts, bun scripts/verify-calibration.ts, bun scripts/verify-edit.ts, bun scripts/verify-sidebar-counts.ts,
+# bun scripts/verify-their-time.ts,
+# bun scripts/verify-back.ts, bun scripts/verify-response.ts,
 # bun scripts/verify-memory.ts, bun scripts/verify-perf.ts --ci.
 name: CI
 
@@ -68,6 +70,9 @@ jobs:
       # Every Escape handler says it took the key, and verify-back.ts covers every page and layer (scripts/check-escape.ts,
       # docs/desktop.md "Escape and back").
       - run: bun run check:escape
+      # A component Preact may skip reads what says the hub's data it shows changed (scripts/check-redraws.ts,
+      # docs/perf.md "What redraws").
+      - run: bun run check:redraws
 
   # The hub's suite is the longest; its files run on --parallel workers (scripts/test-all.ts). All but mail-load's,
   # which runs beside it in test-hub-mail.
@@ -159,6 +164,9 @@ jobs:
       # The hub out of reach (docs/sync.md, "Quiet"), on the same build: a demo hub stopped and started again, the amber
       # orb and its popover on a phone and a computer, the line over the message box, a send that waits and goes out once.
       - run: bun scripts/verify-offline.ts
+      # What the app says while it loads (docs/sync.md, "What the inbox says", "Opening a chat"): a chat opening with
+      # Discord or the hub held slow, a hub restarting and gone beside "Inbox", and a first start's orb filling.
+      - run: bun scripts/verify-loading.ts
       # The app over a bad link, through a TCP proxy the check steers (docs/sync.md, "A bad link"): a socket that goes
       # silent, a catch-up that hangs, every connection dying at once, a link that flaps, and a probe behind a slow link
       # filled by a download.
@@ -178,6 +186,15 @@ jobs:
       # Notification calibration: the inbox's quiet row, the page drawing each notification again where it was seen,
       # and an answer reaching the hub (docs/notifications.md, "Check-ins").
       - run: bun scripts/verify-calibration.ts
+      # Editing a message you sent: Enter changes it and sends nothing new, from its chat, from a person's page and from
+      # another of their routes, and Esc ends the edit (docs/chats.md, "Where a message goes").
+      - run: bun scripts/verify-edit.ts
+      # A server's sidebar follows a read or Mark Unread made on another device: the topic's row and its channel's count
+      # (docs/servers.md "Threads under a channel").
+      - run: bun scripts/verify-sidebar-counts.ts
+      # Their time beside yours, and their usual day on a card by it: guessed and stated clocks, Escape, back, a zone
+      # set by hand, a phone's tap (docs/profile.md, "Their time").
+      - run: bun scripts/verify-their-time.ts
 
   # Back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo
   # hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back").

@@ -9,7 +9,7 @@ import type * as P from '@dither-chat/protocol';
 import { ago, fullTime } from '../format.ts';
 import { useLayer } from '../phone.ts';
 import { authorName } from '../model.ts';
-import { api, toast } from '../state.ts';
+import { api, metaRev, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
 import { Card } from './ProfileShell.tsx';
 
@@ -42,6 +42,7 @@ function StoryFace({ s, big }: { s: P.StoryView; big?: boolean }) {
 }
 
 export function StoriesCard({ identityId, conversationId }: { identityId?: string; conversationId?: string }) {
+  metaRev.value; // authors' names
   const [list, setList] = useState<P.StoryView[] | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const q = identityId ? `identity=${identityId}` : `conversation=${conversationId}`;
@@ -79,6 +80,7 @@ export function StoriesCard({ identityId, conversationId }: { identityId?: strin
 }
 
 function StoryViewer({ list, at, setAt, onSeen, onClose }: { list: P.StoryView[]; at: number; setAt: (i: number) => void; onSeen: (id: string) => void; onClose: () => void }) {
+  metaRev.value; // the author's name
   const s = list[at];
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);

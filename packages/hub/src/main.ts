@@ -35,7 +35,6 @@ import { Supervisor } from './supervisor.ts';
 import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
 import { LoudLearner } from './loudlearn.ts';
 import { attentionMode } from './loudness.ts';
-import { NextLook } from './nextlook.ts';
 import { TriageVotes } from './votes.ts';
 import { Scorecard, seedDemoScores } from './scorecard.ts';
 import { seedDemoCalibration } from './demo-calibration.ts';
@@ -51,6 +50,7 @@ import { onRing, ringGate, ringWords, sweepCalls } from './callstate.ts';
 import { CalendarAccounts, seedCalendarAccount } from './calendar-account.ts';
 import { ErrorLog, jobFailed, reportError, setErrorLog } from './errors.ts';
 import { readPassword } from './auth.ts';
+import { noteListening, noteStopping, readRestarts, usualDown } from './restarts.ts';
 
 // Each part of the start, logged in one line once requests are answered (startup.ts).
 const startup = new StartupTrace();
@@ -147,25 +147,30 @@ loud.namer = votes.namer();
 if (loud.mode !== 'shadow') console.log(`attention: ${loud.mode} (DITHER_ATTENTION)`);
 /** When the last sound went out: a second one minutes later costs more (loudness.ts momentKeys). */
 let lastSoundAt: number | null = null;
-// Messages held for the next look (DITHER_ATTENTION=on): one bundle when you next look.
-const nextLook = new NextLook(store);
 // For you (docs/foryou.md): served items and their events are logged only while the activity log is on.
 const foryou = new ForYou(store, {
   logging: () => activity.enabled,
   levelOf: (id) => triage.effectiveLevel(id).level,
-  // Asked "worth seeing?" one card a day, and, once the loudness decides, ordered by what those answers taught.
-  ask: (items) => loud.checkins.pickForYou(items, loud.prefs()),
+  // Once the loudness decides, ordered by what the calibration feed's answers taught of each chat and person.
   ...(loud.mode === 'on' ? { worth: (c: { conv: string; author: string | null }) => loud.worth(c) } : {}),
 });
 // How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
-// A demo world's Notification calibration page (demo-calibration.ts): once its accounts have brought messages in.
+// A demo world's calibration feed (demo-calibration.ts): once its accounts have brought messages in. Its draws are
+// the same from run to run (mulberry32), so its pictures are too.
 if (demo) {
+  let seed = 7;
+  loud.feed.random = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
   const seedCalibration = setInterval(() => {
     try {
-      if (seedDemoCalibration(store.db)) clearInterval(seedCalibration);
+      if (seedDemoCalibration(store.db, loud, loud.prefs())) clearInterval(seedCalibration);
     } catch (e) {
       clearInterval(seedCalibration);
       console.error('demo calibration', e);
@@ -288,10 +293,9 @@ async function triageOne(id: string, sp: Span) {
     done = true;
     store.dirty.messages.set(id, true);
     if (d.decision === 'push') lastSoundAt = Date.now();
-    // Once the loudness decides: the next look holds what can wait an hour or more; the inbox band sends nothing.
+    // Once the loudness decides: the inbox band sends nothing.
     const band = loud.mode === 'on' && d.loud?.live && !d.forced ? d.loud.band : null;
-    if (band === 'next') nextLook.hold(id, conversationId, !!d.loud?.parts?.quiet);
-    else if (band === 'inbox' || band === 'unread') {
+    if (band === 'inbox' || band === 'unread') {
       // Ranked in the inbox, or left unread: nothing goes to the devices.
     } else if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts), { rule: !!d.alwaysNotify, capped: capped(d.decision, d.facts) });
     // The local model was too slow: the message went out silent, and is read again once it has had time.
@@ -443,10 +447,8 @@ setInterval(
     span('votes and held alerts', {}, () => {
       votes.daily();
       loud.daily();
-      // Questions for the Notification calibration page: new ones as the day's quota and pace allow, old ones dropped.
-      loud.checkins.fill(loud.prefs());
-      // The next look at the times you set (DITHER_ATTENTION=on).
-      if (nextLook.dueAt(loud.prefs(), Date.now())) flushNextLook('times');
+      // The calibration feed: what came, once what you did with it is known (at most once an hour).
+      loud.feed.fill(loud.prefs());
       const held = triage.takeHeldSummary();
       // The last held one may be a notice: its tap opens Notices, not a chat.
       if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
@@ -594,6 +596,8 @@ const server = new HubServer(store, sup, triage, {
   // JPEG XL (jxl.ts, docs/files.md "JPEG XL"): cjxl and djxl from PATH, DITHER_JXL_DIR or nix; kept pictures packed.
   jxl: () => findJxl({ nix: true }),
   packMedia: !demo && process.env.DITHER_JXL_PACK !== '0',
+  // Message search on a thread of its own, reading the same database (search-thread.ts, docs/search.md).
+  searchFile: join(dataDir, 'hub.sqlite'),
   // Same person? on a thread of its own; jev reads unsure pairs' profiles, never on a demo world (docs/same-person.md).
   matches: { file: join(dataDir, 'hub.sqlite'), jevUrl: demo || process.env.DITHER_MATCH_MODEL === 'off' ? null : (process.env.DITHER_JEV_URL ?? 'http://127.0.0.1:7862') },
   // Index jobs and the gap fill read like a person (readingpace.ts); a demo's networks are fake, so no need there.
@@ -626,26 +630,6 @@ const server = new HubServer(store, sup, triage, {
 
 notifier = new Notifier({ store, activity, devices, push, delivery, server, phone, computerFirst: () => loud.prefs().computerFirst });
 
-/**
- * The next look (DITHER_ATTENTION=on): what was held arrives together, as one silent bundle on the phones, when the
- * Android app says the phone was unlocked or at the times you set. Opening the app is a look: the held items are in
- * the inbox, so nothing is sent then and the bundle is let go.
- */
-function flushNextLook(why: 'open' | 'unlock' | 'times') {
-  const b = nextLook.flush(why);
-  if (!b || why === 'open') return;
-  const nid = activity.notification({ kind: 'held' });
-  push
-    .notify(b.title, b.body, undefined, { tag: 'next-look', level: 'quiet', tier: 'digest', band: 'next', nextLook: { count: b.count, chats: b.chats }, keep: true, ...(nid ? { nid } : {}) }, push.desktops(), 'quiet')
-    .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => (console.error('push failed', e), jobFailed('push: next look', e)));
-}
-server.onLook = (why) => {
-  if (loud.mode !== 'on') return;
-  const prefs = loud.prefs();
-  if (why === 'unlock' ? prefs.nextLook !== 'times' : true) flushNextLook(why);
-};
-server.nextLookHeld = () => nextLook.count();
 
 const realAccounts = store.accounts().filter((a) => !a.demo);
 if (demo && realAccounts.length) {
@@ -662,7 +646,7 @@ if (!demo && realAccounts.some((a) => a.network !== 'calendar')) {
   store.db.query(`DELETE FROM meta WHERE key = 'demo_overlay'`).run();
 }
 // A demo world showing adversarial features from the start (scripts/verify-history.ts): before its history is seeded.
-if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true });
+if (demo && flag('adversarial') && !store.retention().adversarial) store.setRetention({ ...store.retention(), adversarial: true, deleted: true, disappearing: true, statuses: true, presence: true, members: true, voice: true });
 if (demo && !store.accounts().some((a) => a.demo)) createDemoAccounts(store);
 // The first start with calendar accounts: the calendar this hub had by DITHER_CALENDAR_URL (or its default) becomes
 // one, once (calendar-account.ts). Removing it later sticks.
@@ -692,6 +676,8 @@ if (store.accounts().some((a) => a.demo)) applyDemoOverlay(store);
 startup.mark('adapters');
 server.start();
 startup.mark('http listen');
+// How long the stop before this one took to come back to here: the usual time a stopping hub tells the pages (restarts.ts).
+noteListening(dataDir);
 // The web build's files packed hard once, on the thread pool, what index.html loads first (compress.ts PackedFiles).
 {
   const began = performance.now();
@@ -756,6 +742,9 @@ const shutdown = async () => {
   if (stopping) return;
   stopping = true;
   const stopBy = Date.now() + STOP_APPLY_MS;
+  // Every page hears it first, with how long a restart usually takes, then the stop is kept for the next start to time.
+  server.sayStopping(usualDown(readRestarts(dataDir)));
+  noteStopping(dataDir);
   // What is being triaged finishes first (a few seconds at most); the rest waits in triage_pending for the next start.
   await Promise.race([queue, new Promise((r) => setTimeout(r, 5_000))]);
   backup.stop();

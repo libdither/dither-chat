@@ -13,6 +13,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import { SCORE_METRICS, type ModelScoresView } from '@dither-chat/protocol/scorecard';
+import { bandOf } from '@dither-chat/protocol';
 import { prior, type Facts } from './learn.ts';
 import { OPEN_DWELL } from './labels.ts';
 import { sliced } from './slices.ts';
@@ -36,7 +37,7 @@ const DAY = 24 * HOUR;
  * 3: the cost side (sounds, stale pushes, checks with nothing new, and the people metrics), scored back the same way.
  * 4: the loudness scale's check-ins and its comparison with the tiers (loudnessScores).
  */
-export const SCORE_VERSION = 4;
+export const SCORE_VERSION = 5;
 /** A notification was followed when you opened its chat within this long. */
 const FOLLOW_WITHIN = 3 * HOUR;
 /** A chat-day was opened when you opened the chat within this long of one of its messages. */
@@ -430,14 +431,27 @@ function* foryou(c: DayContext): Generator<number, ScoreRow[]> {
 }
 
 /**
- * The loudness scale (loudness.ts, checkin.ts): the check-ins' answers, weighted back by the chance each question had
- * of being picked (only the random half counts, so the rates are honest), and how the loudness compares with the tiers
- * on the same messages while it runs in shadow.
+ * The loudness scale (loudness.ts, feed.ts): the answers, weighted back by the chance each was asked with, and how the
+ * loudness compares with the tiers on the same messages while it runs in shadow. Before 2026-11 the answers were the
+ * check-ins' (only their random half counts); since, the calibration feed's cards and the sure ones it shows at
+ * random, read as the check-ins were: Sound on one that sounded is "worth it", Show or Inbox "could have waited";
+ * Sound on one that did not is "should have sounded". The feed's cards are drawn among those worth asking, so these
+ * rates are of those, not of every notification.
  */
 export function* loudnessScores(c: DayContext): Generator<number, ScoreRow[]> {
   const keys = ['attn.worth', 'attn.worth_shadow', 'attn.could_wait', 'attn.shouldnt', 'attn.missed', 'attn.asked', 'foryou.worth', 'shadow.sounds', 'shadow.agree', 'shadow.quick_show', 'shadow.quick_show_live'];
   if (!c.db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'checkin'`).get()) return keys.map((k) => row(c.day, k, null, 0));
   const asked = c.db.query(`SELECT side, arm, propensity, shadow_band, answer, skipped FROM checkin WHERE created_at >= ? AND created_at < ? LIMIT 1000`).all(c.from, c.to) as Row[];
+  if (c.db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cal_item'`).get()) {
+    const FEED_AS: Record<string, Record<string, string>> = { sounded: { sound: 'worth', show: 'could_wait', inbox: 'could_wait' }, quiet: { sound: 'sooner', show: 'fine', inbox: 'fine' } };
+    const fed = c.db
+      .query(`SELECT did, chance, loud, answer, skipped FROM cal_item WHERE drawn_at >= ? AND drawn_at < ? AND (kind = 'card' OR sure_shown = 1) LIMIT 2000`)
+      .all(c.from, c.to) as Row[];
+    for (const f of fed) {
+      const side = f.did === 'sound' ? 'sounded' : 'quiet';
+      asked.push({ side, arm: 'random', propensity: f.chance, shadow_band: bandOf(f.loud), answer: f.answer ? FEED_AS[side][f.answer] : null, skipped: f.skipped });
+    }
+  }
   yield asked.length;
   /** The weighted share of `yes` among the random half's answers that `of` keeps. */
   const ips = (of: (r: Row) => boolean, yes: (r: Row) => boolean) => {
@@ -468,14 +482,14 @@ export function* loudnessScores(c: DayContext): Generator<number, ScoreRow[]> {
     )
     .all(...self, c.from, c.to) as Row[];
   yield ds.length;
-  const band = (l: number) => (l >= 80 ? 'sound' : l >= 55 ? 'show' : l >= 30 ? 'next' : l >= 10 ? 'inbox' : 'unread');
   const tierBand: Record<string, string> = { push: 'sound', quiet: 'show', digest: 'inbox', drop: 'unread' };
   const sounds = ds.filter((r) => r.loud >= 80).length;
   out.push(row(c.day, 'shadow.sounds', ds.length ? sounds : null, ds.length, { live: ds.filter((r) => r.decision === 'push').length }));
-  const agree = ds.filter((r) => band(r.loud) === tierBand[r.decision] || (band(r.loud) === 'next' && r.decision === 'digest')).length;
+  // The bottom of Show (30 to 55, the next look's stretch before 2026-11) agrees with a list row too.
+  const agree = ds.filter((r) => bandOf(r.loud) === tierBand[r.decision] || (r.loud >= 30 && r.loud < 55 && r.decision === 'digest')).length;
   out.push(row(c.day, 'shadow.agree', share(agree, ds.length), ds.length));
   const quick = ds.filter((r) => r.quick);
-  out.push(row(c.day, 'shadow.quick_show', share(quick.filter((r) => r.loud >= 55).length, quick.length), quick.length));
+  out.push(row(c.day, 'shadow.quick_show', share(quick.filter((r) => r.loud >= 30).length, quick.length), quick.length));
   out.push(row(c.day, 'shadow.quick_show_live', share(quick.filter((r) => r.decision === 'push' || r.decision === 'quiet').length, quick.length), quick.length));
   return out;
 }

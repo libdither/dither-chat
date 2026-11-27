@@ -103,15 +103,15 @@ item's weight is divided by its propensity, at most 10.
 
 ## Worth seeing
 
-Once a day one card is asked about, **Worth seeing?**, with *Glad I saw this* and *Not for me* (a check-in on the
-Notification calibration page, [notifications.md](notifications.md#check-ins); nothing is asked on the card itself). The card is picked at random from the first page, with the chance it
-had kept, so the scorecard can weigh the answers back. For you never sends a push. With the loudness scale on, an
-item's score is multiplied by what the answers say of its chat and its author (0 to 2, 1 knowing nothing), and the
-page sorted again.
+For you never sends a push, and asks nothing of its own. Until 2026-11-25 one card a day was asked about, **Worth
+seeing?**, on the Notification calibration page; that page is now one feed of notifications
+([notifications.md](notifications.md#the-calibration-feed)), and its Sound, Show and Inbox answers are what For you
+learns from. With the loudness scale on, an item's score is multiplied by what the answers say of its chat and its
+author (0 to 2, 1 knowing nothing), and the page sorted again.
 
 ## On the scorecard
 
 How it sorts' scorecard ([scorecard.md](scorecard.md)) charts, day by day, the share of items on screen that you
-opened, for all items and for exploration slots alone (`foryou.clicked`, `foryou.clicked_explore`), and the share of
-asked cards you were glad to see, weighted back (`foryou.worth`).
+opened, for all items and for exploration slots alone (`foryou.clicked`, `foryou.clicked_explore`), and, for the
+days it still asked, the share of asked cards you were glad to see, weighted back (`foryou.worth`).
 `GET /api/foryou/stats` gives the same over any span.

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { ago, fullTime } from '../format.ts';
 import { loadChanges, presenceText, retention } from '../history.ts';
 import { convTitle, identityName, netName } from '../model.ts';
-import { db, go, openProfile, rev } from '../state.ts';
+import { db, go, metaRev, openProfile, rev } from '../state.ts';
 import { valueText } from './About.tsx';
 import { Avatar, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -106,6 +106,7 @@ export function HistoryCard({ path, network, person }: { path: string; network?:
 }
 
 export function Change({ c, network, person }: { c: P.ChangeView; network?: P.Network; person?: boolean }) {
+  metaRev.value; // voice channels' names, and who it is about
   const [open, setOpen] = useState(false);
   const ident = c.target.kind === 'identity' ? db.identities.get(c.target.id) : null;
   const where = ident && !network ? (
@@ -167,6 +168,20 @@ export function Change({ c, network, person }: { c: P.ChangeView; network?: P.Ne
         {when}
       </li>
     );
+
+  if (c.field === 'voice') {
+    // Where they are in voice: the channel joined, or null for none (docs/history.md).
+    const to = typeof c.new === 'string' ? db.conversations.get(c.new) : null;
+    const from = typeof c.old === 'string' ? db.conversations.get(c.old) : null;
+    return (
+      <li class="hist-item">
+        <Icon name="voice" size={14} />
+        {where}
+        <span>{c.new ? <>Joined <b>{to ? convTitle(to) : 'a voice channel'}</b></> : <>Left <b>{from ? convTitle(from) : 'voice'}</b></>}</span>
+        {when}
+      </li>
+    );
+  }
 
   if (c.field === 'presence')
     return (

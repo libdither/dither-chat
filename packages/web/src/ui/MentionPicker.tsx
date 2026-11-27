@@ -59,15 +59,29 @@ export function MentionPicker({
 }: MentionProps & { find: (text: string, caret: number) => MentionTrigger | null; chip: (token: string, label: string) => string }) {
   const [trig, setTrig] = useState<MentionTrigger | null>(null);
   const [sel, setSel] = useState(0);
-  const [rows, setRows] = useState<P.MentionRow[]>([]);
+  const [kept, setRows] = useState<P.MentionRow[]>([]);
   /** Asking: the hub's answer is on its way; partial: it came without the network's part. */
   const [state, setState] = useState<'asking' | 'done' | 'partial'>('asking');
   const dismissed = useRef<number | null>(null);
+  /** The keys or the pointer moved the choice since the query changed. */
+  const moved = useRef(false);
   /** The person whose accounts are shown instead of the list. */
   const [person, setPerson] = useState<P.MentionRow | null>(null);
   const list = useRef<HTMLDivElement>(null);
+  /** The conversation the rows are for: another's are never shown (a Discord member in a Matrix room). */
+  const rowsFor = useRef(convId);
+  const rows = rowsFor.current === convId ? kept : [];
   const shown = useRef<P.MentionRow[]>([]);
   shown.current = rows;
+  /** The row chosen with the keys or the pointer: it stays chosen when the hub's rows come in another order. */
+  const picked = useRef<string | null>(null);
+  picked.current = !person && (sel > 0 || moved.current) ? (rows[sel]?.insert ?? null) : null;
+  const put = (next: P.MentionRow[]) => {
+    const was = picked.current;
+    rowsFor.current = convId;
+    setRows(next);
+    if (was) setSel(Math.max(0, next.findIndex((r) => r.insert === was)));
+  };
 
   // The rows for what is typed: the hub's if it answered this lately, else this device's and those already shown that
   // still match, then the hub's after a pause.
@@ -77,13 +91,13 @@ export function MentionPicker({
     const local = localRows(convId, trig.query);
     const known = knownRows(convId, accountId, trig.query);
     if (known) {
-      setRows(mergeRows(known, local));
+      put(mergeRows(known, local));
       setState(known.partial ? 'partial' : 'done');
       return;
     }
     const still = shown.current.filter((r) => matchTier([r.name, r.handle], q) > 0);
     const have = new Set(local.map((r) => r.insert));
-    setRows([...local, ...still.filter((r) => !have.has(r.insert))]);
+    put([...local, ...still.filter((r) => !have.has(r.insert))]);
     setState('asking');
     let live = true;
     const timer = setTimeout(
@@ -91,7 +105,7 @@ export function MentionPicker({
         hubRows(convId, accountId, trig.query).then(
           (v) => {
             if (!live) return;
-            setRows(mergeRows(v, local));
+            put(mergeRows(v, local));
             setState(v.partial ? 'partial' : 'done');
           },
           () => live && setState('partial'),
@@ -112,7 +126,8 @@ export function MentionPicker({
 
   const insert = (r: P.MentionRow) => {
     const el = ta.current;
-    if (!el || !trig) return;
+    // The box changed under the list (sent, or set by the app): what was typed is not there to replace.
+    if (!el || !trig || el.value.slice(trig.start, trig.end) !== '@' + trig.query) return setTrig(null);
     // A person, an account or a role goes in as a chip: its name in the box, its token in the body (ChipBox.tsx).
     const token = r.insert.trimEnd();
     const text = r.kind === 'everyone' || r.kind === 'here' ? token : chip(token, labelOf(r));
@@ -148,7 +163,8 @@ export function MentionPicker({
     };
     const onKey = (e: KeyboardEvent) => {
       const s = live.current;
-      if (!s.open || e.isComposing || e.target !== el) return;
+      // Not a key of an input method's word: Safari sends the Enter that ends one with isComposing false, but keyCode 229.
+      if (!s.open || e.isComposing || e.keyCode === 229 || e.target !== el) return;
       const n = s.rows.length;
       const stop = () => {
         e.preventDefault();
@@ -156,6 +172,7 @@ export function MentionPicker({
       };
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         stop();
+        moved.current = true;
         setSel((i) => (i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n);
       } else if (e.key === 'Enter' && !e.shiftKey) {
         stop();
@@ -196,8 +213,17 @@ export function MentionPicker({
     };
   }, [ta.current, convId]);
 
+  // The app set the box's text itself (a send empties it, an edit cancelled puts the draft back): no input event says
+  // so, so each time it draws (the composer hands it the text, `text`), the list checks the @ it is open for is still there.
+  useLayoutEffect(() => {
+    const el = ta.current;
+    if (!trig || !el) return;
+    const t = el.selectionStart === el.selectionEnd ? find(el.value, el.selectionStart) : null;
+    if (t?.start !== trig.start || t?.end !== trig.end || t?.query !== trig.query) setTrig(t);
+  });
   useEffect(() => {
     setSel(0);
+    moved.current = false;
     setPerson(null);
   }, [trig?.query, trig?.start]);
   useEffect(() => {
@@ -229,6 +255,8 @@ export function MentionPicker({
         {state === 'partial' && <span class="mp-state">{net} did not answer: people this hub knows</span>}
       </div>
       {shownRows.map((r, i) => {
+        // A phone hides handles, but not where two rows share a name: there the handle tells them apart.
+        const twin = !!r.handle && shownRows.some((o, j) => j !== i && o.name === r.name);
         const note = person ? (lead && !i ? 'the person' : null) : noteOf(r, network);
         const tint = r.kind === 'role' && r.color ? { color: r.color } : undefined;
         const who = r.kind === 'identity' || r.kind === 'person';
@@ -243,7 +271,7 @@ export function MentionPicker({
             role="option"
             aria-selected={i === sel}
             tabIndex={-1}
-            onMouseMove={() => i !== sel && setSel(i)}
+            onMouseMove={() => i !== sel && ((moved.current = true), setSel(i))}
             onClick={() => choose(r)}
           >
             {who ? (
@@ -263,7 +291,7 @@ export function MentionPicker({
             <span class="mp-name" style={tint}>
               {!who ? `@${r.name}` : person && (i || !lead) ? `${r.name} · ${netName(r.network as P.Network)}` : r.name}
             </span>
-            {r.handle && <span class="mp-handle">{r.handle}</span>}
+            {r.handle && <span class={`mp-handle ${twin ? 'twin' : ''}`}>{r.handle}</span>}
             {note && <span class="mp-note">{note}</span>}
             <span class={`mp-ping ${r.pings ? '' : 'off'}`} title={r.pings ? `${net} notifies ${who ? 'them' : 'everyone it names'}` : 'Text only: nobody is notified'}>
               <Icon name={r.pings ? 'bell' : 'bellOff'} size={13} />

@@ -22,14 +22,19 @@ export interface Trigger {
   query: string;
 }
 
-/** True if `pos` sits inside a ``` block or an inline `code` span (as markdown.ts reads them). */
+/**
+ * True if `pos` sits inside a ``` block or an inline `code` span (as markdown.ts reads them), or one being typed. A
+ * lone backtick inside a word (it`s, typed for an apostrophe) opens no span.
+ */
 export function insideCode(text: string, pos: number): boolean {
   const before = text.slice(0, pos);
   const fences = before.split('```');
   if (fences.length % 2 === 0) return true;
   // Inline code is one line, after the last fence.
   const line = fences[fences.length - 1].split('\n').pop() ?? '';
-  return (line.match(/`/g)?.length ?? 0) % 2 === 1;
+  if ((line.match(/`/g)?.length ?? 0) % 2 === 0) return false;
+  const at = line.lastIndexOf('`');
+  return !(/\w/.test(line[at - 1] ?? '') && /\w/.test(line[at + 1] ?? ''));
 }
 
 /** The `:query` the caret is at the end of, if it should open the list. */

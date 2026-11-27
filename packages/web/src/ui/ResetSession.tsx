@@ -5,10 +5,11 @@
 import type * as P from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { netName } from '../model.ts';
-import { api, db, toast } from '../state.ts';
+import { api, db, metaRev, toast } from '../state.ts';
 import { Card } from './ProfileShell.tsx';
 
 export function ResetSessionCard({ conv }: { conv: P.ConversationView }) {
+  metaRev.value; // its accounts' capabilities and whether they are online
   const [busy, setBusy] = useState(false);
   if (conv.shape !== 'direct') return null;
   const account = conv.vantages.map((v) => db.accounts.get(v.accountId)).find((a) => a?.capabilities.includes('resetSession'));

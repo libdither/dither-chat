@@ -1,7 +1,7 @@
 import { whole } from './slices.ts';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
@@ -29,6 +29,9 @@ import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
 
+/** A pre-deploy copy this young was made for this start (the deployer copies, then restarts the hub). */
+const PRE_DEPLOY_FRESH_MS = 15 * 60_000;
+
 type Row = Record<string, any>;
 
 /** The colours accounts take in turn: a new account gets the first no other account has. */
@@ -54,6 +57,12 @@ export interface AccountRow {
 }
 
 type MediaSigner = (raw: string | null | undefined, accountId: string | null | undefined) => string | null;
+
+/** How a search is asked (Store.search): `typing`, as you type, skips the slow fallbacks; `people: false`, no people. */
+export interface SearchOptions {
+  typing?: boolean;
+  people?: boolean;
+}
 
 /** Objects touched since the last flush; the server turns these into ClientEvents. */
 class Dirty {
@@ -238,7 +247,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 7;
+const MIGRATIONS = 8;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -311,9 +320,26 @@ export class Store {
   /** How long each step of opening the database took (startup.ts). */
   readonly opening: [string, number][];
 
-  constructor(path: string, readonly media: MediaSigner) {
+  /**
+   * A reader (`reader: true`): a read-only connection for search's own thread (search-worker.ts), opened on a database
+   * the hub has opened and migrated already. It writes nothing, so it takes none of the steps below; only what search
+   * reads works on it, and it asks for what it holds in memory again before each search (beforeRead).
+   */
+  readonly reader: boolean;
+
+  constructor(path: string, readonly media: MediaSigner, opts: { reader?: boolean } = {}) {
     const timer = stepTimer();
     this.opening = timer.out;
+    this.reader = !!opts.reader;
+    if (this.reader) {
+      this.db = new Database(path, { readonly: true, strict: true });
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_MS}`);
+      // Never used on a reader: both write as they start.
+      this.journal = null!;
+      this.presenceNow = null!;
+      this.beforeRead();
+      return;
+    }
     this.db = new Database(path, { create: true, strict: true });
     // Another process opening this database (a backup's VACUUM INTO, the sqlite3 shell) can hold a lock for a moment,
     // most often while it opens or closes. Without a wait every write in that moment fails (SQLITE_BUSY): 26 on the
@@ -352,6 +378,7 @@ export class Store {
       this.addColumns('notification', { alert: 'INTEGER', title: 'TEXT', body: 'TEXT', look: 'TEXT', computer_in_use: 'INTEGER' });
       this.addColumns('notification_event', { seen: 'TEXT' });
       this.addColumns('checkin', { expired_at: 'INTEGER' });
+      this.addColumns('attn_answer', { parts: 'TEXT', chance: 'REAL' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
@@ -375,6 +402,7 @@ export class Store {
       this.nicknamesToAccounts();
       this.facesOnce();
       this.forgetGoneSeenVia();
+      this.bandsWithoutNextLook();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -387,9 +415,7 @@ export class Store {
       this.db.exec(`INSERT INTO message_fts (message_fts) VALUES ('rebuild'); INSERT INTO meta (key, value) VALUES ('fts_backfilled', '1');`);
       timer.step('search backfill');
     }
-    for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
-      this.selfIdentities.add(r.self_identity);
-    }
+    this.refreshSelf();
     // A database with no messages yet gets every one through the triggers: nothing to fill in.
     if (!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get() && !this.db.query('SELECT 1 FROM message LIMIT 1').get())
       this.db.exec(`INSERT INTO meta (key, value) VALUES ('search_time_ready', '1')`);
@@ -531,6 +557,27 @@ export class Store {
   }
 
   /**
+   * The next look went (2026-11, docs/notifications.md "One scale"): its band, 30 to 55, is the bottom of Show, so every
+   * stored "next" says "show" (the loudness numbers themselves stay as they were), what was held for it is let go (it
+   * is in the inbox already), and its settings (when the next look came, its set times) are dropped. Once.
+   */
+  private bandsWithoutNextLook() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'bands_without_next'`).get()) return;
+    this.db.exec(`UPDATE triage SET loud_view = json_set(loud_view, '$.band', 'show') WHERE loud IS NOT NULL AND loud >= 30 AND loud < 55 AND json_extract(loud_view, '$.band') = 'next'`);
+    for (const col of ['live_band', 'shadow_band']) this.db.exec(`UPDATE checkin SET ${col} = 'show' WHERE ${col} = 'next'`);
+    this.db.exec(`UPDATE attn_answer SET band = 'show' WHERE band = 'next'`);
+    this.db.exec('DROP TABLE IF EXISTS next_look');
+    const prefs = this.db.query(`SELECT value FROM meta WHERE key = 'attention_prefs'`).get() as Row | null;
+    if (prefs?.value) {
+      const p = json<Record<string, unknown>>(prefs.value, {});
+      delete p.nextLook;
+      delete p.times;
+      this.db.query(`UPDATE meta SET value = ? WHERE key = 'attention_prefs'`).run(JSON.stringify(p));
+    }
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('bands_without_next', '1')`);
+  }
+
+  /**
    * People seen only through an account since removed kept it as theirs (deleteAccount did not clear it before), so
    * their pictures were asked of an account that is not there, and the account added again never took its place.
    */
@@ -540,17 +587,27 @@ export class Store {
     this.db.exec(`INSERT INTO meta (key, value) VALUES ('seen_via_gone', '1')`);
   }
 
-  /** backups/pre-migrate-<time>.sqlite next to the database, the newest five kept. Not for an in-memory database. */
+  /**
+   * backups/pre-migrate-<time>.sqlite next to the database, the newest two kept (DITHER_PRE_MIGRATE_KEEP). Not for an
+   * in-memory database, and not when the deployer copied it to backups/pre-deploy.sqlite moments ago, before this
+   * restart (PRE_DEPLOY_FRESH_MS): that copy is the same database, and each copy is gigabytes.
+   */
   private snapshotBeforeMigrating(path: string) {
     if (path === ':memory:' || path === '') return;
     const dir = join(dirname(path), 'backups');
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const preDeploy = join(dir, 'pre-deploy.sqlite');
+    if (existsSync(preDeploy) && Date.now() - statSync(preDeploy).mtimeMs < PRE_DEPLOY_FRESH_MS) {
+      console.log(`schema changed: ${preDeploy} was copied just before this start, so no second copy before migrating`);
+      return;
+    }
     const file = join(dir, `pre-migrate-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`);
     this.db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
     chmodSync(file, 0o600);
     console.log(`schema changed: copied the database to ${file} before migrating`);
     const old = readdirSync(dir).filter((f) => /^pre-migrate-.*\.sqlite$/.test(f)).sort();
-    for (const f of old.slice(0, Math.max(0, old.length - 5))) rmSync(join(dir, f), { force: true });
+    const keep = Number(process.env.DITHER_PRE_MIGRATE_KEEP) || 2;
+    for (const f of old.slice(0, Math.max(0, old.length - keep))) rmSync(join(dir, f), { force: true });
   }
 
   // ------------------------------------------------------------ triage queue and retention
@@ -800,10 +857,24 @@ export class Store {
     this.dirty.removed.push({ t: 'account.removed', id });
   }
 
+  /**
+   * A reader's memory of the database, read again: the hub's thread may have changed it since (your accounts, what is
+   * kept, the time index filled in). The people list follows from what peopleChanged hands it.
+   */
+  beforeRead() {
+    this.refreshSelf();
+    this.retentionCache = null;
+    if (!this.searchTimeReady) this.searchTimeReady = !!this.db.query(`SELECT 1 FROM meta WHERE key = 'search_time_ready'`).get();
+  }
+
   private refreshSelf() {
     this.selfIdentities.clear();
     for (const r of this.db.query('SELECT self_identity FROM account WHERE self_identity IS NOT NULL').all() as Row[]) {
       this.selfIdentities.add(r.self_identity);
+    }
+    // Another id of yours on the same network (IdentityFact.sameAs: your Partiful chat id) is you too.
+    for (const r of this.db.query('SELECT s.identity_id FROM identity_same s JOIN account a ON a.self_identity = s.same_as').all() as Row[]) {
+      this.selfIdentities.add(r.identity_id);
     }
   }
 
@@ -1170,7 +1241,48 @@ export class Store {
     } else if (changed && after.person_id) {
       this.refreshFace(after.person_id);
     }
+    if (typeof f.sameAs === 'string' && f.sameAs && f.sameAs !== f.nativeId && !f.isSelf) this.sameAccount(acc, id, f.sameAs);
     return id;
+  }
+
+  /**
+   * The network said this identity is the same account as another id of its own (IdentityFact.sameAs): the first time,
+   * the two go with one person (the other's, kept). Said again, nothing moves, so a split you made since stays.
+   */
+  private sameAccount(acc: AccountRow, id: string, nativeId: string) {
+    const other = hubId('idn', acc.network, nativeId);
+    if (this.db.query('SELECT 1 FROM identity_same WHERE identity_id = ? AND same_as = ?').get(id, other)) return;
+    this.db
+      .query('INSERT INTO identity (id, network, native_id, seen_via, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (network, native_id) DO NOTHING')
+      .run(other, acc.network, nativeId, acc.id, Date.now());
+    this.db.query('INSERT INTO identity_same (identity_id, same_as, at) VALUES (?, ?, ?) ON CONFLICT (identity_id) DO UPDATE SET same_as = excluded.same_as, at = excluded.at').run(id, other, Date.now());
+    const of = (i: string) => (this.db.query('SELECT person_id FROM identity WHERE id = ?').get(i) as Row | null)?.person_id as string | null;
+    if (this.isSelf(id)) return;
+    if (this.isSelf(other)) {
+      // Your own other id: you, with your own person, and your messages from it are yours.
+      this.selfIdentities.add(id);
+      this.presenceNow.forget(id);
+      this.dirty.identities.add(id);
+      const pid = of(other);
+      const was = of(id);
+      // A person it was given as a stranger (a direct chat's other side) goes into yours.
+      if (pid && was && was !== pid) this.mergePersons(pid, was);
+      else if (pid && !was) {
+        this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(pid, id);
+        this.dirty.persons.add(pid);
+      }
+      return;
+    }
+    const into = of(other) ?? this.ensurePerson(other);
+    const from = of(id);
+    if (from === into) return;
+    if (from) return this.mergePersons(into, from);
+    this.db.query('UPDATE identity SET person_id = ? WHERE id = ?').run(into, id);
+    this.refreshFace(into);
+    this.dirty.persons.add(into);
+    this.dirty.identities.add(id);
+    this.touchDirectsOf(into);
+    this.personsChanged?.([into]);
   }
 
   /** Your nickname or note went back to the network (server.ts pushes it through an account with 'contactNotes'). */
@@ -2284,6 +2396,12 @@ export class Store {
     return r.adversarial && r.presence && r.changes;
   }
 
+  /** Whether statuses over time are logged, in the change log. */
+  logsStatuses(): boolean {
+    const r = this.retention();
+    return r.adversarial && r.statuses && r.changes;
+  }
+
   /**
    * Someone's presence as heard now, logged only while logsPresence(); otherwise the hub keeps nothing of it. The
    * newest logged row is how they are now, so a change is anything else, and the same heard from a second account
@@ -2444,8 +2562,7 @@ export class Store {
     const own = (this.db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]).map((r) => r.id as string);
     const selves = [...new Set([...this.selfIdentities, ...own])];
     const self = !!person?.is_self || ids.some((id) => selves.includes(id));
-    const r = this.retention();
-    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: r.adversarial && r.statuses && r.changes });
+    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: this.logsStatuses() });
   }
 
   /** The top-level community a conversation is in (through sections, and a thread's channel), or null. */
@@ -2537,8 +2654,8 @@ export class Store {
       ...targets.map(() => '(target_kind = ? AND target_id = ?)'),
       ...(rolesOf.length ? [`(target_kind IN ('space', 'conversation') AND field = 'role' AND json_extract(coalesce(new, old), '$.identityId') IN (${rolesOf.map(() => '?').join(', ')}))`] : []),
     ].join(' OR ');
-    // Statuses and presence over time only with adversarial features shown.
-    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence'))`;
+    // Statuses, presence and voice over time only with adversarial features shown.
+    const watched = this.retention().adversarial ? '' : ` AND NOT (target_kind = 'identity' AND field IN ('status', 'presence', 'voice'))`;
     const only = pick.fields?.length ? ` AND field IN (${pick.fields.map(() => '?').join(', ')})` : '';
     const not = pick.except?.length ? ` AND field NOT IN (${pick.except.map(() => '?').join(', ')})` : '';
     const rows = this.db
@@ -3680,7 +3797,7 @@ export class Store {
    */
   private peopleList(): Map<string, { r: Row; hay: string }> {
     if (!this.people) whole(this.loadPeopleSteps());
-    const dirty = (this.db.query('SELECT id FROM people_dirty').all() as Row[]).map((r) => r.id as string);
+    const dirty = this.takePeopleDirty();
     if (dirty.length) {
       const one = this.db.query(`${Store.PEOPLE_SQL} WHERE i.id = ?`);
       for (const id of dirty) {
@@ -3688,15 +3805,54 @@ export class Store {
         if (r) this.people!.set(id, this.peopleEntry(r));
         else this.people!.delete(id);
       }
-      this.db.query('DELETE FROM people_dirty WHERE id IN (SELECT value FROM json_each(?))').run(JSON.stringify(dirty));
     }
     return this.people!;
   }
 
-  /** People search's list, 2000 identities to a slice. Run once after start (main.ts), so no search waits for it. */
+  /**
+   * Identities written since people search last looked. On the hub, people_dirty's rows, taken out; on a reader, which
+   * cannot write, what the hub handed it (peopleChanged).
+   */
+  private takePeopleDirty(): string[] {
+    if (this.reader) {
+      const ids = [...this.peopleHanded];
+      this.peopleHanded.clear();
+      return ids;
+    }
+    const dirty = (this.db.query('SELECT id FROM people_dirty').all() as Row[]).map((r) => r.id as string);
+    if (!dirty.length) return dirty;
+    this.db.query('DELETE FROM people_dirty WHERE id IN (SELECT value FROM json_each(?))').run(JSON.stringify(dirty));
+    if (this.peopleForReader) for (const id of dirty) this.peopleForReader.add(id);
+    return dirty;
+  }
+  /** Identities people search's thread has yet to hear of (peopleChanges); null until it first asks. */
+  private peopleForReader: Set<string> | null = null;
+  /** On a reader: identities the hub said were written, for the next search to read again. */
+  private peopleHanded = new Set<string>();
+
+  /**
+   * For search's thread (search-thread.ts): every identity written since it last asked, so its own people list reads
+   * them again. Taken out of people_dirty here, where the hub writes, so no write falls between a read and a delete.
+   */
+  peopleChanges(): string[] {
+    this.peopleForReader ??= new Set();
+    if (this.people) this.peopleList();
+    else this.takePeopleDirty();
+    const out = [...this.peopleForReader];
+    this.peopleForReader.clear();
+    return out;
+  }
+
+  /** On a reader: identities the hub wrote since (peopleChanges there). */
+  peopleChanged(ids: string[]) {
+    for (const id of ids) this.peopleHanded.add(id);
+  }
+
+  /** People search's list, 2000 identities to a slice. Run as search's thread starts (search-thread.ts), so no search waits for it. */
   *loadPeopleSteps(): Generator<number, void> {
     if (this.people) return;
-    this.db.exec('DELETE FROM people_dirty');
+    // Everything is read fresh: what was noted before is in the list already.
+    this.takePeopleDirty();
     const list = new Map<string, { r: Row; hay: string }>();
     const page = this.db.query(`${Store.PEOPLE_SQL} WHERE i.rowid > ? ORDER BY i.rowid LIMIT 2000`.replace('SELECT i.*', 'SELECT i.rowid AS rid, i.*'));
     for (let after = 0; ; ) {
@@ -3792,18 +3948,20 @@ export class Store {
 
   /**
    * Messages matching what was typed (docs/search.md). Nothing found as typed: inside words, then with misspelt words
-   * corrected. `context`: that many messages before and after each hit.
+   * corrected. `context`: that many messages before and after each hit. `typing`: asked as you type, so neither
+   * fallback (on a big hub they read every message, seconds for a word nothing has); Enter asks without it.
+   * `people: false` leaves out the people the words find.
    */
-  search(input: string, limit = 50, cursor: string | null = null, context = 0): P.SearchPage {
-    let page = this.searchOnce(input, limit, cursor);
-    const fixed = !page.hits.length && !cursor ? this.spellFix(input) : null;
-    const alt = fixed ? this.searchOnce(fixed, limit, null) : null;
+  search(input: string, limit = 50, cursor: string | null = null, context = 0, opts: SearchOptions = {}): P.SearchPage {
+    let page = this.searchOnce(input, limit, cursor, opts);
+    const fixed = !page.hits.length && !cursor && !opts.typing ? this.spellFix(input) : null;
+    const alt = fixed ? this.searchOnce(fixed, limit, null, opts) : null;
     if (alt?.hits.length) page = { ...alt, corrected: fixed!, people: page.people, identities: [...alt.identities, ...page.identities] };
     if (context > 0) this.surround(page, Math.min(context, 3));
     return page;
   }
 
-  private searchOnce(input: string, limit: number, cursor: string | null): P.SearchPage {
+  private searchOnce(input: string, limit: number, cursor: string | null, opts: SearchOptions): P.SearchPage {
     const q = parseSearch(input);
     const is = new Set(q.is);
     // Kept deleted and disappeared messages only when asked for, with adversarial features shown, and not when they are set to stay out of sight.
@@ -3854,6 +4012,8 @@ export class Store {
 
     // Tokens miss the middle of a word, and unspaced CJK text is one long token, so a hit in FTS is no proof there are no others.
     let substring = !!fts && (!!cursor?.endsWith(':s') || texts.some((t) => CJK.test(t)));
+    // Nothing in the index: inside words instead, but not as you type.
+    const fallBack = (n: number) => !n && !cursor && !opts.typing;
     const without = q.not.map(() => `m.body NOT LIKE ? ESCAPE '\\'`);
     const withoutArgs = q.not.map((t) => `%${likeEscape(t)}%`);
 
@@ -3867,13 +4027,13 @@ export class Store {
            WHERE search_time MATCH ? ${at !== null ? `AND s.rowid ${q.oldest ? '>' : '<'} ?` : ''} AND ${where.join(' AND ')} ORDER BY s.rowid ${dir} LIMIT ?`,
         )
         .all(fts, ...(at !== null ? [at] : []), ...args, take) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, texts) }));
-      substring = !rows.length && !cursor;
+      substring = fallBack(rows.length);
     } else if (fts && q.relevance && !substring) {
       // Best match: the newest matches ranked by how well, how lately and how close (rankMatches).
       rows = this.rankMatches(this.matchPool(fts, where, args, 2000), q)
         .slice(offset, offset + take)
         .map(({ r, why }) => ({ ...r, why, snip: markSnippet(r.body, texts) }));
-      substring = !rows.length && !cursor;
+      substring = fallBack(rows.length);
     } else if (fts && !substring) {
       rows = this.db
         .query(
@@ -3882,7 +4042,7 @@ export class Store {
         )
         .all(fts, ...args, take, offset) as Row[];
       // Better slow than empty.
-      substring = !rows.length && !cursor;
+      substring = fallBack(rows.length);
     } else if (!fts && (q.not.length || filtered)) {
       rows = (this.db.query(`SELECT m.*, m.rowid AS rid FROM message m WHERE ${[...where, ...without].join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...args, ...withoutArgs, take, offset) as Row[]).map((r) => ({ ...r, snip: markSnippet(r.body, []) }));
     }
@@ -3901,7 +4061,7 @@ export class Store {
     const snips = new Map(page.map((r) => [r.id, r.snip as string]));
     const last = page[page.length - 1];
     const needle = [...q.phrases, ...q.terms].join(' ').trim();
-    const people = needle.length >= 2 ? this.findPeople(needle) : [];
+    const people = needle.length >= 2 && opts.people !== false ? this.findPeople(needle) : [];
     const whys = new Map(page.filter((r) => r.why).map((r) => [r.id, r.why as string]));
     // With no sort and more than a screen's worth: the best few above the newest.
     let top: P.SearchHit[] = [];
@@ -4127,6 +4287,9 @@ export class Store {
   metaValue = <T>(key: string) => this.metaJson<T>(key);
   setMetaValue = (key: string, value: unknown) => this.setMetaJson(key, value);
   quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
+  /** Zones set by hand for people (theirclock.ts, docs/profile.md "Their time"): by person id, else identity id. */
+  zonePins = () => this.metaJson<Record<string, string>>('zone_pins') ?? {};
+  setZonePins = (m: Record<string, string>) => this.setMetaJson('zone_pins', m);
   privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
   setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);

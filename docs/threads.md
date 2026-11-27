@@ -88,9 +88,10 @@ threads, and Resolved, not Archived (`model.ts` `threadWords`).
 
 - **The sidebar** lists under each channel the same rows as for any network's channel with threads (docs/servers.md,
   "Threads under a channel"): the open topic, the unread ones (a mention first; a muted one only for a mention; at
-  most eight others), the three latest not shown yet, then "N more topics", which opens the channel's topic cards. A
-  chevron folds a channel's topics away. A channel's count is its topics' summed (unread and mentions): a Zulip
-  channel takes no messages of its own, so its own count is always 0.
+  most eight others), the three latest not shown yet, then "N more topics", which opens the channel on its topic
+  cards for that visit (a topic opened from them comes back to them; the next visit opens on the stream again;
+  `web/src/stream.ts` `viewOnce`). A chevron folds a channel's topics away. A channel's count is its topics' summed
+  (unread and mentions): a Zulip channel takes no messages of its own, so its own count is always 0.
 - **The inbox** has one row per channel for its topics, not one per topic ([inbox.md](inbox.md), "One row per
   channel"): a topic that mentions you gives its channel's row the red @ count and comes first when the row opens on
   its unread topics. The same holds for a Discord channel's threads and a forum's posts, and a Matrix room's threads.

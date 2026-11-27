@@ -376,6 +376,108 @@ code {
   align-items: center;
   gap: 8px;
 }
+/* The inbox's head: its title, what the app is doing with the hub (ui/InboxStatus.tsx), then its buttons. */
+.inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-status-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  container-type: inline-size;
+  /* A little room after the title, so the two never read as one. */
+  padding-left: 6px;
+}
+.inbox-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px 2px 2px;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  animation: inbox-status-in 160ms ease-out;
+}
+button.inbox-status {
+  cursor: pointer;
+}
+button.inbox-status:hover {
+  background: var(--hover);
+}
+.inbox-status-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+}
+.inbox-status .status-orb {
+  color: var(--accent);
+}
+.inbox-status.done .inbox-status-icon {
+  color: var(--accent);
+}
+.inbox-status-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inbox-status-title {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-status.amber .inbox-status-title {
+  color: var(--warn);
+}
+.inbox-status-more {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+/* Short of room (a phone's list beside a page), since when goes, and the rail's orb still tells it. */
+@container (max-width: 165px) {
+  .inbox-status-aside {
+    display: none;
+  }
+}
+@keyframes inbox-status-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Out of reach: the list stays as it was, a shade quieter (ui/InboxStatus.tsx). */
+.inbox-side .side-scroll {
+  transition:
+    opacity 400ms ease,
+    filter 400ms ease;
+}
+.inbox-side.offline .side-scroll {
+  opacity: 0.9;
+  filter: saturate(0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-status {
+    animation: none;
+  }
+  .inbox-side .side-scroll {
+    transition: none;
+  }
+}
 .side-sub {
   display: block;
   color: var(--text-faint);
@@ -555,6 +657,29 @@ code {
   flex: 1;
   min-width: 0;
   margin: 0;
+  container-type: inline-size;
+}
+/* A narrow box ends its placeholder in "…" rather than cutting it, and gives the key hint's room to the words. */
+.inbox-search .search input {
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.search-hint {
+  flex: none;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  background: var(--bg-center);
+  pointer-events: none;
+}
+@container (max-width: 200px) {
+  .search-hint {
+    display: none;
+  }
 }
 /* Three classes: over .icon-btn.small, which comes later. */
 .inbox-search .icon-btn.inbox-filter-btn {
@@ -798,6 +923,26 @@ code {
   padding: 16px 10px;
   color: var(--text-faint);
   font-size: 13px;
+}
+/* The inbox narrowed by its box (docs/search.md "In the inbox"); what it finds beyond its rows is in ui/search.css. */
+.inbox-found-none {
+  padding-bottom: 4px;
+}
+/* Also drawn before search's chunk (and ui/search.css) is here: SearchLazy.tsx's InboxFoundLazy. */
+.inbox-found-note {
+  margin: 2px 12px 6px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.inbox-found-outside {
+  display: block;
+  margin: 4px 10px 2px;
+  font-size: 12.5px;
+}
+.search-box .search-clear {
+  flex: none;
+  margin-right: -4px;
+  color: var(--text-faint);
 }
 .cm-why {
   display: flex;
@@ -1743,6 +1888,26 @@ code {
 .msg-time {
   font-size: 11px;
   color: var(--text-faint);
+}
+/* The author's own time, where it is not yours (ui/TheirTime.tsx): "~" before a guess, a moon at night for them. */
+.msg-their-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.msg-their-time::before {
+  content: '·';
+  margin-right: 3px;
+}
+.msg-their-time:hover,
+.msg-their-time:focus-visible {
+  color: var(--text-dim);
+  background: var(--bg-hover);
 }
 .msg-edited {
   font-size: 10px;
@@ -11036,6 +11201,18 @@ html[data-theme='light'] .acc-dot {
   font-weight: 700;
   color: var(--text);
 }
+/* Your message waiting on their answer: when it is likely to come (Typing.tsx AnswerNote). Pointing shows their day. */
+.answer-note {
+  pointer-events: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.answer-note:hover {
+  color: var(--text-dim);
+}
 .typing-dots {
   display: inline-flex;
   align-items: center;
@@ -11099,6 +11276,57 @@ html[data-theme='light'] .acc-dot {
     animation: none;
     opacity: 0.7;
   }
+}
+/* Opening a chat (ui/OpenBar.tsx): a 2 px line along the foot of this row, right over the message box. Nothing for the
+   first 180 ms, which is most opens; the fill moves by Web Animations, on the compositor. */
+.open-bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  opacity: 0;
+  animation: open-bar-in 160ms ease-out 180ms forwards;
+}
+.open-bar.done {
+  opacity: 1;
+  animation: open-bar-out 220ms ease-in 140ms forwards;
+}
+.open-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+@keyframes open-bar-in {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes open-bar-out {
+  to {
+    opacity: 0;
+  }
+}
+/* A slow open, in the row's own words: which step, the hub's or the network's (OpenBar.tsx). */
+.open-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.open-note.slow {
+  color: var(--warn);
+}
+.app.phone .open-bar {
+  left: 10px;
+  right: 10px;
 }
 /* ================================================================== end typing */
 
@@ -12389,6 +12617,12 @@ img.pf-status-emoji {
   font-size: 12.5px;
   color: var(--text-faint);
 }
+.pf-voice-h {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
 .pf-stale {
   margin: 0;
   display: flex;
@@ -12484,56 +12718,6 @@ a.pf-link:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pf-spaces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
-}
-.pf-space {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  background: var(--bg-center);
-  border: 1px solid var(--border-soft);
-  text-align: left;
-  min-width: 0;
-}
-.pf-space:hover {
-  border-color: var(--border);
-  background: var(--bg-hover);
-}
-.pf-space-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.pf-space-text b {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pf-space-text small {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Seen and estimated message counts: two lines rather than cut off. */
-.pf-space-text small.pf-msgcount {
-  white-space: normal;
-  line-height: 1.3;
-}
-.pf-roles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
 .pf-role {
   --role: var(--text-faint);
   display: inline-flex;
@@ -12597,7 +12781,7 @@ a.pf-link:hover {
   align-self: flex-start;
   margin-top: 2px;
 }
-/* The Mail card (mail/people.ts): a thread you have read is not bold. */
+/* A mail thread in Between you (mail/people.ts): its subject bold only while unread. */
 .pf-mail-row:not(.unread) .pf-row-text b {
   font-weight: 500;
 }
@@ -12637,12 +12821,6 @@ a.pf-link:hover {
 }
 .pf-person:hover {
   background: var(--bg-hover);
-}
-.pf-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
 }
 /* A person's several accounts (Profile.tsx AccountRow): a row each, its picture, name, handle, and Main or Picture
    when it speaks for them; Edit opens its menu's choices as buttons under it. */
@@ -12811,20 +12989,96 @@ a.pf-link:hover {
 
 /* ------------------------------------------------------------------ message history (docs/history.md) */
 
-.msg-gone {
-  margin-top: 0;
+/* A kept deleted or disappeared message: one short line, well below the faintest text, that the eye passes over. Its
+   name, its words cut at the edge, and how long it stayed and when it went at the end. A click opens it in place. */
+.msg.msg-gone {
+  --gone: color-mix(in oklab, var(--text) 34%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--text) 22%, var(--bg-center));
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 16px 2px 0;
+  font-size: 12.5px;
+  color: var(--gone);
+  cursor: pointer;
+  min-width: 0;
 }
-/* A kept deleted or disappeared message: in full, with how and when it went in a quiet line under it. */
+/* A mention of you: the whole line in a faint amber, and a faint amber ground. */
+.msg.msg-gone.to-you {
+  --gone: color-mix(in oklab, var(--mention-text) 45%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--mention-text) 30%, var(--bg-center));
+  background: color-mix(in oklab, var(--mention-border) 6%, transparent);
+}
+.msg-gone-face {
+  flex: none;
+  align-self: center;
+  width: 56px;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 4px;
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+.msg-gone-who {
+  flex: none;
+  font-weight: 500;
+}
+.msg-gone-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.msg-gone:not(.open) .msg-gone-text {
+  pointer-events: none;
+}
+/* Folded, the words run on one line: what would be a block of its own flows inline. */
+.msg-gone:not(.open) .msg-gone-text :is(.msg-body, .msg-body *) {
+  display: inline;
+  white-space: nowrap;
+}
+.msg-gone .msg-gone-text .msg-body,
+.msg-gone .msg-gone-text .msg-body :is(a, code, .mention) {
+  color: inherit;
+  background: none;
+  font-size: inherit;
+}
+.msg-gone .msg-gone-text .mention {
+  box-shadow: inset 0 0 0 1px var(--gone-2);
+}
+.msg-gone .msg-gone-text :is(img.emoji, .jumbo img) {
+  height: 1.2em;
+  width: auto;
+  opacity: 0.5;
+}
+.msg-gone.open {
+  align-items: flex-start;
+}
+.msg-gone.open .msg-gone-face {
+  align-self: flex-start;
+}
+.msg-gone.open .msg-gone-text {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+.msg-gone.open .atts {
+  opacity: 0.5;
+}
 .msg-gone-mark {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 3px;
   font-size: 11px;
-  color: var(--text-faint);
+  white-space: nowrap;
+  color: var(--gone-2);
 }
-.msg-gone-when {
-  opacity: 0.8;
+.msg-gone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 button.msg-edited.link {
   font-size: 10px;
@@ -13332,6 +13586,31 @@ button.msg-edited.link:hover {
 .boot-status {
   color: var(--text-dim);
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+/* The orb fills from the bottom as the inbox comes (Loader.tsx bootFill): a dim orb, and a lit one shown through a
+   window that slides up while the orb in it slides down, both transforms, so the compositor plays them. */
+.boot-orb {
+  position: relative;
+  display: block;
+  width: 88px;
+  height: 88px;
+}
+.boot-orb-dim {
+  opacity: 0.32;
+}
+.boot-fill,
+.boot-fill-in {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--fill-ms, 250ms) cubic-bezier(0.25, 0.6, 0.4, 1);
+}
+.boot-fill {
+  overflow: hidden;
+  transform: translateY(calc((1 - var(--fill, 0)) * 100%));
+}
+.boot-fill-in {
+  transform: translateY(calc((var(--fill, 0) - 1) * 100%));
 }
 .boot-slow {
   color: var(--text-faint);
@@ -19102,4 +19381,180 @@ button.pair-last:hover {
 /* The inbox row's loudness edge: how loud its latest message was, as a thin bar on its left. */
 .conv-row[data-loud] {
   box-shadow: inset 3px 0 0 color-mix(in oklab, var(--accent) var(--loud-mix), transparent);
+}
+
+/* The profile's tighter cards and merged parts (Profile.tsx): the glance, Between you, Accounts with your standing under
+   each, In common. */
+.pf-cols .pf-card {
+  padding: 10px 12px;
+  gap: 7px;
+}
+.pf-main,
+.pf-side,
+.pf-lead {
+  gap: 10px;
+}
+.pf-lead {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* One column: each side's lead (the glance, About, Between you, Accounts, In common) before the rest. */
+@media (max-width: 900px) {
+  .pf-cols {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .pf-main,
+  .pf-side {
+    display: contents;
+  }
+  .pf-lead {
+    order: -1;
+  }
+}
+.pf-cols {
+  padding-bottom: 24px;
+}
+.pf-sub-h {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pf-people-sum {
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pf-people-sum b {
+  color: var(--text);
+}
+.pf-tie .pf-row-text small {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pf-meter {
+  width: 42px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  flex: none;
+  overflow: hidden;
+}
+.pf-meter i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.pf-more {
+  align-self: flex-start;
+  font-size: 12px;
+}
+.pf-ties {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf-between-foot {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.pf-between-foot:empty {
+  display: none;
+}
+.pf-between {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf-between .pf-msg-body b {
+  font-weight: 600;
+}
+.pf-glance {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.pf-glance b {
+  color: var(--text);
+  font-weight: 600;
+}
+.pf-acct-item .pf-acct {
+  padding: 4px 6px;
+  align-items: center;
+}
+/* An account named as the person: its handle leads, on one line with its buttons. */
+.pf-acct-item[data-same] .pf-acct-name {
+  display: none;
+}
+.pf-acct-item[data-same] .pf-acct-text {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 8px;
+}
+.pf-acct-item[data-same] .pf-acct-handle {
+  order: -1;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-item[data-same] .pf-acct-top {
+  flex: none;
+}
+.pf-acct-item[data-same] .pf-acct-edit {
+  flex-basis: 100%;
+}
+/* How yours stand with it, a line each under it, its button small. */
+.pf-acct-item .pf-conn-list {
+  margin: 0;
+  padding: 0;
+}
+.pf-acct-item .pf-conn-title,
+.pf-acct-item .pf-link-row > :first-child {
+  display: none;
+}
+.pf-acct-item .pf-links-list {
+  margin: -2px 6px 6px 52px;
+}
+.pf-acct-item .pf-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.pf-acct-item .pf-link-what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-item .pf-link-what b {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-text, var(--accent));
+}
+.pf-acct-item .pf-link-row .btn {
+  padding: 1px 6px;
+  font-size: 11px;
+  min-height: 0;
+  color: var(--text-faint);
 }

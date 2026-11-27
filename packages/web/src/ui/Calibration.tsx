@@ -1,8 +1,7 @@
 /**
- * Notification calibration (docs/notifications.md, "Asking, without nagging"): the inbox's row, here, and the page
+ * Notification calibration (docs/notifications.md, "The calibration feed"): the inbox's row, here, and the page
  * (CalibrationPane.tsx), a chunk of its own loaded the first time it opens. The row is quiet: a count, no sound, no
- * push. Asking the hub how many wait is also a look (the next look's bundle is let go): at start, and each time the
- * page comes back into view.
+ * push. It asks the hub how many cards wait at start, and each time the page comes back into view.
  */
 import type { FunctionComponent } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
@@ -12,7 +11,7 @@ import { Empty } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
 
-/** The inbox's row: shown while questions wait. */
+/** The inbox's row: shown while cards wait. */
 export function CalibrationRow() {
   useEffect(() => {
     void loadCheckinCount();
@@ -23,7 +22,7 @@ export function CalibrationRow() {
   const n = checkinCount.value;
   if (!n) return null;
   return (
-    <button class="row requests-row calibration-row" data-track="calibration row" onClick={() => go({ view: 'calibration' })} title="Questions about single notifications, for when you get to them">
+    <button class="row requests-row calibration-row" data-track="calibration row" onClick={() => go({ view: 'calibration' })} title="Notifications worth asking about, for when you get to them">
       <span class="row-avatar">
         <span class="requests-icon">
           <Icon name="bell" size={18} />
@@ -36,7 +35,7 @@ export function CalibrationRow() {
           </span>
         </span>
         <span class="row-bottom">
-          <span class="row-preview">{n === 1 ? 'A question about a notification' : `${n} questions about notifications`}, whenever you like</span>
+          <span class="row-preview">{n === 1 ? 'A notification to answer' : `${n} notifications to answer`}, whenever you like</span>
         </span>
       </span>
     </button>

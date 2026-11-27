@@ -17,6 +17,8 @@ export interface Timeline {
   messages: P.MessageView[];
   hasMore: boolean;
   loading: boolean;
+  /** The load under way is of older messages, above what is shown; otherwise it is the open, which the bar over the message box shows (waits.ts). */
+  older?: boolean;
   /** person timelines: the direct conversations merged into it */
   conversationIds?: string[];
   /** Jumped to an old message: this window does not reach the latest ones. */

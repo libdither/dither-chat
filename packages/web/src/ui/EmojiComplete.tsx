@@ -32,7 +32,9 @@ export function insertAtCaret(el: HTMLTextAreaElement, text: string, focus = tru
   el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
 }
 
-export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLTextAreaElement | null }; convId: string; network?: P.Network }) {
+/** `el` is the box itself, for drawing again when it is made again; listeners go on `ta.current`. */
+// redraws: it reads only how often you use each emoji, to order its list, which it works out again as you type.
+export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLTextAreaElement | null }; el?: HTMLTextAreaElement | null; convId: string; network?: P.Network }) {
   const [trig, setTrig] = useState<Trigger | null>(null);
   const [sel, setSel] = useState(0);
   const [catalog, setCatalog] = useState<EmojiCategory[] | null>(null);
@@ -95,7 +97,8 @@ export function EmojiComplete({ ta, convId, network }: { ta: { current: HTMLText
     };
     const onKey = (e: KeyboardEvent) => {
       const s = live.current;
-      if (!s.open || e.isComposing || e.target !== el) return;
+      // Not a key of an input method's word: Safari sends the Enter that ends one with isComposing false, but keyCode 229.
+      if (!s.open || e.isComposing || e.keyCode === 229 || e.target !== el) return;
       const n = s.results.length;
       const stop = () => {
         e.preventDefault();

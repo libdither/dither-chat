@@ -5,8 +5,8 @@ first two, statuses, presence and server members, Adversarial features), everywh
 
 | | What is kept | Where it shows |
 |---|---|---|
-| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | in full in the chat, marked "Deleted · 3m" under it |
-| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, marked "Disappeared" |
+| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | one short grey line in the chat, with how long it stayed and when it went ("🗑 2 min later · 1h ago"); a click opens it in full |
+| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, with a clock for the bin |
 | **Edits** | each earlier version of an edited message | click "(edited)" on it |
 | **Reactions taken back** | who took back which reaction and when, with when they had added it; reactions a moderator cleared | Message History in the message's menu; Taken back in a reaction's list of who reacted (docs/reactions.md "When") |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
@@ -15,7 +15,7 @@ first two, statuses, presence and server members, Adversarial features), everywh
 | **Presence** (adversarial) | each time people you follow come online, go idle or do not disturb, or go offline, and on which devices; the current state is kept either way, for status dots (docs/profile.md "Status dots"), but nothing of the past while off | the Activity section of a profile: a list, and a band under its chart (docs/profile.md) |
 | **Server members** (adversarial, passive) | who your accounts' clients saw as a member of each server, with nick, roles and when they joined, and the server's member and online counts: only what the client loaded anyway (message authors, the member list in view), never a walk of the list | "Members seen: 5 of 1,287 listed" on a server's About; the server under In common on a profile; its links in the people graph (docs/people-graph.md) |
 | **Profiles** (adversarial) | people's profiles opened in the background, one at a time per account and slower than a person would (docs/same-person.md "Collecting profiles"), and each distinct version of a profile as it changes; nothing collected while off | Same person? (People), and the profile pages |
-| **Voice channels** (adversarial, passive) | who is in each Discord voice channel when you are not, as your accounts' clients are told anyway, and each join and leave; nothing while off | a voice channel's row, its page and its chat (docs/calls.md "Voice channels") |
+| **Voice channels** (adversarial, passive) | who is in each Discord voice channel when you are not, as your accounts' clients are told anyway, and each join and leave; nothing while off | a voice channel's row, its page and its chat (docs/calls.md "Voice channels"); a person's Voice card and the people graph's ties (docs/profile.md "Voice", docs/people-graph.md "Ties and circles") |
 
 Each adversarial switch says where what it keeps shows, in the words of the last column ("Where it shows: in full in
 the chat, marked Deleted"). "Deleted and disappeared messages in chats" is Shown or Hidden, and each chat can say
@@ -119,6 +119,11 @@ Rules that keep it honest and small:
   `message_event`.
 
 ## Deleted and disappeared
+
+In the chat (`GoneLine` in ui/Timeline.tsx) a kept message is one line, well below the faintest text, so the eye
+passes over it: a small grey picture, the name, the words cut at the edge, and at the end how long it was up before it
+went and how long ago that was. A mention of you keeps a faint amber, the whole line. A click or a tap opens it in
+place, files and all, and another folds it; its menu is still on a right-click or a long press.
 
 An adapter's `delete` event carries `reason: 'expired'` when a disappearing timer ran out (Signal's and WhatsApp's own
 sweeps), else it is a deletion. When the source keeps that kind, the body and attachments stay; else they are emptied,

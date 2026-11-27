@@ -14,7 +14,7 @@ import { clock, dayLabel, fullTime } from '../format.ts';
 import { rowOpen, toggled, type ElsewhereRow } from '../mail/elsewhere.ts';
 import { letter, shortLink } from '../mail/letter.ts';
 import { linkify } from '../mail/text.ts';
-import { db, go, mailRev, openChat, openProfile, timelineKey, timelineRev, toast } from '../state.ts';
+import { db, go, mailRev, metaRev, openChat, openProfile, timelineKey, timelineRev, toast } from '../state.ts';
 import { timelines } from '../store.ts';
 import { details } from '../mail/held.ts';
 import { Icon } from './icons.tsx';
@@ -94,6 +94,8 @@ export function MailWords({ m, quoteAbove }: { m: P.MessageView; quoteAbove?: bo
  * closes them again. Its files show under it either way.
  */
 function MailLetter({ m, text, quoted, quoteAbove }: { m: P.MessageView; text: string; quoted: boolean; quoteAbove?: boolean }) {
+  metaRev.value; // the names it may be signed with (signNames)
+  mailRev.value; // and your mail account's
   const x = m.mail!;
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
@@ -521,6 +523,7 @@ export function ElsewhereRows({ view, person, rows }: { view: string; person: P.
 }
 
 function PlaceRow({ view, person, r }: { view: string; person: P.PersonView; r: ElsewhereRow }) {
+  mailRev.value; // whether it is open is its rung in `db.mail`, which a click on it changes
   const subject = bareSubject(r.e.title) || '(no subject)';
   const open = isOpen(view, r);
   const menu = useMenu(() => placeMenu(view, person, r, subject));

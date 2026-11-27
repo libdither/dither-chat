@@ -9,9 +9,9 @@
  * Checks, on a desktop and a phone: GET /api/people has X's mutual follows among Friends and every follow under
  * Following, from the profiles X showed; a profile's hero has one tag per kind with the networks it is on (Friend
  * with Discord and X, Contact with Telegram, Signal and WhatsApp), and no button that only says how you stand; its
- * Connections card groups each account's connection by kind in the network's own words ("You follow each other on
- * X"), as lists, with Remove friend where the account can, each button named for its account, and no Unfollow or
- * Follow on X, which cannot; the tags have their words for a screen reader; About keeps the follower counts and no
+ * Accounts card has each connection under the account of theirs it is with, grouped by kind in the network's own words
+ * ("You follow each other on X"), as lists, with Remove friend where the account can, each button named for its
+ * account, and no Unfollow or Follow on X, which cannot; the tags have their words for a screen reader; About keeps the follower counts and no
  * longer says Follows you; one-way follows, a request sent and a block read the same way; People's Friends has the X
  * mutuals beside the Discord friends and Following has the follows; nothing sideways on a phone; nothing sent to any
  * network (X's writeLog, every other account's addLog) until, clicked: Remove friend on Jordan and Unblock on Owl,
@@ -96,15 +96,17 @@ const profile = async (hash: string) => {
       said: t.querySelector('.sr-only')?.textContent ?? null,
       glyphsHidden: [...t.querySelectorAll('svg.net-glyph')].every((s) => s.getAttribute('aria-hidden') === 'true'),
     })),
-    title: document.querySelector('.pf-standing h3')?.textContent ?? null,
-    groups: [...document.querySelectorAll('.pf-standing .pf-conn-group')].map((g) => g.dataset.kind),
-    lists: [...document.querySelectorAll('.pf-standing .pf-conn-group')].map((g) => g.querySelector('ul')?.getAttribute('aria-label') ?? null),
-    rows: [...document.querySelectorAll('.pf-standing .pf-link-row')].map((r) => ({ kind: r.dataset.kind, net: r.dataset.network, account: r.dataset.account, item: r.tagName === 'LI' && r.parentElement.tagName === 'UL', text: r.querySelector('b').textContent, remove: r.querySelector('[data-remove]')?.textContent ?? null, label: r.querySelector('[data-remove]')?.getAttribute('aria-label') ?? null })),
+    title: document.querySelector('.pf-accounts h3')?.textContent ?? null,
+    groups: [...document.querySelectorAll('.pf-accounts .pf-conn-group')].map((g) => g.dataset.kind),
+    lists: [...document.querySelectorAll('.pf-accounts .pf-conn-group')].map((g) => g.querySelector('ul')?.getAttribute('aria-label') ?? null),
+    rows: [...document.querySelectorAll('.pf-accounts .pf-link-row')].map((r) => ({ kind: r.dataset.kind, net: r.dataset.network, account: r.dataset.account, under: r.closest('.pf-acct-item')?.querySelector('.pf-acct')?.dataset.identity ?? null, item: r.tagName === 'LI' && r.parentElement.tagName === 'UL', text: r.querySelector('b').textContent, remove: r.querySelector('[data-remove]')?.textContent ?? null, label: r.querySelector('[data-remove]')?.getAttribute('aria-label') ?? null })),
     stateButtons: document.querySelectorAll('.pf-action[data-action="relationship"]').length,
     follow: document.querySelector('.pf-action[data-action="follow"]')?.textContent ?? null,
     counts: document.querySelector('.pf-follow')?.textContent ?? '',
   })`);
 };
+/** An account row's network, from the boot's identities. */
+const accountNet = (identityId: string) => boot.identities.find((i: any) => i.id === identityId)?.network ?? null;
 const overflow = () => page.eval<number>(`Math.max(...[document.scrollingElement, ...document.querySelectorAll('.profile-scroll, .pf-page, .side-scroll')].filter(Boolean).map((s) => s.scrollWidth - s.clientWidth))`);
 
 try {
@@ -127,11 +129,11 @@ try {
   check('…and one Contact tag, on Telegram, Signal and WhatsApp', tag('contact')?.text === 'Contact' && ['telegram', 'signal', 'whatsapp'].every((n) => tag('contact').nets.split(' ').includes(n)), p.tags);
   check('…each named in words for a screen reader, its marks hidden', tag('friend').said === ': Friends on Discord; You follow each other on X' && p.tags.every((t: any) => t.said && t.glyphsHidden), p.tags);
   check('no button that only says how you stand (Following, Request sent)', p.stateButtons === 0, p.stateButtons);
-  check('Connections, grouped by kind: Friends then Contacts', p.title?.startsWith('Connections') && p.groups.join() === 'friend,contact', p.groups);
-  check('…each group a list named for its kind, a row an item', p.lists.join() === 'Friends,Contacts' && p.rows.every((r: any) => r.item), p.lists);
+  check('Accounts: each connection under the account of theirs it is with, on its network', p.title?.startsWith('Accounts') && p.rows.length === 6 && p.rows.every((r: any) => r.under && accountNet(r.under) === r.net), p.rows.map((r: any) => [r.net, r.under && accountNet(r.under)]));
+  check('…each a list named for its kind, a row an item', p.groups.every((g: string, i: number) => p.lists[i] === ({ friend: 'Friends', contact: 'Contacts' } as any)[g]) && p.groups.includes('friend') && p.groups.includes('contact') && p.rows.every((r: any) => r.item), [p.groups, p.lists]);
   const fr = p.rows.filter((r: any) => r.kind === 'friend');
   check("Friends: Discord on both accounts with Remove friend, and X in X's words, with no Unfollow (X cannot)", fr.length === 3 && fr.filter((r: any) => r.net === 'discord' && r.text === 'Friends on Discord' && r.remove === 'Remove friend').length === 2 && fr.some((r: any) => r.net === 'x' && r.text === 'You follow each other on X' && r.remove === null), fr);
-  check('…the two Remove friend buttons named apart, by account', fr.filter((r: any) => r.label).map((r: any) => r.label).sort().join(' | ') === 'Remove friend on Discord alt, alice.chen | Remove friend on Discord main, alice.chen', fr.map((r: any) => r.label));
+  check('…the two Remove friend buttons named apart, by account', fr.filter((r: any) => r.label).map((r: any) => r.label).sort().join(' | ') === 'Remove friend on Discord alt | Remove friend on Discord main', fr.map((r: any) => r.label));
   const ct = p.rows.filter((r: any) => r.kind === 'contact');
   check('Contacts: each address book in its own words', ct.length === 3 && ct.some((r: any) => r.text === 'In your Telegram contacts' && r.remove === 'Remove contact') && ct.some((r: any) => r.text === 'In your Signal contacts'), ct);
   check('About keeps the counts as facts, and no Follows you', /2,310 followers/.test(p.counts) && !/Follows you/.test(p.counts), p.counts);
@@ -174,9 +176,9 @@ try {
   // ------------------------------------------------------------------ a phone
   await page.size(390, 844, true);
   p = await profile(`#/p/${alice.id}`);
-  check('on a phone: the same tags and Connections', tag('friend')?.nets === 'discord x' && p.rows.length === 6, p.tags);
+  check('on a phone: the same tags, and the connections under the accounts', tag('friend')?.nets === 'discord x' && p.rows.length === 6, p.tags);
   if (shots) await page.shot(join(shots, 'connections-alice-phone-hero.png'));
-  await page.eval(`document.querySelector('.pf-standing').scrollIntoView({ block: 'start' })`);
+  await page.eval(`document.querySelector('.pf-accounts').scrollIntoView({ block: 'start' })`);
   await Bun.sleep(300);
   check('nothing sideways on a phone', (await overflow()) <= 0, await overflow());
   if (shots) await page.shot(join(shots, 'connections-alice-phone.png'));
@@ -203,7 +205,7 @@ try {
   const endThenAdd = async (who: any, rel: string, what: string) => {
     const asker = (await json(`/api/identities/${who.id}/about`)).accountId;
     await profile(`#/i/${who.id}`);
-    const row = `.pf-standing .pf-link-row[data-account="${asker}"][data-rel="${rel}"]`;
+    const row = `.pf-accounts .pf-link-row[data-account="${asker}"][data-rel="${rel}"]`;
     await page.eval(`document.querySelector(${JSON.stringify(`${row} [data-remove]`)}).click()`);
     await page.until(`!!document.querySelector('[data-confirm-remove="${rel}"]')`, 5000);
     await page.eval(`document.querySelector('[data-confirm-remove="${rel}"]').click()`);
@@ -211,8 +213,8 @@ try {
     check(`${what}: ended, its row goes and Add friend comes`, true);
     await page.eval(`document.querySelector('.pf-action[data-action="friend"]').click()`);
     await page.until(`!!document.querySelector('.pf-tag[data-kind="requested"]')`, 10000).catch(() => {});
-    const after = await page.eval<any>(`({ tag: !!document.querySelector('.pf-tag[data-kind="requested"]'), row: document.querySelector('.pf-standing .pf-link-row[data-kind="requested"][data-account="${asker}"] b')?.textContent ?? null })`);
-    check(`${what}, then Add friend: Request sent in the hero and in Connections`, after.tag && after.row === 'Friend request sent on Discord', after);
+    const after = await page.eval<any>(`({ tag: !!document.querySelector('.pf-tag[data-kind="requested"]'), row: document.querySelector('.pf-accounts .pf-link-row[data-kind="requested"][data-account="${asker}"] b')?.textContent ?? null })`);
+    check(`${what}, then Add friend: Request sent in the hero and under the account`, after.tag && after.row === 'Friend request sent on Discord', after);
     return asker;
   };
   const jordan = boot.identities.find((i: any) => i.network === 'discord' && i.displayName === 'Jordan');

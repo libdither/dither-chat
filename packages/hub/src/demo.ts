@@ -23,6 +23,7 @@ import { DemoStage, demoStageSeed } from './demostage.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
+import { DEMO_CLOCKS_ACCOUNT, DemoClocks, demoClocksOn } from './demo-clocks.ts';
 import { DEMO_ZULIP_ACCOUNT, DemoZulip, demoZulipOn } from './demo-zulip.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -51,6 +52,7 @@ const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('se
 /** DITHER_DEMO_SCENARIO=crowd adds about 120 people, eight servers and eleven groups, with pairs for Same person? to find (demo-crowd.ts). */
 const CROWD = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('crowd');
 // DITHER_DEMO_SCENARIO=zulip adds a made-up Zulip organization, its channels as forums of topics (demo-zulip.ts, demoZulipOn).
+// DITHER_DEMO_SCENARIO=clocks adds a group of friends abroad, six weeks of messages on their own hours (demo-clocks.ts).
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
@@ -2578,6 +2580,7 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) this.seedHistory(ago);
     if (firstRun) this.seedHeardReactions();
+    if (firstRun) this.seedVoice(ago);
     this.seedPresence(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
     if (this.network === 'discord') this.startThreads();
@@ -2744,6 +2747,29 @@ class DemoAdapter implements InprocAdapter {
   }
 
   /**
+   * Evenings in the hangout voice channel over the past three weeks (kept only with the adversarial voice setting), for
+   * a profile's Voice and Close to cards and the graph's voice ties (docs/profile.md "Voice"): Lev and Mara most nights,
+   * Owl for a while, Pixelfox now and then, you twice; Lev and Mara are in it now.
+   */
+  private seedVoice(ago: (min: number) => number) {
+    if (this.key !== 'dmain') return;
+    const DAY = 24 * 60;
+    // [who, minutes ago it starts, minutes ago it ends (0: still in it)]
+    const stretches: [P.IdentityFact, number, number][] = [];
+    for (const d of [20, 17, 13, 10, 6, 3, 1]) {
+      const at = d * DAY + 180;
+      stretches.push([D.lev, at, at - 120], [D.mara, at - 5, at - 118]);
+      if (d % 2) stretches.push([D.owl, at - 30, at - 70]);
+      if (d === 10 || d === 6) stretches.push([D.pixelfox, at - 20, at - 75]);
+      if (d === 13 || d === 3) stretches.push([this.self, at - 40, at - 100]);
+    }
+    stretches.push([D.lev, 25, 0], [D.mara, 22, 0]);
+    const times = [...new Set(stretches.flatMap(([, a, b]) => [a, b]).filter((t) => t > 0))].sort((x, y) => y - x);
+    for (const t of times)
+      this.emit({ t: 'voice', conversation: ch('dither-hangout'), space: g.dither, members: stretches.filter(([, a, b]) => a >= t && b < t).map(([w]) => ({ who: w.nativeId })), ts: ago(t) });
+  }
+
+  /**
    * How people are now, for status dots (docs/profile.md "Status dots"): told at every start, as an adapter tells
    * what it hears on connecting. Discord, Matrix and Telegram say presence; Signal and WhatsApp do not.
    */
@@ -2784,6 +2810,9 @@ class DemoAdapter implements InprocAdapter {
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-del` });
     msg(`${climb.nativeId}~h-gone`, S.alice, 60, 'door code for the gym is 4471');
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-gone`, reason: 'expired' });
+    // A mention of you, taken back two minutes after it was sent.
+    msg(`${climb.nativeId}~h-ping`, S.sam, 62, `<@${this.self.nativeId}> can you bring the spare rope tonight? mine is still drying from the weekend`, { mentionsSelf: true });
+    emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-ping` });
     // A pin, a reaction taken back, a role, a status, and your message read.
     msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
     emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
@@ -3398,6 +3427,7 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
   if (DEMO_POST_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoPosts(acc, dir);
   if (DEMO_EVENT_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoEvents(acc, dir);
   if (acc.id === DEMO_ZULIP_ACCOUNT.id) return new DemoZulip(acc, dir);
+  if (acc.id === DEMO_CLOCKS_ACCOUNT.id) return new DemoClocks(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
@@ -3414,7 +3444,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boole
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : []), ...(demoClocksOn() ? [DEMO_CLOCKS_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */

@@ -227,6 +227,16 @@ describe('networks without the command', () => {
   });
 });
 
+describe('networks without mentions of their own', () => {
+  test('a Luma or Partiful chat lists its people, as names that notify nobody: the hub writes them out on send', async () => {
+    for (const [network, name] of [['luma', 'Climbing crew'], ['partiful', 'Dumpling Folding Party']] as const) {
+      const v = await view(conv(network, name));
+      expect(v.rows.length).toBeGreaterThan(0);
+      expect(v.rows.every((r) => !r.pings)).toBe(true);
+    }
+  });
+});
+
 describe('Zulip', () => {
   test('@everyone and @here where the extractor says you may, as text its extractor turns into @**all** and @**topic**', async () => {
     const z = store.createAccount({ network: 'zulip', label: 'Zulip', color: '#6492FE', adapter: 'zulip' });
@@ -301,6 +311,16 @@ describe('friends and everyone you know (Step 3)', () => {
     for (const r of alice.accounts!) expect(r).toMatchObject({ kind: 'identity', insert: `<@identity:${r.identityId}> `, pings: false, personId: person('Alice Chen') });
     // Jordan's one account is the one his row names.
     expect(jordan.accounts).toEqual([expect.objectContaining({ insert: jordan.insert, pings: true, network: 'discord' })]);
+  });
+
+  test("a friend on this network who is not in the chat: their mention, which notifies nobody, where everyone in it is known", async () => {
+    // A Signal group lists who is in it: Jamie, a friend on Signal, is not.
+    const jamie = (await view(conv('signal', 'Climbing crew'), 'jam', { scope: 'friends' })).rows.find((r) => r.name === 'Jamie')!;
+    expect(jamie).toMatchObject({ section: 'friends', insert: `<@${native('signal', 'Jamie')}> `, pings: false });
+    expect(jamie.accounts).toEqual([expect.objectContaining({ insert: jamie.insert, pings: false })]);
+    // A server channel with nothing typed: the network named only who wrote lately, so a friend may still be in it.
+    const v = await view(dev(), '', { account: acc('discord-main'), scope: 'friends' });
+    expect(v.rows.find((r) => r.name === 'Ravi')).toMatchObject({ section: 'friends', pings: true });
   });
 
   test('everyone you know: anyone the hub has a person for, by a name typed', async () => {

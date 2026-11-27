@@ -8,7 +8,7 @@ import { signal, type Signal } from '@preact/signals';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { convTitle, netName } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, toast, type Route } from '../state.ts';
+import { api, db, go, metaRev, toast, type Route } from '../state.ts';
 import { Avatar, Empty, NetBadge, openAdversarial } from '../ui/bits.tsx';
 import { Icon } from '../ui/icons.tsx';
 import { HeadOrb } from '../ui/Offline.tsx';
@@ -141,6 +141,7 @@ function Sparse({ graph }: { graph: P.PeopleGraph }) {
 }
 
 function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) {
+  metaRev.value; // your accounts and groups' names; the graph itself comes with `graph`
   const ix = useMemo(() => index(graph), [graph]);
   const [f, setF] = useState<Filters>(loadFilters);
   // How much you have talked with each person, by month: asked for after the graph, as it takes the hub a while.
@@ -167,7 +168,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
   }, []);
   const [tuneOpen, setTuneOpen] = useState(false);
   // Ties between people now (circles keep to them as the time bar moves), and at the month replayed.
-  const tiesNow = useMemo(() => tiesAt(ix, act, null, tuning), [ix, act, tuning.fade]);
+  const tiesNow = useMemo(() => tiesAt(ix, act, null, tuning), [ix, act, tuning.fade, tuning.voice]);
   const tiesThen = useMemo(() => (asOf === null ? tiesNow : tiesAt(ix, act, asOf, tuning)), [tiesNow, asOf]);
   const impNow = useMemo(() => importance(ix, act, null, tuning, tiesNow), [ix, act, tuning, tiesNow]);
   const imp = useMemo(() => (asOf === null ? impNow : importance(ix, act, asOf, tuning, tiesThen)), [impNow, asOf, tiesThen]);
@@ -412,6 +413,7 @@ function Stage({ graph, reload }: { graph: P.PeopleGraph; reload: () => void }) 
         <Tip hover={hover} picked={picked} graph={graph} ix={ix} name={name} />
         {tuneOpen && picked === null && pickedGroup === null && (
           <Tuning
+            voice={!!act?.ties?.voice}
             tuning={tuning}
             saved={saved}
             onTry={setTuning}
@@ -561,7 +563,7 @@ function Key({
       </div>
       {rings !== null && (
         <div class="pg-key-row">
-          <i class="pg-key-ring" /> Rings: the 10, 50, 250 nearest. Slices: circles of people tied to each other (replies, reactions, friends, small places), named by the place they share <em>{rings.toLocaleString()}</em>
+          <i class="pg-key-ring" /> Rings: the 10, 50, 250 nearest. Slices: circles of people tied to each other (replies, reactions, time in voice, friends, small places), named by the place they share <em>{rings.toLocaleString()}</em>
         </div>
       )}
       <div class="pg-key-row">
@@ -856,8 +858,8 @@ function Why({ imp, node, tuning, circle, ties, name, onPick, onHow }: { imp: Im
   const parts = GRAPH_WEIGHT_KEYS.map((k, i) => ({ k, v: imp.parts[node * K + i] })).filter((x) => x.v > 0.005);
   const top = imp.top || 1;
   const tied = useMemo(() => {
-    const out: [number, number][] = [];
-    for (let k = ties.start[node]; k < ties.start[node + 1]; k++) out.push([ties.to[k], ties.w[k]]);
+    const out: [number, number, number][] = [];
+    for (let k = ties.start[node]; k < ties.start[node + 1]; k++) out.push([ties.to[k], ties.w[k], ties.voice[k]]);
     return out.sort((a, b) => b[1] - a[1]).slice(0, 4);
   }, [ties, node]);
   const what: Record<P.GraphWeightKey, string> = {
@@ -890,12 +892,13 @@ function Why({ imp, node, tuning, circle, ties, name, onPick, onHow }: { imp: Im
       {tied.length > 0 && (
         <div class="pg-card-sub">
           Most tied to{' '}
-          {tied.map(([g], i) => (
+          {tied.map(([g, , voice], i) => (
             <>
               {i > 0 && ', '}
               <button class="link-btn" onClick={() => onPick(g)}>
                 {name(g)}
               </button>
+              {voice >= 0.5 && <span class="pg-n" title="Mostly time in a voice channel together"> (voice)</span>}
             </>
           ))}
         </div>
@@ -910,9 +913,9 @@ function Why({ imp, node, tuning, circle, ties, name, onPick, onHow }: { imp: Im
 /**
  * How importance is worked out, and your weights for it: a slider per signal and for how fast talk fades, tried on the
  * graph as they move; Fit to me finds the weights that best picked out, six months ago, who you went on to talk with.
- * Save keeps them on the hub; Defaults forgets them.
+ * Save keeps them on the hub; Defaults forgets them. With the voice log on, how much time in voice together ties two people.
  */
-function Tuning({ tuning, saved, onTry, onSaved, onClose, fitNow }: { tuning: P.GraphTuning; saved: P.GraphTuning | null; onTry: (t: P.GraphTuning) => void; onSaved: (t: P.GraphTuning | null) => void; onClose: () => void; fitNow: () => Fit | null }) {
+function Tuning({ voice, tuning, saved, onTry, onSaved, onClose, fitNow }: { voice: boolean; tuning: P.GraphTuning; saved: P.GraphTuning | null; onTry: (t: P.GraphTuning) => void; onSaved: (t: P.GraphTuning | null) => void; onClose: () => void; fitNow: () => Fit | null }) {
   const [fitting, setFitting] = useState(false);
   const [result, setResult] = useState<Fit | null | 'none'>(null);
   const changed = JSON.stringify(tuning) !== JSON.stringify(saved ?? DEFAULT_TUNING);
@@ -980,6 +983,16 @@ function Tuning({ tuning, saved, onTry, onSaved, onClose, fitNow }: { tuning: P.
           <span class="pg-tune-about">{SIGNALS[k].about}</span>
         </label>
       ))}
+      {voice && (
+        <label class="pg-tune-row">
+          <span class="pg-tune-head">
+            <b>Voice together</b>
+            <span class="pg-n">{(tuning.voice ?? 1).toFixed(2)}</span>
+          </span>
+          <input type="range" min={0} max={3} step={0.05} value={tuning.voice ?? 1} aria-label="Voice together weight" onInput={(e) => onTry({ ...tuning, voice: Number((e.target as HTMLInputElement).value), fitted: undefined })} />
+          <span class="pg-tune-about">How much time two people spend in a voice channel together ties them, against their replies and reactions (from the voice log).</span>
+        </label>
+      )}
       <label class="pg-tune-row">
         <span class="pg-tune-head">
           <b>Talk fades</b>

@@ -22,12 +22,12 @@ import { circleOf, ties, type Ties } from './ties.ts';
 export const DEFAULT_TUNING: P.GraphTuning = { weights: { talk: 1, places: 0.5, friends: 0.45, listed: 0.6, networks: 0.3, circle: 0.8 }, fade: 18 };
 /** Each signal in words, for the card and the tuning panel. */
 export const SIGNALS: Record<P.GraphWeightKey, { label: string; about: string }> = {
-  talk: { label: 'Talk with you', about: 'Messages between you, either way, in direct chats, small groups and replies in servers; and minutes spent in your direct chat. Older talk counts for less.' },
+  talk: { label: 'Talk with you', about: 'Messages between you, either way, in direct chats, small groups and replies in servers; minutes spent in your direct chat, and in a voice channel with them. Older talk counts for less.' },
   places: { label: 'Places you share', about: 'Servers and group chats you are both in, past the first.' },
   friends: { label: 'Friends in common', about: 'As their profile says, and the people you talk with who are in a small group with them.' },
   listed: { label: 'On your friend list', about: 'One of your accounts lists them as a friend or contact.' },
   networks: { label: 'On several networks', about: 'You know them on more than one network.' },
-  circle: { label: 'Close to your people', about: 'Tied (replies, reactions, turns, friendships, small places) to the people you talk with most.' },
+  circle: { label: 'Close to your people', about: 'Tied (replies, reactions, turns, time in voice together, friendships, small places) to the people you talk with most.' },
 };
 /** A place's: your time and messages there, and the people in it who matter to you. */
 const WP = { mine: 1, people: 0.7 };
@@ -146,7 +146,7 @@ function weigh(sg: Signals, w: Float32Array, parts?: Float32Array): Float32Array
 const weightsOf = (t: P.GraphTuning) => Float32Array.from(GRAPH_WEIGHT_KEYS.map((k) => t.weights[k] ?? 0));
 
 /** Ties for a tuning at a month: what importance() takes, worked out apart since the circles use them too. */
-export const tiesAt = (ix: Index, act: P.GraphActivity | null, asOf: number | null, tuning: P.GraphTuning = DEFAULT_TUNING) => ties(ix, act, asOf ?? thisMonth(), tuning.fade);
+export const tiesAt = (ix: Index, act: P.GraphActivity | null, asOf: number | null, tuning: P.GraphTuning = DEFAULT_TUNING) => ties(ix, act, asOf ?? thisMonth(), tuning.fade, tuning.voice ?? 1);
 
 export function importance(ix: Index, act: P.GraphActivity | null, asOf: number | null, tuning: P.GraphTuning = DEFAULT_TUNING, t: Ties | null = null): Importance {
   const g = ix.graph;
@@ -260,7 +260,7 @@ export function fit(ix: Index, act: P.GraphActivity, from: P.GraphTuning = DEFAU
   const cache = new Map<string, Signals>();
   const sig = (split: number, fade: number) => {
     const key = `${split}:${fade}`;
-    return cache.get(key) ?? (cache.set(key, signals(ix, act, split, fade, ties(ix, act, split, fade))), cache.get(key)!);
+    return cache.get(key) ?? (cache.set(key, signals(ix, act, split, fade, ties(ix, act, split, fade, from.voice ?? 1))), cache.get(key)!);
   };
   const score = (w: Float32Array, fade: number) => {
     let sum = 0;
@@ -298,7 +298,7 @@ export function fit(ix: Index, act: P.GraphActivity, from: P.GraphTuning = DEFAU
   }
   const after = hits(weigh(sig(splits[0], best.fade), best.w), future, of);
   const weights = Object.fromEntries(GRAPH_WEIGHT_KEYS.map((k, i) => [k, Math.round(best.w[i] * 100) / 100])) as P.GraphTuning['weights'];
-  return { tuning: { weights, fade: best.fade, fitted: { at: Date.now(), before: before / of, after: after / of } }, split: splits[0], of, before, after };
+  return { tuning: { weights, fade: best.fade, ...(from.voice !== undefined ? { voice: from.voice } : {}), fitted: { at: Date.now(), before: before / of, after: after / of } }, split: splits[0], of, before, after };
 }
 
 /** A month number as "Mar 2021". */

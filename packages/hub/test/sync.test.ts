@@ -663,6 +663,46 @@ describe('when the hub refuses a delta', () => {
     expect(await syncReq({ v: p.v, epoch: p.epoch, since: p.seq })).toMatchObject({ sync: p });
   });
 
+  test('a journal the disk cannot write to: the frame still goes out, and its changes go in with the next one', async () => {
+    const frames: P.ClientEvent[][] = [];
+    const sock = new WebSocket(`ws://127.0.0.1:${port}/api/live`);
+    await new Promise((r) => (sock.onopen = r));
+    sock.onmessage = (e) => frames.push(JSON.parse(String(e.data)));
+    const p = pos();
+    const seen = new Promise<void>((r) => {
+      const was = sock.onmessage!;
+      sock.onmessage = (e) => {
+        (was as (e: MessageEvent) => void)(e);
+        if (frames.length === 2) r();
+      };
+    });
+    // Writes into the journal fail as a full disk's do, after the message itself is in (SQLITE_FULL in the live hub).
+    const full = ['INSERT', 'UPDATE'].map((op) => `CREATE TEMP TRIGGER full_${op} BEFORE ${op} ON sync_change BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
+    const first = say(d1, 'general', 'ann');
+    for (const t of full) store.db.exec(t);
+    try {
+      expect(() => hub.flush()).not.toThrow();
+    } finally {
+      store.db.exec('DROP TRIGGER temp.full_INSERT; DROP TRIGGER temp.full_UPDATE');
+    }
+    // No position was handed out, and nothing is in the journal yet: a client resuming from before has missed nothing.
+    expect(pos()).toEqual(p);
+    const second = say(d1, 'random', 'bob');
+    hub.flush();
+    await seen;
+    sock.close();
+    // The connected device got the first message at once, in a frame with no position.
+    expect(frames[0].some((e) => e.t === 'message' && e.message.id === msg(d1, first))).toBe(true);
+    expect(frames[0].some((e) => e.t === 'sync')).toBe(false);
+    expect(frames[1].at(-1)).toEqual({ t: 'sync', seq: p.seq + 1 });
+    // The next frame carries what was held: a client from before both finds both conversations changed.
+    const changed = store.journal.since(p.seq).map((r) => `${r.kind}:${r.id}`);
+    expect(changed).toContain(`conversation:${cnv(d1, 'general')}`);
+    expect(changed).toContain(`conversation:${cnv(d1, 'random')}`);
+    const rows = store.db.query('SELECT id FROM sync_change WHERE kind = ? AND seq = ?').all('message', p.seq + 1) as { id: string }[];
+    expect(rows.map((r) => r.id).sort()).toEqual([msg(d1, first), msg(d1, second)].sort());
+  });
+
   test('a reset world starts the journal over', async () => {
     const p = pos();
     hub.broadcast([{ t: 'resync' }]);
@@ -689,6 +729,44 @@ describe('the journal across restarts', () => {
     expect(crashed.seq).toBe(first.seq);
     expect(crashed.since(0)).toEqual([]);
     db.db.close();
+  });
+
+  test('changes a full disk would not take are held: kept through a rolled-back caller, and a stop with them left is unclean', () => {
+    const db = new Store(join(dir, 'held.sqlite'), mediaSigner('s'));
+    const j = db.journal;
+    const fail = (on: boolean) => db.db.exec(on ? `CREATE TEMP TRIGGER full BEFORE INSERT ON sync_change BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END` : 'DROP TRIGGER temp.full');
+    fail(true);
+    expect(j.record([{ kind: 'account', id: 'a' }])).toBeNull();
+    fail(false);
+    expect(j.seq).toBe(0);
+    // A caller's own transaction writes them, then is rolled back: the journal takes back what it thought written.
+    const mark = j.mark();
+    expect(() =>
+      db.db.transaction(() => {
+        expect(j.record([{ kind: 'account', id: 'b' }])).toBe(1);
+        throw new Error('the commit failed');
+      })(),
+    ).toThrow('the commit failed');
+    j.undo(mark);
+    expect(j.seq).toBe(0);
+    expect(j.since(0)).toEqual([]);
+    // Still unwritable at the stop: the journal stays open, and the next start is a new epoch.
+    fail(true);
+    j.close();
+    fail(false);
+    expect(new Journal(db.db).started).toBe('unclean');
+    db.db.close();
+    // Written by the next frame instead: both in at its position.
+    const db2 = new Store(join(dir, 'held2.sqlite'), mediaSigner('s'));
+    const k = db2.journal;
+    db2.db.exec(`CREATE TEMP TRIGGER full BEFORE INSERT ON sync_change BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
+    expect(k.record([{ kind: 'account', id: 'a' }])).toBeNull();
+    db2.db.exec('DROP TRIGGER temp.full');
+    expect(k.record([{ kind: 'account', id: 'b' }])).toBe(1);
+    expect(k.since(0).map((r) => `${r.id}@${r.seq}`)).toEqual(['a@1', 'b@1']);
+    k.close();
+    expect(new Journal(db2.db).started).toBe('continued');
+    db2.db.close();
   });
 
   test('too many changed objects: the oldest go, and the floor rises', () => {

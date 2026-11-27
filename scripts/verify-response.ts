@@ -107,7 +107,9 @@ async function startHub(dir: string) {
   base = `http://127.0.0.1:${port}`;
   const log = openSync(join(work, `hub-${++hubs}.log`), 'a');
   running.hub = Bun.spawn(['bun', join(root, 'packages/hub/src/main.ts'), '--demo', '--data', dir, '--port', String(port), '--host', '127.0.0.1', '--web', web], {
-    env: { ...process.env, DITHER_DEMO_CHATTER: '0', DITHER_CALENDAR_URL: 'off' },
+    // The inbox in the same order in every run: sorted by the learned order's mean, not a sample of it that changes
+    // with the clock (ranker.ts), so each page clicks the same rows.
+    env: { ...process.env, DITHER_DEMO_CHATTER: '0', DITHER_CALENDAR_URL: 'off', DITHER_INBOX_EXPLORE: '0' },
     stdout: log,
     stderr: log,
   });
@@ -146,6 +148,17 @@ await startHub(seeded);
   const [channel, , dm, group] = world.open;
   for (const c of [channel, dm, group]) await fetch(`${base}/api/conversations/${c.id}/read`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' });
   await until(async () => !(await getJson('/api/attention/waiting')).waiting, 120_000, 'the hub was still scoring the reads after 2 minutes');
+}
+// The inbox ranking's first check is 20 s after a start (ranker.ts): with opens it has not learned from (the demo's
+// calibration feed puts some hours back), it refits then and scores every row again. Done here, once, so the copies
+// hold the fitted order and no page's hub refits in the middle of its clicks.
+{
+  await until(async () => {
+    const m = await getJson('/api/attention/model');
+    return m.mode === 'off' || (!m.due && !m.refitting);
+  }, 120_000, 'the inbox ranking still had a refit due after 2 minutes');
+  await until(async () => !(await getJson('/api/attention/waiting')).waiting, 120_000, 'the hub was still scoring after the refit after 2 minutes');
+  await journalStill();
 }
 const boot = await getJson('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
@@ -202,6 +215,7 @@ const PAGES: PageCase[] = [
   { name: 'the directory', at: '#/directory' },
   { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
   { name: 'Feed', at: '#/feed' },
+  { name: 'Notification calibration', at: '#/calibration' },
 ];
 
 // ------------------------------------------------------------------ the browser
@@ -230,6 +244,17 @@ const INIT = `(() => {
     return id;
   };
   window.clearTimeout = function (id) { if (soon.delete(id)) __net.soon--; return ct.call(this, id); };
+  // Work put off until the page is idle (a timeline's next slice of messages, slices.ts) is waited for too: a click
+  // before it lands sees a timeline part drawn, and judges what it draws against a list that size.
+  const ric = window.requestIdleCallback, cic = window.cancelIdleCallback, idle = new Set();
+  if (ric) {
+    window.requestIdleCallback = function (fn, o) {
+      const id = ric.call(this, (d) => { if (idle.delete(id)) __net.soon--; fn(d); }, o);
+      idle.add(id), __net.soon++;
+      return id;
+    };
+    window.cancelIdleCallback = function (id) { if (idle.delete(id)) __net.soon--; return cic.call(this, id); };
+  }
   const f = window.fetch;
   window.fetch = function (input, init) {
     // A visit the usage tracker counted (usage.ts): answered here, so the hub's event does not land in the next click.
@@ -269,8 +294,9 @@ type Counts = { mounts: Record<string, number>; updates: Record<string, number>;
 
 /**
  * Until what the page and the hub were doing is done and drawn, by what each says rather than a quiet spell, which a
- * busy machine never gives (docs/testing.md, "No sleeps"). A round: in the page, no request out and no short timeout
- * waiting (INIT counts them: a chat's read 600 ms after it opens, a re-sort 4 s after the last touch), then two frames
+ * busy machine never gives (docs/testing.md, "No sleeps"). A round: in the page, no request out, no short timeout and
+ * no idle callback waiting (INIT counts them: a chat's read 600 ms after it opens, a re-sort 4 s after the last touch, a
+ * timeline's next slice), then two frames
  * for what they drew; on the hub, no scores still to come and what changed sent (GET /api/attention/waiting flushes
  * first); on each socket, a ping answered, so everything the hub sent before it has come. Again while a round saw a
  * render, a request or an event, since what came may set off more. False when that has not happened in `ms`: what the
@@ -409,9 +435,10 @@ try {
     );
     if (at) await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at }), await settle(p);
   }
-  /** Where the page is: the same after a click was taken back (Escape, back) means no reload is needed. Not how many
-   * elements it has: back on a chat, its timeline draws another window of messages. */
-  const STATE = `JSON.stringify([location.hash, localStorage.getItem('dither-chat:prefs'), document.querySelectorAll('[role=dialog], [role=menu], [aria-modal=true], .cm').length])`;
+  /** Where the page is: the same after a click was taken back (Escape, back) means no reload is needed. And how many
+   * messages its timeline draws: back on a chat, it may draw another window of them (15 or 30 of the 40 it had), and a
+   * click's share of a list is judged against what is on the page. */
+  const STATE = `JSON.stringify([location.hash, localStorage.getItem('dither-chat:prefs'), document.querySelectorAll('[role=dialog], [role=menu], [aria-modal=true], .cm').length, document.querySelectorAll('.msg[id^="m-"]').length])`;
   const ESCAPE = { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 };
   /** Takes the click back: Escape while something is open over the page, back while the address moved. */
   async function undo(c: PageCase, state: string) {
@@ -423,6 +450,7 @@ try {
       // Escape closes what is open over the page. With nothing open it would leave the page, so the address instead.
       if (await overlay()) await p.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...ESCAPE }), await p.send('Input.dispatchKeyEvent', { type: 'keyUp', ...ESCAPE });
       else if ((await p.eval<string>('location.hash')) !== hash) await p.eval(`location.hash = ${JSON.stringify(hash)}; 0`);
+      // Back where it was, but drawing another window of messages: only a reload draws what it did.
       else break;
       await settle(p);
       await hover(c);

@@ -103,8 +103,9 @@ function folderNames(f: P.FolderView): string {
 const entryId = (e: RailEntry) => e.key.slice(e.key.indexOf(':') + 1);
 
 const railDrop = arrangeDrop(dropPlace);
-function dnd(key: string, folder?: string, accepts = false) {
-  return { ...dragProps({ key, label: placeLabel(key), group: 'rail', folder, accepts, onDrop: railDrop, onMenu: (x, y) => openPlaceMenu(key, placeLabel(key), x, y, folder) }) };
+/** `label`: the place's name as the row shows it, from its props, so a memo() row never reads the store for it. */
+function dnd(key: string, label: string, folder?: string, accepts = false) {
+  return { ...dragProps({ key, label, group: 'rail', folder, accepts, onDrop: railDrop, onMenu: (x, y) => openPlaceMenu(key, placeLabel(key), x, y, folder) }) };
 }
 
 /**
@@ -123,7 +124,7 @@ const RailSpace = memo(function RailSpace({ space: s, active, unread, badge, fol
       sub={[`${netName(s.network)} ${NETWORK_META[s.network].spaceNoun}`, mentions(badge)].filter(Boolean).join(' · ')}
       onClick={() => go({ view: 'space', space: s.id })}
       track={folder ? 'community (in a folder)' : 'community'}
-      dnd={dnd(key, folder, !folder)}
+      dnd={dnd(key, s.name, folder, !folder)}
       class={`${dropClass(key, folder)} ${quiet ? 'quiet' : ''}`}
     >
       <SpaceIcon space={s} />
@@ -142,7 +143,7 @@ const RailConv = memo(function RailConv({ conv: c, title, active, unread, badge,
       sub={[`${netName(c.network)} ${c.shape === 'group' ? 'group' : c.shape}`, mentions(badge)].filter(Boolean).join(' · ')}
       onClick={() => go(folder ? { view: 'folder', folder, conv: c.id } : { view: 'inbox', conv: c.id })}
       track={folder ? 'chat (in a folder)' : 'chat'}
-      dnd={dnd(key, folder, !folder)}
+      dnd={dnd(key, title, folder, !folder)}
       class={dropClass(key, folder)}
     >
       <span class="space-icon">
@@ -156,7 +157,7 @@ const RailConv = memo(function RailConv({ conv: c, title, active, unread, badge,
 const RailPerson = memo(function RailPerson({ person: p, active, unread, badge, folder }: { person: P.PersonView; active: boolean; unread: boolean; badge: number; folder: string }) {
   const key = `person:${p.id}`;
   return (
-    <RailItem active={active} unread={unread} badge={badge} title={p.name} track="person (in a folder)" onClick={() => go({ view: 'folder', folder, person: p.id })} dnd={dnd(key, folder)} class={dropClass(key, folder)}>
+    <RailItem active={active} unread={unread} badge={badge} title={p.name} track="person (in a folder)" onClick={() => go({ view: 'folder', folder, person: p.id })} dnd={dnd(key, p.name, folder)} class={dropClass(key, folder)}>
       <Avatar id={p.id} name={p.name} url={p.avatar} size={44} />
     </RailItem>
   );
@@ -230,7 +231,7 @@ function RailFolder({ folder: f, route: r, parent }: { folder: P.FolderView; rou
         sub={folderNames(f)}
         onClick={() => patchPlaces([{ kind: 'folder', id: f.id, open: !open }])}
         track={open ? (parent ? 'folder in a folder (close)' : 'folder (close)') : parent ? 'folder in a folder (open)' : 'folder (open)'}
-        dnd={dnd(key, parent, true)}
+        dnd={dnd(key, f.name, parent, true)}
         class={dropClass(key, parent)}
       >
         {open ? (

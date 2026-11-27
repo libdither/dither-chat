@@ -51,6 +51,8 @@ import { RowTyping } from './Typing.tsx';
 import { AccountChip, AccountDots, Avatar, Count, NetBadge, NetGlyph, SourceChip, variantIcon } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
+import { InboxStatus } from './InboxStatus.tsx';
+import { offline } from './Offline.tsx';
 import { FolderIcon } from './Rail.tsx';
 import { phone } from '../phone.ts';
 import { dropPlace, placeLabel } from './Organize.tsx';
@@ -62,6 +64,7 @@ import { needsReplyLabel, needsReplyOf } from '../replymarks.ts';
 import { pickedRoute } from '../pairpick.ts';
 import { chatKey } from '../chatroutes.ts';
 import { threadDialog } from '../threads.ts';
+import { showCardsOnce } from '../stream.ts';
 import { subThreads } from '../channelrows.ts';
 import { groups, type MenuSpec } from './ContextMenu.tsx';
 import { openAbout } from '../opening.ts';
@@ -75,7 +78,8 @@ import { CalibrationRow } from './Calibration.tsx';
 import { nameMatches, peopleFilters, type PeopleFilter } from '../requests.ts';
 import { SortButton, SortIcon, useFlip } from './Reorganize.tsx';
 import { rememberSearch, SearchBox } from './SearchBox.tsx';
-import { focusSearch, preloadSearch } from './SearchLazy.tsx';
+import { InboxFoundLazy, preloadSearch } from './SearchLazy.tsx';
+import { filterRows, hasOperators, rowStandsFor } from '../inboxfilter.ts';
 import { counting, rendered } from '../perf.ts';
 import { memo, sameProps } from './memo.ts';
 import { convKind, rowTrack } from '../clicks.ts';
@@ -587,6 +591,7 @@ const FILTER_MENU = 'Show in the inbox';
  * a surprise. Mail is there with a mail account.
  */
 function InboxFilterButton({ filter }: { filter: InboxFilter }) {
+  mailRev.value; // Mail is a choice once a mail account is there
   const choices = INBOX_FILTERS.filter((f) => f.id !== 'mail' || db.mail.accounts.size > 0 || filter === 'mail');
   const on = INBOX_FILTERS.find((f) => f.id === filter)!;
   const open = (e: MouseEvent) => {
@@ -691,9 +696,20 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
   if (filter === 'mail' && !db.mail.accounts.size) filter = 'all';
   // A mail list is the Mail filter's, however it was opened (Ctrl+K, a link).
   if (mail) filter = 'mail';
-  const rows = mail ? [] : shownInbox(filter);
-  const [drawn, more] = useShown(rows.length);
   const [q, setQ] = useState('');
+  // Words in the box narrow the list in place, by name, at every key (docs/search.md "In the inbox").
+  const finding = !mail && !!q.trim();
+  // from:, in:, has: and the rest ask for messages, not a name: the list gives the room to them.
+  const asking = finding && hasOperators(q);
+  const listed = mail || asking ? [] : shownInbox(filter);
+  const rows = finding ? filterRows(listed, q) : listed;
+  // With a filter on, the rows it leaves out that hold the words are a tap away.
+  const outside = finding && !asking && filter !== 'all' ? filterRows(shownInbox('all'), q).length - rows.length : 0;
+  const [drawn, more] = useShown(rows.length);
+  const full = () => {
+    rememberSearch(q.trim());
+    go({ view: 'search', q: q.trim() });
+  };
   const scroll = useRef<HTMLDivElement>(null);
   // A row and its ↩ button move as one (ReplyMark.tsx), and a channel row with the threads under it; anything else keyed by its own data-row.
   useFlip(scroll, snap.v, '[data-row-key], [data-row]:not([data-row-key] [data-row])');
@@ -721,37 +737,33 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
     return <InboxRowView key={r.key} rowKey={r.key} ids={ids} conv={r.conv} chat={r.chat} active={r.chat ? r.key === activeKey : r.conv.id === activeConv} why={r.reasons} owedSince={owedSince} needsP={needsP} latest={needsTarget(r.conv)} loud={loudOf(louds, ids)} />;
   };
   return (
-    <div class="sidebar-inner inbox-side" data-track-area="inbox">
-      <header class="side-head">
-        <h1>Inbox<NewMessageButton /></h1>
+    <div class={`sidebar-inner inbox-side ${offline.value ? 'offline' : ''}`} data-track-area="inbox">
+      {/* What the app is doing with the hub goes in the room the title leaves (InboxStatus.tsx). */}
+      <header class="side-head inbox-head">
+        <h1>Inbox</h1>
+        <InboxStatus />
+        <NewMessageButton />
       </header>
       <div class="inbox-search">
         {mail ? <MailListSearch list={mail} /> : <SearchBox
           value={q}
-          setValue={(t) => {
-            // Results come as you type (docs/search.md): the first letter opens the search page, whose box takes the
-            // cursor and what was typed.
-            if (t.trim()) {
-              go({ view: 'search', q: t });
-              setQ('');
-            } else setQ(t);
-          }}
-          // A phone opens the search page at the tap, keyboard and all, with what Ctrl+K would jump to as you type. A
-          // computer starts loading the page (a chunk of its own), so it is there by the first key.
-          onFocusBox={() => (phone.value ? (go({ view: 'search', q: '' }), focusSearch.value++) : preloadSearch())}
-          placeholder={phone.value || filter !== 'all' ? 'Search all messages' : 'Search all messages (Ctrl+K)'}
-          submit={(t) => {
-            if (!t) return;
-            rememberSearch(t);
-            go({ view: 'search', q: t });
-          }}
+          setValue={setQ}
+          onClear={() => setQ('')}
+          // The cursor stays here, on a phone too: the list narrows under it. What it finds beyond its rows is search's
+          // chunk (InboxFound), loaded from the focus so it is there by the first key.
+          onFocusBox={preloadSearch}
+          onDown={() => scroll.current?.querySelector<HTMLElement>(WALK)?.focus()}
+          placeholder="Search chats and messages"
+          hint={phone.value || filter !== 'all' ? undefined : 'Ctrl K'}
+          // Enter: the full results, on the search page.
+          submit={(t) => t && full()}
         />}
         <InboxFilterButton filter={filter} />
       </div>
       {/* Mail is chats (docs/mail.md "Mail as chats"): with the Mail filter on, its other lists are a tap away. */}
       {filter === 'mail' && <MailListChips on={mail ?? null} />}
-      {mail ? <MailSidebarLazy list={mail} active={activeConv} /> : <div class="side-scroll" ref={scroll}>
-        {accounts.length > 0 && (
+      {mail ? <MailSidebarLazy list={mail} active={activeConv} /> : <div class="side-scroll" ref={scroll} onKeyDown={finding ? (e) => walkFound(e, scroll.current) : undefined}>
+        {!finding && accounts.length > 0 && (
           <>
             <SectionHead id="inbox-att" label="Needs you" count={accounts.length} />
             {!isCollapsed('inbox-att') &&
@@ -777,15 +789,37 @@ export function InboxSidebar({ activeConv, mail }: { activeConv?: string; mail?:
           </>
         )}
         {/* Chat requests, notices and the questions about notifications are not mail: the Mail filter leaves them out. */}
-        {filter !== 'mail' && <RequestsRow />}
-        {filter !== 'mail' && <NoticesRow />}
-        {filter !== 'mail' && <CalibrationRow />}
+        {!finding && filter !== 'mail' && <RequestsRow />}
+        {!finding && filter !== 'mail' && <NoticesRow />}
+        {!finding && filter !== 'mail' && <CalibrationRow />}
         {rows.slice(0, drawn).map(row)}
         {more}
-        {!rows.length && <p class="inbox-empty">{EMPTY[filter]}</p>}
+        {!rows.length && !finding && <p class="inbox-empty">{EMPTY[filter]}</p>}
+        {finding && !asking && !rows.length && <p class="inbox-empty inbox-found-none">No chat in the inbox is named “{q.trim()}”.</p>}
+        {outside > 0 && (
+          <button class="link-btn inbox-found-outside" data-track="inbox search: more without the filter" onClick={() => setPrefs({ inboxFilter: 'all' })}>
+            {outside} more with no filter
+          </button>
+        )}
+        {finding && <InboxFoundLazy q={q} skip={rowStandsFor(rows)} onFull={full} />}
       </div>}
     </div>
   );
+}
+
+/** What Up and Down walk while the inbox is narrowed: its rows, then what was found beyond them. */
+const WALK = 'button.row, .search-jump-row, .inbox-found-full, .inbox-hit, .inbox-found-more';
+
+/** Up and Down through the narrowed inbox; Up from the first goes back to the box. */
+function walkFound(e: KeyboardEvent, list: HTMLElement | null) {
+  if ((e.key !== 'ArrowDown' && e.key !== 'ArrowUp') || !list) return;
+  const all = [...list.querySelectorAll<HTMLElement>(WALK)];
+  const i = all.indexOf(document.activeElement as HTMLElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const next = all[i + (e.key === 'ArrowDown' ? 1 : -1)];
+  if (next) next.focus();
+  else if (e.key === 'ArrowUp') list.closest('.inbox-side')?.querySelector<HTMLInputElement>('.inbox-search input')?.focus();
 }
 
 // ------------------------------------------------------------------ people
@@ -962,10 +996,14 @@ const ThreadRow = memo(function ThreadRow({ t, active, depth, onOpen }: { t: P.C
   );
 });
 
-/** "N more": a forum's page is its thread cards; another channel has no such page, so its thread browser opens too. */
+/**
+ * "N more": the channel opens on its thread cards for this visit (stream.ts showCardsOnce), though it opens on its
+ * stream otherwise (a Zulip channel, a Matrix room); a channel with no cards (a Discord text channel) opens its thread
+ * browser too.
+ */
 function moreThreads(c: P.ConversationView, onOpen: (c: P.ConversationView) => void) {
   onOpen(c);
-  if (c.variant !== 'forum' && c.variant !== 'media') threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
+  if (!showCardsOnce(c)) threadDialog.value = { kind: 'browse', convId: c.id, tab: 'active' };
 }
 
 /** The pref('collapsed') key of a channel whose threads are folded away, on this device. */
@@ -1022,6 +1060,7 @@ const ChannelHead = memo(function ChannelHead({ c, folded, active, depth, onOpen
  * conversation only when it is this one or a thread shown here, so opening another channel draws two rows, not the
  * list, and opening a thread draws that thread's row and the one left; a fold draws only its own channel.
  */
+// redraws: threadWords reads only the channel's own kind and network, and the store replaces `c` when they change.
 const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded, active, depth, onOpen, alsoIn, dots = true, unread = 0, badge = 0 }: { c: P.ConversationView; shownThreads: P.ConversationView[]; more?: number; folded?: boolean; active?: string; depth: number; onOpen: (c: P.ConversationView) => void; alsoIn?: string[]; dots?: boolean; unread?: number; badge?: number }) {
   const words = folded === undefined ? null : threadWords(c);
   return (
@@ -1046,7 +1085,13 @@ const ChannelRow = memo(function ChannelRow({ c, shownThreads, more = 0, folded,
   );
 });
 
+/**
+ * A server's (or a section's) channels and their threads. It reads `rev` itself: its parent passes the same props each
+ * time, and Preact does not draw a child again whose props are all the same, so a count read on another device would
+ * otherwise stay as it was until something else moved.
+ */
 function SpaceTree({ spaceId, active, onOpen, depth = 0, seen = new Set<string>(), dots }: { spaceId: string; active?: string; onOpen: (c: P.ConversationView) => void; depth?: number; seen?: Set<string>; dots?: boolean }) {
+  rev.value;
   if (seen.has(spaceId)) return null;
   const nextSeen = new Set(seen).add(spaceId);
   const kids = spaceChildren(spaceId);
@@ -1258,6 +1303,7 @@ function ShelfRow({ list, n, open }: { list: string; n: number; open: boolean })
 
 const spacesDrop = arrangeDrop(dropPlace);
 function SpacesEntry({ entry: e, hidden }: { entry: RailEntry; hidden?: boolean }) {
+  rev.value; // its count changes with each message and read, not `e`
   const label = placeLabel(e.key);
   const folderId = e.kind === 'folder' ? e.folder.id : undefined;
   const props = dragProps({

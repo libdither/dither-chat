@@ -677,6 +677,41 @@ export interface GraphTies {
   ids: string[];
   links: number[];
   friends: number[];
+  /**
+   * Time in a voice channel together (adversarial voice log only), as `links` is: runs of [a, b, n, then n pairs of
+   * month and weight × 10]. A month's weight is 0.1 a minute, split over the others in the channel then (÷ people − 1);
+   * stretches together under five minutes and channels of more than 25 are left out. Absent with the log off.
+   */
+  voice?: number[];
+}
+
+/** Why two people are tied, in all (GET /api/persons/:id/close). */
+export interface CloseView {
+  /** The other side, keyed as the graph keys people (a person id, else an identity id), and one identity of theirs. */
+  key: string;
+  identityId: string;
+  /** How tied, 0 to 1 (association strength, as the graph's ties). */
+  strength: number;
+  replies: number;
+  reactions: number;
+  /** Turns one right after the other in a small group chat or thread. */
+  turns: number;
+  /** Minutes in a voice channel together. */
+  voiceMinutes: number;
+  /** A fetched profile says they are friends. */
+  friends: boolean;
+}
+
+/** A person's time in voice channels, for their profile (GET /api/persons/:id/voice); null with the voice log off. */
+export interface PersonVoiceView {
+  /** When the log first has them in voice; null if never. */
+  since: number | null;
+  /** Minutes in voice: this month (UTC), in the past 30 days, and in all the log has. */
+  minutes: { month: number; days30: number; total: number };
+  /** Their latest stretches in a channel, newest first (up to 20); `to` null while they are still in it. */
+  sessions: { conversationId: string; from: number; to: number | null }[];
+  /** Who they were in a channel with most in the past 90 days, keyed as the graph keys people, most first (up to 8). */
+  with: { key: string; identityId: string; minutes: number }[];
 }
 
 /** What the people graph's importance weighs, and how much (docs/people-graph.md "Who matters"). */
@@ -689,11 +724,13 @@ export interface GraphTuning {
   weights: Record<GraphWeightKey, number>;
   /** Talk fades by e every this many months (3 to 60). */
   fade: number;
+  /** How much time in voice together counts toward a tie between two people, 0 to 3; absent: 1. */
+  voice?: number;
   /** Set when the weights were fitted to what came next (Fit to me): when, and how well before and after. */
   fitted?: { at: number; before: number; after: number };
 }
-/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors. */
-export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8 } as const;
+/** Where a link came from: members seen (adversarial), a profile's mutual servers, a conversation's participants, a thread's authors, the voice log (adversarial). */
+export const GRAPH_SOURCE = { members: 1, profile: 2, participant: 4, author: 8, voice: 16 } as const;
 
 /** What one of your accounts can react with in a conversation. */
 export interface ReactionContextView {
@@ -1361,6 +1398,87 @@ export interface ActivityChartView {
   statuses?: { at: number; hour: number; text: string | null; emoji: string | null; network: Network }[];
 }
 
+/**
+ * Someone's clock (hub theirclock.ts, docs/profile.md "Their time"): a zone you set for them, else the zone a profile of
+ * theirs states, else a fixed offset guessed from the hours they write in, with how sure the guess is.
+ */
+export type TheirClock =
+  | { source: 'pinned'; /** An IANA name, set on their card. */ zone: string }
+  | { source: 'profile'; /** An IANA name. */ zone: string; /** The network whose profile said it. */ network: Network }
+  | {
+      source: 'rhythm';
+      /** Minutes east of UTC, a whole hour. */
+      offset: number;
+      /** The chance the true offset is within an hour of it, 0 to 1. */
+      sure: number;
+      /** Days they were around (wrote, reacted, read, came online…) that it was guessed from. */
+      days: number;
+    };
+
+/** What counts as their being around, on their day (TheirDayView.counts): each a moment they did something. */
+export type TheirActivity = 'messages' | 'reactions' | 'reads' | 'votes' | 'calls' | 'statuses' | 'presence';
+
+/**
+ * GET /api/people/clocks?ids=<identity ids>&tz=<your zone>: each author's clock, null where none is known or the
+ * guess is too unsure to show. `asking`: ids whose profile is being asked for a zone now; ask again for them shortly.
+ */
+export interface TheirClocksView {
+  clocks: Record<string, TheirClock | null>;
+  asking?: string[];
+}
+
+/**
+ * GET /api/people/:id/day?tz=<your zone> (:id a person or an identity): when they are usually around, over the last
+ * 90 days, by hour of the day in `frame` (their zone, or yours when theirs is not known). Around is anything they did
+ * that the hub logs with a time (TheirActivity): a message, a reaction, a read receipt, a vote, a call, a status set,
+ * coming online or leaving (the last two only while presence is logged). Shares are of the days observed that had any
+ * of it in that hour, in percent, with an 80% interval, and the share that had a message: [share, low, high, wrote].
+ */
+export interface TheirDayView {
+  clock: TheirClock | null;
+  /** The zone the hours are in: theirs when `clock` is set, else yours. Its offset now, minutes east of UTC. */
+  frame: { theirs: boolean; zone: string; offsetNow: number };
+  /** Days observed (from the first thing they did in the window, or the window's start), and what they did in them, by kind. */
+  days: number;
+  counts: Partial<Record<TheirActivity, number>>;
+  hours: [share: number, low: number, high: number, wrote: number][];
+  /** Weekday by hour, 7 × 24, Monday first, and how many of each weekday were observed. */
+  week: [share: number, low: number, high: number][];
+  weekDays: number[];
+  /**
+   * Their usual night: when they go quiet and when they are around again, in minutes after midnight in `frame`, each
+   * with its spread (minutes, about one standard deviation), from `nights` nights. Absent with fewer than 7.
+   */
+  quiet?: { from: number; to: number; fromSpread: number; toSpread: number; nights: number };
+}
+
+/**
+ * GET /api/people/:id/answer: when they are likely to answer you (docs/profile.md "When they answer"), from how long
+ * they took with your earlier messages in your direct chats, timed in the hours they are usually around. For your
+ * message they have not answered yet, as of now; else for one you would send now.
+ */
+export interface TheirAnswerView {
+  /** When your unanswered message was sent (the first of your run); null: the last word is theirs, and this is for a message sent now. */
+  waiting: number | null;
+  /** The chance, in percent, they have answered by each half hour from now, for a day, given no answer yet. */
+  by: number[];
+  /** When that chance reaches a half, and 8 in 10; null when it does not within a week of the message. */
+  half: number | null;
+  likely: number | null;
+  /** The chance, in percent, of an answer within a week of the message. */
+  week: number;
+  /** Your earlier messages to them it is from, and how many days back the first was. */
+  turns: number;
+  days: number;
+  /** How much of it is theirs rather than everyone's answers to you, 0 to 1. */
+  own: number;
+}
+
+/** PUT /api/people/:id/zone: set their zone by hand (an IANA name), or null to go back to what is said or guessed. */
+export interface ZonePinBody {
+  zone: string | null;
+}
+
 /** POST /api/directs: a direct conversation, opened or found. */
 export interface OpenedDirect {
   conversation: ConversationView | null;
@@ -1620,6 +1738,8 @@ export interface Bootstrap {
   notices?: NoticesBoot;
   /** Changes when the hub process starts again, as in a sync answer: a new one may have brought a new web build. */
   boot?: string;
+  /** The hub's code (its git commit), as in a sync answer; absent where it cannot tell. */
+  build?: string;
   /** Status dots: everyone's presence as last heard (PresenceNowView). Absent from hubs that predate them. */
   presence?: PresenceNowView[];
 }
@@ -1799,6 +1919,12 @@ export type ClientEvent =
   | { t: 'interaction'; interaction: import('./apps.ts').InteractionView }
   /** A bot opened a form in answer to one of yours (apps.ts). Of the moment. */
   | { t: 'appModal'; modal: import('./apps.ts').AppModalView }
+  /**
+   * The hub is stopping, most often to restart on a new release (docs/sync.md "Restarts"): sent to every socket as the
+   * stop begins, so a page can say so at once and try every second rather than back off. `usualMs`: how long its last
+   * few restarts took from here to answering again, when it knows. Of the moment: not journaled.
+   */
+  | { t: 'stopping'; usualMs?: number }
   | { t: 'resync' };
 
 // ------------------------------------------------------------------ delta sync (docs/sync.md)
@@ -1870,6 +1996,8 @@ export type SyncResponse =
       sync: SyncPosition;
       /** Changes since the hub process started; a new one may have brought a new web build. */
       boot: string;
+      /** The hub's code (its git commit), to tell a restart onto a new release from one onto the same; absent where it cannot tell. */
+      build?: string;
       /** The same events the live socket sends, current as of `sync.seq`. Empty when only timelines were asked for. */
       events: ClientEvent[];
       selfPersonId?: string | null;

@@ -20,11 +20,12 @@ docs/chat.md "Servers"); the demo world answers the same way (`packages/hub/src/
   only for a mention, at most eight others; then the three latest not shown yet (not a muted one, unless the whole
   channel is muted); then a "N more topics" row ("threads" or "posts" on the other networks). A thread that was shown
   when you opened it stays where it was, though opening it read it. The "more" row opens the channel's thread list: a
-  forum's or a Zulip channel's page is its thread cards; a text channel or a room opens with its thread browser over
-  it. An archived thread shows only open or unread, and is not in the more count, since a Discord text channel can
-  keep hundreds; a Zulip topic resolved is not put away, so it is listed as any other, with its Resolved mark. A
-  chevron on the channel's row folds its threads away (the open one still shows), per device in the browser, as the
-  list's sections are. The channel's count is its own with all of its threads', folded or not (`channelUnread`): a
+  channel with thread cards (a forum, a Zulip channel, a Matrix room with threads) opens on them for that visit, even
+  one that opens on its stream otherwise; a Discord text channel opens with its thread browser over it. An archived
+  thread shows only open or unread, and is not in the more count, since a Discord text channel can keep hundreds; a
+  Zulip topic resolved is not put away, so it is listed as any other, with its Resolved mark. A chevron on the
+  channel's row folds its threads away (the open one still shows), per device in the browser, as the list's sections
+  are. The channel's count is its own with all of its threads', folded or not (`channelUnread`): a
   thread's messages are its own, so a text channel's and its threads' add up, while a forum's own count may already
   hold its posts' (a Discord forum's read state), so of the two the larger is taken, never both. A server's or a
   folder's count adds up the same way (`sumUnread`), a channel put in a folder with its threads.

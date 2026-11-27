@@ -1438,6 +1438,32 @@ the hub's bootstrap (`SELECT * FROM participant`, in the order they were written
 names, and every message and row on the screen drew again. Both read by id now, and the app compares members as a set
 (packages/hub/test/conversation-view.test.ts, packages/web/test/versions.test.ts).
 
+## What redraws (2026-11-26)
+
+The client's copy of the hub's data (`db`, `timelines`, `quoted` in store.ts) is plain objects, and reading it
+subscribes nothing: a component shows a change when a signal it read moves (`rev`, `metaRev`, `mailRev`,
+`presenceRev`, a `timelineRev`, versions.ts), or when its parent draws it again with different props. @preact/signals
+skips a component whose props are all the same if it read any signal while it rendered, or keeps state
+(`useState`, `useReducer`, `useComputed`, `useSignal`), and `memo()` skips one too. A component Preact never skips
+draws whenever its parent does.
+
+So a component that reads one signal (a setting, the route) and the hub's data, but no change signal, shows the data
+as it was the last time something else drew it. The server sidebar's channel tree read unread counts from `db` and a
+setting (`pref('collapsed')`): a topic read on another device stayed bold until something else redrew the tree
+([#426](https://github.com/libdither/dither-chat/pull/426)).
+
+`bun run check:redraws` (scripts/check-redraws.ts) finds these. What a component reads while it renders counts,
+through every call into packages/web/src, and so does what a child it draws reads when that child is never skipped;
+event handlers, effects, timers and `useState`'s first value do not. A component that is right without a change
+signal, because its props change whenever what it reads does, says why in a comment starting `redraws:` just before
+it. It reads a change signal at all, not the right one: one that reads `metaRev` and shows unread counts passes,
+though counts move only `rev`.
+
+A component in a long list that shows a little of what `metaRev` covers would draw on every rule, status or name that
+moves it. It reads a `computed` instead that follows the change signal and gives, as a string, only what it shows:
+a computed tells what reads it only when its value changes. AccountDots reads `dotsSource` (ui/bits.tsx), and a mail
+row's swipes `filingSource` (ui/mail/Filing.tsx). The check counts such a computed as a change signal.
+
 ## Every click (2026-11-20)
 
 `scripts/verify-response.ts` (CI's `response` job, in four parts) builds the app without minifying, so components

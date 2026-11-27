@@ -72,10 +72,10 @@ The people you write to by mail join the people the hub already knows (`hub/src/
 - **Never by name.** Sam by mail and Sam on Signal stay two people until you merge them. A profile's "Same name
   elsewhere" hint says who and where ("Alice Chen <alice@…>", "Alice Chen on Signal and Discord"), and the merge
   search finds people by an address too, and the email identities no person holds yet.
-- **A profile's Mail card**: their newest threads across every mail account, how many there are, and "All mail with
-  Sam", the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
+- **A profile's mail**, in its **Between you** list beside their messages: their newest threads across every mail
+  account, how many there are, and All mail, the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
   mail: the merged person's card and list hold every thread of every address of theirs, and a split takes it back.
-  An email-only person asks no network for a profile, and has no chat banner and no empty Recent messages card.
+  An email-only person asks no network for a profile, and has no chat banner.
 - **In the reader**, the sender's name opens their page. Thread and message views name the identity and person
   behind each address (`MailAddressView.identityId`, `personId`; `MailThreadView.personIds`).
 - **When an account's mail is deleted** (24 h after access ended), the identities and persons only it held go too;
@@ -90,7 +90,7 @@ own addresses becoming known, mail from before this slice on a first start) goes
 background. Views work out the person behind each address as they are made (so `mail_thread.person_ids` stays unused),
 and a merge, a split or a new person sends that person's threads again. The profile's card comes with `GET /api/persons/:id/profile` (`ProfileView.mail`), the merge search is
 `GET /api/persons/candidates?q=&except=`. Tests: `hub/test/mail-people.test.ts`, `web/test/mail-people.test.ts`, and
-`scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
+`scripts/verify-profile.ts` (the mail in Between you on a desktop in the dark theme and a phone in the light one, the reader's
 sender, all mail with them, the hint, the merge search by address, merge and split).
 
 ## Mail as chats

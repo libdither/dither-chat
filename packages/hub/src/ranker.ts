@@ -190,6 +190,9 @@ export class InboxRanker implements AttentionJudge {
       withMail: this.withMail ? { mode: this.mailMode, fitAt: mm.fitAt, moments: mm.moments, rows: mm.rows, learned: { open: diffOf(mm, 'open'), send: diffOf(mm, 'send') } } : { mode: 'off' as const },
       mode: this.mode,
       fitAt: m.fitAt,
+      // A refit is due (the first check is 20 s after a start) or working out: a test waits for neither (verify-response.ts).
+      due: this.due(),
+      refitting: !!this.busy,
       moments: m.moments,
       rows: m.rows,
       horizon: HORIZON,

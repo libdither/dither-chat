@@ -3,7 +3,7 @@
  * 'stories', Signal with its stories setting on), and drawn by Stories.tsx, in the chunk MediaParts.tsx.
  */
 import { useEffect, useState } from 'preact/hooks';
-import { db } from '../state.ts';
+import { db, metaRev } from '../state.ts';
 
 type Parts = typeof import('./MediaParts.tsx');
 let parts: Parts | null = null;
@@ -13,6 +13,7 @@ let loading: Promise<Parts> | null = null;
 const storiesHere = (network: string | undefined) => !!network && [...db.accounts.values()].some((a) => a.network === network && a.capabilities.includes('stories'));
 
 export function Stories({ identityId, conversationId, network }: { identityId?: string; conversationId?: string; network?: string }) {
+  metaRev.value; // accounts and what they can do
   const want = storiesHere(network);
   const [m, setM] = useState(parts);
   useEffect(() => {

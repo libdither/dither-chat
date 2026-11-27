@@ -7,7 +7,7 @@ import { netName } from '../model.ts';
 import { NUMBER_WARNING, ownCode, qrSvg, readScan, SCAN_CAMERA_TEXT, type ScanResult } from '../qr.ts';
 import { type CameraState, type Decoder, readPicture, startCamera } from '../qrscan.ts';
 import type * as P from '@dither-chat/protocol';
-import { api, db } from '../state.ts';
+import { api, db, metaRev } from '../state.ts';
 import { NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -70,6 +70,7 @@ function useOwnUsername(a: P.AccountView | undefined): P.PersonAbout['username']
 
 /** Each account's own code, one at a time; a phone number stays hidden until tapped, every time this opens. */
 export function MyCodes() {
+  metaRev.value; // accounts and who each one is
   const accounts = [...db.accounts.values()].filter((a) => a.network !== 'email');
   const [pick, setPick] = useState(accounts[0]?.id ?? null);
   const [shown, setShown] = useState<string | null>(null);

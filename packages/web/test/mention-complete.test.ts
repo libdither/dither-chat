@@ -34,8 +34,15 @@ test('a mail address, a written mention, code, a URL and a finished name do not'
   expect(at('@quinn ')).toBeNull();
   expect(at('@@x')).toBeNull();
   expect(at('@' + 'a'.repeat(33))).toBeNull();
+  expect(at('`code @x')).toBeNull();
+  expect(at('a `span` then `@x')).toBeNull();
   // The caret, not the end of the text, is where it looks.
   expect(findMentionTrigger('hi @al there', 6)).toEqual({ start: 3, end: 6, query: 'al' });
+});
+
+test('a backtick inside a word, typed for an apostrophe, opens no code span', () => {
+  expect(at('it`s for @qu')).toEqual({ start: 9, end: 12, query: 'qu' });
+  expect(at('a `span` and it`s @qu')?.query).toBe('qu');
 });
 
 test('names match as the hub matches them', () => {

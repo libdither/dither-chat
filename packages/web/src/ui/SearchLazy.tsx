@@ -1,7 +1,8 @@
 /**
  * Search's page, loaded when first opened (docs/search.md, "In the app"): its tabs, chips, ranking reasons and Jump to
  * are a chunk of their own (Search.tsx), so the app's first load does not carry them. What must be there from the
- * start stays here: Ctrl+F, and the signal the inbox's box bumps to put the cursor in search's box.
+ * start stays here: Ctrl+F. What the inbox finds as you type in
+ * its box beyond its own rows (InboxFound) is in the same chunk, which the box starts loading on focus.
  */
 import { signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
@@ -10,17 +11,15 @@ import { countKey } from '../clicklog.ts';
 import { Loading } from './Loader.tsx';
 import { Empty } from './bits.tsx';
 
-/** Bumped to put the cursor in search's box: the phone's inbox box does, as the search page may already be mounted. */
-export const focusSearch = signal(0);
-
-type Chunk = typeof import('./Search.tsx');
+type Chunk = Pick<typeof import('./Search.tsx'), 'default' | 'InboxFound'>;
 const chunk = signal<Chunk | null>(null);
 const failed = signal(false);
 let loading: Promise<unknown> | null = null;
 /** Starts loading the page; the inbox's box calls it on focus, so the page is usually there by the first key. */
 export const preloadSearch = () =>
   (loading ??= import('./Search.tsx').then(
-    (m) => ((chunk.value = m), (failed.value = false)),
+    // Named, so the check for unused exports sees both used.
+    (m) => ((chunk.value = { default: m.default, InboxFound: m.InboxFound }), (failed.value = false)),
     () => ((loading = null), (failed.value = true)),
   ));
 
@@ -34,6 +33,14 @@ export function SearchPane(props: { q: string; onBack?: () => void }) {
       {failed.value ? <Empty icon="alert" title="Could not load search">Check the connection to the hub, then try again.</Empty> : <Loading fill label="Loading…" />}
     </section>
   );
+}
+
+/** The inbox's finds beyond its rows (Search.tsx InboxFound); a line saying so until the chunk is here. */
+export function InboxFoundLazy(props: { q: string; skip: Set<string>; onFull: () => void }) {
+  const m = chunk.value;
+  useEffect(() => void (m || preloadSearch()), [m]);
+  if (m) return <m.InboxFound {...props} />;
+  return <p class="inbox-found-note">{failed.value ? 'Could not load search.' : 'Searching…'}</p>;
 }
 
 /** Ctrl+F: search the chat you are in, or with search open, go to its box. */

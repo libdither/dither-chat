@@ -8,7 +8,7 @@ import { useState } from 'preact/hooks';
 import { deviceId, deviceRule, forgetDevice, setDeviceRule } from '../devices.ts';
 import { ago } from '../format.ts';
 import { netName } from '../model.ts';
-import { db, noticesBoot, rev, toast } from '../state.ts';
+import { db, metaRev, noticesBoot, rev, toast } from '../state.ts';
 import { mailRev } from '../versions.ts';
 import { AccountChip, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -44,6 +44,8 @@ function placeLabel(r: P.DeviceRuleView): { network: P.Network | null; text: str
 }
 
 function DeviceBlock({ d, mine }: { d: P.DeviceView; mine: boolean }) {
+  metaRev.value; // accounts and places' names
+  mailRev.value; // mail accounts and threads' subjects
   const [busy, setBusy] = useState(false);
   const run = (fn: () => Promise<unknown>) => async () => {
     setBusy(true);

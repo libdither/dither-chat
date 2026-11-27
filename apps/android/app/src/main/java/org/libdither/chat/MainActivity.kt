@@ -105,6 +105,8 @@ class MainActivity : Activity() {
     private var loadAt = 0L
     var callActive = false
         private set
+    /** The page plays something (MediaService.kt): like a call, it keeps running in the background. */
+    private var mediaPlaying = false
     private var notifyAsked = false
     private var backCallback: Any? = null
     /** The system splash stays up until the page has drawn its own sphere in the same place, or for 1.5 s at most. */
@@ -116,7 +118,6 @@ class MainActivity : Activity() {
         Crashes.install(this)
         Crashes.collectExits(this)
         Notifications.channels(this)
-        Unlock.listen(this)
         bg = Hub.prefs(this).getInt("bg", getColor(R.color.app_bg))
         window.setBackgroundDrawable(ColorDrawable(bg))
         root = FrameLayout(this).apply { setBackgroundColor(bg) }
@@ -575,12 +576,15 @@ class MainActivity : Activity() {
         resumed = null
         // The hub's session cookie to disk now, so the app's own requests (Hub.authorize) and the next start have it.
         runCatching { CookieManager.getInstance().flush() }
-        // A call keeps the page running. Otherwise pause what can be (animations, sensors); JS and the socket go on.
-        if (!callActive) web?.onPause()
+        // A call, or something playing, keeps the page running. Otherwise pause what can be (animations, sensors); JS
+        // and the socket go on.
+        if (!callActive && !mediaPlaying) web?.onPause()
     }
 
     override fun onDestroy() {
         if (current == this) current = null
+        // The page that played is gone with this activity (swiped from Recents): so is its notification.
+        MediaService.stop(this)
         dropWeb()
         super.onDestroy()
     }
@@ -611,7 +615,7 @@ class MainActivity : Activity() {
         callActive = active
         if (!active) notifyAsked = false
         // During a call the renderer keeps its priority with the screen off, so Android does not reclaim it first.
-        web?.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, !active)
+        keepRenderer()
         CallService.update(this, m)
         // Android 13+ hides a foreground service's notification without this, and with it the hang-up button.
         // A notification posted before the grant stays hidden, so post it again after. Asked once a call is live: by
@@ -622,6 +626,17 @@ class MainActivity : Activity() {
             notifyAsked = true
             ensureNotifications { granted -> if (granted && callActive) CallService.update(this, m) }
         }
+    }
+
+    /** What the page plays changed (packages/web/src/nowplaying.ts): `playing`, `paused` or `none`. */
+    fun onMedia(m: JSONObject) {
+        mediaPlaying = m.optString("state") == "playing"
+        keepRenderer()
+        MediaService.update(this, m)
+    }
+
+    private fun keepRenderer() {
+        web?.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, !(callActive || mediaPlaying))
     }
 
     fun changeHub() = showSetup(hub?.toString(), null)
