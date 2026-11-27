@@ -8,13 +8,14 @@ import type * as P from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { chatSends, chosenRung, chooseRung, loadMailThread, mailThread, refill, sendsIn, sendsShown } from '../mail/chats.ts';
-import { bareSubject } from '@dither-chat/protocol';
+import { bareSubject, linkIsAddress } from '@dither-chat/protocol';
 import { archivedInAll } from '../mail/filing.ts';
 import { clock, dayLabel, fullTime } from '../format.ts';
 import { rowOpen, toggled, type ElsewhereRow } from '../mail/elsewhere.ts';
-import { letter, shortLink } from '../mail/letter.ts';
+import { type BlockLetter, type BlockLine, inlineText, type Letter, letter, letterBlocks, shortLink } from '../mail/letter.ts';
+import { askLink, linkMismatch } from './mail/linkOut.tsx';
 import { linkify } from '../mail/text.ts';
-import { db, go, mailRev, openChat, openProfile, timelineKey, timelineRev, toast } from '../state.ts';
+import { db, go, mailRev, metaRev, openChat, openProfile, timelineKey, timelineRev, toast } from '../state.ts';
 import { timelines } from '../store.ts';
 import { details } from '../mail/held.ts';
 import { Icon } from './icons.tsx';
@@ -73,8 +74,9 @@ function signNames(m: P.MessageView): (string | null | undefined)[] {
 }
 
 /**
- * A mail's words in the chat: plain text with its links (mail is never Markdown), drawn as a letter (mail/letter.ts):
- * paragraphs a small gap apart, an unsure sign-off small and faint. Words the hub did not hold yet come from Mail's chunk.
+ * A mail's words in the chat, drawn as a letter (mail/letter.ts): paragraphs a small gap apart, an unsure sign-off
+ * small and faint. Plain text with its links (mail is never Markdown), or, when the hub sent its tree
+ * (`mail.blocks`), the words with their formatting. Words the hub did not hold yet come from Mail's chunk.
  * `quoteAbove`: the mail it answers is the message drawn right above, so its quote is no reason for ···.
  */
 export function MailWords({ m, quoteAbove }: { m: P.MessageView; quoteAbove?: boolean }) {
@@ -84,31 +86,199 @@ export function MailWords({ m, quoteAbove }: { m: P.MessageView; quoteAbove?: bo
     if (!mailThread(x.threadId)) void loadMailThread(x.threadId);
     void preloadMail().catch(() => {});
   }, [x.threadId]);
-  if (!m.body.trim() && x.bodyState !== 'cached') return <ChatMailBodyLazy m={m} show="words" words={(text, quoted) => <MailLetter m={m} text={text} quoted={quoted} quoteAbove={quoteAbove} />} />;
-  return <MailLetter m={m} text={m.body} quoted={x.quoted} quoteAbove={quoteAbove} />;
+  if (!m.body.trim() && x.bodyState !== 'cached')
+    return <ChatMailBodyLazy m={m} show="words" words={(text, quoted, blocks) => <MailLetter m={m} text={text} blocks={blocks} quoted={quoted} quoteAbove={quoteAbove} />} />;
+  return <MailLetter m={m} text={m.body} blocks={x.blocks} quoted={x.quoted} quoteAbove={quoteAbove} />;
+}
+
+/** A mail's link: its words, or its address shortened when it has none of its own; one whose words name another site asks first. */
+function MailLink({ href, c }: { href: string; c: P.MailInline[] }) {
+  const words = inlineText(c);
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={href}
+      onClick={(e) => {
+        const url = new URL(href);
+        const shown = linkMismatch(url, words);
+        if (!shown) return;
+        e.preventDefault();
+        e.stopPropagation();
+        askLink(url, shown, { x: e.clientX, y: e.clientY });
+      }}
+    >
+      {!words.trim() || linkIsAddress(href, words) ? shortLink(href) : <Inline xs={c} link />}
+    </a>
+  );
+}
+
+const MARK = { b: 'b', i: 'i', u: 'u', s: 's', code: 'code' } as const;
+
+/** A formatted mail's inline nodes as elements (never HTML): text with its bare links, marks, links, breaks. */
+function Inline({ xs, link }: { xs: P.MailInline[]; link?: boolean }) {
+  return (
+    <>
+      {xs.map((x) => {
+        if (typeof x === 'string') return link ? x : <Linked text={x} />;
+        if (x.t === 'br') return <br />;
+        if (x.t === 'a') return link ? <Inline xs={x.c} link /> : <MailLink href={x.href} c={x.c} />;
+        const Tag = MARK[x.t];
+        return (
+          <Tag>
+            <Inline xs={x.c} link={link} />
+          </Tag>
+        );
+      })}
+    </>
+  );
+}
+
+/** A formatted mail's block: headings sized for a chat row, code that scrolls sideways inside the message. */
+function Block({ b }: { b: P.MailBlock }) {
+  if (b.t === 'p')
+    return (
+      <div class="mail-para">
+        <Inline xs={b.c} />
+      </div>
+    );
+  if (b.t === 'h')
+    return (
+      <div class={`mail-h mail-h${Math.min(b.level, 3)}`} role="heading" aria-level={b.level}>
+        <Inline xs={b.c} />
+      </div>
+    );
+  if (b.t === 'hr') return <hr class="mail-hr" />;
+  if (b.t === 'pre') return <pre class="mail-pre">{b.text}</pre>;
+  if (b.t === 'quote')
+    return (
+      <blockquote class="mail-bq">
+        {b.c.map((c) => (
+          <Block b={c} />
+        ))}
+      </blockquote>
+    );
+  const items = b.items.map((it) => (
+    <li>
+      {it.map((c) => (
+        <Block b={c} />
+      ))}
+    </li>
+  ));
+  return b.ordered ? (
+    <ol class="mail-wlist" start={b.start}>
+      {items}
+    </ol>
+  ) : (
+    <ul class="mail-wlist">{items}</ul>
+  );
 }
 
 /**
- * The letter, then ··· when something is behind it: the folded name and signature, the quoted mail (unless it is the
- * message above), "Show as sent" for a mail whose HTML plain text would lose. ··· opens them under the message and
- * closes them again. Its files show under it either way.
+ * A paragraph of the letter: its lines a break apart, its blocks as themselves. `dots`: the … of the rest, at the end
+ * of its last line, or on a row of its own after a block.
  */
-function MailLetter({ m, text, quoted, quoteAbove }: { m: P.MessageView; text: string; quoted: boolean; quoteAbove?: boolean }) {
+function BlockPara({ p, dots }: { p: BlockLine[]; dots?: (inline: boolean) => preact.JSX.Element }) {
+  const out: preact.JSX.Element[] = [];
+  let run: { c: P.MailInline[]; faint?: true }[] = [];
+  const flush = (end: boolean) => {
+    if (run.length)
+      out.push(
+        <div class="mail-para">
+          {run.map((l, i) => (
+            <>
+              {i > 0 && '\n'}
+              {l.faint ? (
+                <span class="mail-faint">
+                  <Inline xs={l.c} />
+                </span>
+              ) : (
+                <Inline xs={l.c} />
+              )}
+            </>
+          ))}
+          {end && dots?.(true)}
+        </div>,
+      );
+    run = [];
+  };
+  for (const l of p) {
+    if ('block' in l) {
+      flush(false);
+      out.push(<Block b={l.block} />);
+    } else run.push(l);
+  }
+  const tail = !run.length;
+  flush(true);
+  return (
+    <>
+      {out}
+      {tail && dots?.(false)}
+    </>
+  );
+}
+
+/** Close to the view (or in it): a framed mail loads only then, so a long thread does not load every frame at once. */
+function useNear<T extends Element>(on: boolean) {
+  const ref = useRef<T>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!on || near || !el) return;
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setNear(true), { rootMargin: '600px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [on, near]);
+  return { ref, near };
+}
+
+/** Mail folded back to its words with "Just the words", this session: it stays so when the chat draws it again. */
+const justWords = new Set<string>();
+
+/** A text letter as lines of text nodes, so one walker draws both. */
+const asBlockLetter = (l: Letter): BlockLetter => ({
+  paras: l.paras.map((p) => p.map((x): BlockLine => (x.faint ? { c: [x.text], faint: true } : { c: [x.text] }))),
+  rest: l.rest === null ? null : [[{ c: [l.rest] }]],
+});
+
+/**
+ * The letter, then ··· when something is behind it: the folded name and signature, the quoted mail (unless it is the
+ * message above), "Show as sent" for a mail whose HTML its words would lose. ··· opens them under the message and
+ * closes them again. Its files show under it either way. A designed mail (`rich` with no `blocks`: tables, pictures,
+ * colours) shows as sent, framed in place, once it comes near the view; "Just the words" folds it back.
+ */
+function MailLetter({ m, text, blocks, quoted, quoteAbove }: { m: P.MessageView; text: string; blocks?: P.MailBlock[]; quoted: boolean; quoteAbove?: boolean }) {
+  metaRev.value; // the names it may be signed with (signNames)
+  mailRev.value; // and your mail account's
   const x = m.mail!;
   const [open, setOpen] = useState(false);
-  const [sent, setSent] = useState(false);
-  const l = letter(text, signNames(m));
+  const framed = x.rich && !blocks && x.bodyState === 'cached';
+  // What the reader picked here; until then a designed mail shows as sent. Not fixed at the first draw: a mail drawn
+  // before its tree came is not left framed once it has one.
+  const [chosen, setSent] = useState<boolean | null>(null);
+  const sent = chosen ?? (framed && !justWords.has(m.id));
+  const { ref, near } = useNear<HTMLDivElement>(sent && framed);
+  const names = signNames(m);
+  const l = blocks ? letterBlocks(blocks, names) : asBlockLetter(letter(text, names));
   const quote = quoted && !quoteAbove;
   const behind = !!l.rest || quote || x.rich;
-  if (sent)
+  const asSent = (on: boolean) => {
+    if (on) justWords.delete(m.id);
+    else justWords.add(m.id);
+    setSent(on);
+  };
+  // Shown as sent: at once when asked for, once near the view when it is the default.
+  if (sent && (near || !framed))
     return (
       <>
-        <ChatMailBodyLazy m={m} show="sent" />
+        <ChatMailBodyLazy m={m} show="sent" cap={framed} />
         <div class="mail-opens">
-          <button class="mail-open-chip on" data-track="mail as sent" aria-pressed="true" title="Back to its words" onClick={() => setSent(false)}>
+          <button class="mail-open-chip on" data-track="mail as sent" aria-pressed="true" title="Back to its words" onClick={() => asSent(false)}>
             Just the words
           </button>
         </div>
+        {x.hasAttachments && <ChatMailBodyLazy m={m} show="files" />}
       </>
     );
   const dots = (inline: boolean) => (
@@ -119,40 +289,30 @@ function MailLetter({ m, text, quoted, quoteAbove }: { m: P.MessageView; text: s
   return (
     <>
       {l.paras.length ? (
-        <div class="msg-body mail-words">
+        <div ref={ref} class={`msg-body mail-words ${blocks ? 'mail-blocks' : ''}`}>
           {l.paras.map((p, pi) => (
-            <div class="mail-para">
-              {p.map((line, i) => (
-                <>
-                  {i > 0 && '\n'}
-                  {line.faint ? (
-                    <span class="mail-faint">
-                      <Linked text={line.text} />
-                    </span>
-                  ) : (
-                    <Linked text={line.text} />
-                  )}
-                </>
-              ))}
-              {/* The rest of the mail opens from the end of its last line, not from a row of its own. */}
-              {behind && pi === l.paras.length - 1 && dots(true)}
-            </div>
+            // The rest of the mail opens from the end of its last line, not from a row of its own.
+            <BlockPara p={p} dots={behind && pi === l.paras.length - 1 ? dots : undefined} />
           ))}
         </div>
       ) : (
-        !x.hasAttachments && <div class="msg-body mail-words mail-words-empty">No text</div>
+        <div ref={ref} class={`msg-body mail-words mail-words-empty ${x.hasAttachments ? 'none' : ''}`}>
+          {!x.hasAttachments && 'No text'}
+        </div>
       )}
       {behind && !l.paras.length && dots(false)}
       {behind && open && (
         <div class="mail-rest">
           {l.rest && (
-            <div class="mail-words mail-faint">
-              <Linked text={l.rest} />
+            <div class={`mail-words mail-faint ${blocks ? 'mail-blocks' : ''}`}>
+              {l.rest.map((p) => (
+                <BlockPara p={p} />
+              ))}
             </div>
           )}
           {quote && <ChatMailBodyLazy m={m} show="quote" />}
           {x.rich && (
-            <button class="mail-open-chip" data-track="mail as sent" title="Show the mail as it was sent: its colours, pictures and layout" onClick={() => setSent(true)}>
+            <button class="mail-open-chip" data-track="mail as sent" title="Show the mail as it was sent: its colours, pictures and layout" onClick={() => asSent(true)}>
               Show as sent
             </button>
           )}
@@ -521,6 +681,7 @@ export function ElsewhereRows({ view, person, rows }: { view: string; person: P.
 }
 
 function PlaceRow({ view, person, r }: { view: string; person: P.PersonView; r: ElsewhereRow }) {
+  mailRev.value; // whether it is open is its rung in `db.mail`, which a click on it changes
   const subject = bareSubject(r.e.title) || '(no subject)';
   const open = isOpen(view, r);
   const menu = useMenu(() => placeMenu(view, person, r, subject));

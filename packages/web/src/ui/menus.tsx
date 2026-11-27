@@ -18,7 +18,7 @@ import { desk, openLink } from '../desk.ts';
 import { asLabel, downloadsAs, hubMedia } from '../download.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
-import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, metaRev, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
 import { hasHistory, openHistory } from '../messageHistory.ts';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
@@ -32,6 +32,7 @@ import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from '../opening.ts';
 import { canIndex, startIndexing } from '../indexjobs.ts';
+import { canCheck, checkChat } from '../catchupask.ts';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from '../opening.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';
@@ -93,6 +94,7 @@ function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => vo
 }
 
 function MessageHead({ m }: { m: P.MessageView }) {
+  metaRev.value; // the author's name and picture, and the accounts' labels
   const self = isSelfIdentity(m.authorId);
   const name = self ? 'You' : authorName(m.authorId);
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -476,6 +478,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[], channelR
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
         { label: `Search in ${noun}`, icon: 'search', run: () => go({ view: 'search', q: `in:${c.id}` }) },
         c.shape !== 'self' && canIndex('conversation', c.id) && { label: `Index This ${channel ? 'Channel' : 'Chat'}…`, icon: 'archive', run: () => startIndexing('conversation', c.id) },
+        c.shape !== 'self' && canCheck(c.id) && { label: 'Check for Missing Messages', icon: 'refresh', run: () => void checkChat(c.id) },
         { label: 'Copy Link', icon: 'link', run: () => copy(link ?? appLink({ view: 'inbox', conv: c.id }), 'Link copied') },
       ],
       [
@@ -515,6 +518,7 @@ export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: st
       [
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
         { label: 'Search in Chat', icon: 'search', run: () => go({ view: 'search', q: `in:${p.id}` }) },
+        routes.some((c) => canCheck(c.id)) && { label: 'Check for Missing Messages', icon: 'refresh', run: () => void checkChat(ids) },
         { label: 'Copy Link', icon: 'link', run: () => copy(appLink({ view: 'people', person: p.id }), 'Link copied') },
       ],
       [

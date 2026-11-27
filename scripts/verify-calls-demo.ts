@@ -18,6 +18,7 @@
  *   call's own; no Leave on it, 44 px buttons; mute from it; the row's mark is bars; a tap opens a sheet in place, back
  *   folds it, Go to chat opens the call's chat; a computer's hidden list: the bar under the page, the dock over it on a
  *   tap, Escape folds it, Leave from there;
+ * - a ring on the page in front rings aloud, and stops when the caller gives up; a muted chat's ring shows quietly;
  * - no page errors.
  *
  *   bun packages/hub/src/main.ts --demo --data /tmp/x --port 8579 --web packages/web/dist
@@ -258,6 +259,27 @@ try {
   await wait(d.page, `!!document.querySelector('.call-dock.over-bar .call-btn.leave')`, 3000);
   await d.page.eval(`document.querySelector('.call-dock.over-bar .call-btn.leave').click()`);
   check(await wait(d.page, `window.__activeCall.value === null || window.__activeCall.value.phase === 'ended'`, 5000), 'leaving from the expanded bar ends the call');
+
+  // ------------------------------------------------------------ a ring on the page in front
+  // The service worker closes the ring's notification while a page is in front, so the page itself rings (ringtone.ts);
+  // a muted chat's ring shows its card quietly.
+  const dm = boot.conversations.find((x: any) => x.shape === 'direct' && x.vantages.some((v: any) => v.accountId === MAIN));
+  const peer = boot.identities.find((i: any) => i.id === dm?.participantIds.find((p: string) => p !== selfOf(MAIN)));
+  const act = (action: string, args: unknown) => fetch(`${hub}/api/accounts/${MAIN}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, args }) }).then((r) => r.json());
+  const rule = (level: string | null) => fetch(`${hub}/api/rules`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'conversation', target: dm.id, level }) });
+  const ringState = () => a.page.eval<{ on: boolean; rings: number; blocked: boolean }>(`({ ...window.__ringtone })`);
+  await act('ring', { conversation: dm.nativeId, caller: peer.nativeId });
+  check(await wait(a.page, `!!document.querySelector('.ring-card') && window.__ringtone.on && window.__ringtone.rings > 0`, 10_000), 'a ring card on the page in front rings aloud', await ringState());
+  await act('ringStop', { conversation: dm.nativeId });
+  check(await wait(a.page, `!document.querySelector('.ring-card') && !window.__ringtone.on`, 10_000), 'and stops when the caller gives up', await ringState());
+  await rule('none');
+  const ringsBefore = (await ringState()).rings;
+  await act('ring', { conversation: dm.nativeId, caller: peer.nativeId });
+  check(await wait(a.page, `!!document.querySelector('.ring-card')`, 10_000), "a muted chat's ring still shows its card");
+  check(!(await ringState()).on && (await ringState()).rings === ringsBefore, 'quietly', await ringState());
+  await act('ringStop', { conversation: dm.nativeId });
+  await rule(null);
+  await wait(a.page, `!document.querySelector('.ring-card')`, 10_000);
 
   for (const [n, x] of [['first device', a], ['second device', b], ['no-microphone device', c], ['phone', d]] as const) check(x.page.errors.length === 0, `no page errors on the ${n}`, x.page.errors.slice(0, 3));
 } finally {

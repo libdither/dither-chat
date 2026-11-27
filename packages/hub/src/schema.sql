@@ -70,7 +70,10 @@ CREATE TABLE IF NOT EXISTS person (
   name_source TEXT NOT NULL DEFAULT 'network', -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
   face_id    TEXT,                            -- the account they are shown by: its name as you see it and its picture
   face_pinned INTEGER NOT NULL DEFAULT 0,     -- you chose face_id (Make Main Account); else the hub keeps or chooses one
-  picture_identity_id TEXT                    -- the account whose picture they show, when you chose one other than face_id's
+  picture_identity_id TEXT,                   -- the account whose picture they show, when you chose one other than face_id's
+  name_identity_id TEXT,                      -- with name_field: the name you chose for them, one account's (P.NameFrom)
+  name_field TEXT,                            -- nickname | display | handle
+  nickname   TEXT                             -- your name for them, no account's: shown over every account's name
 );
 
 CREATE TABLE IF NOT EXISTS identity (
@@ -91,6 +94,13 @@ CREATE TABLE IF NOT EXISTS identity (
   UNIQUE (network, native_id)
 );
 CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
+-- A network saying two of its ids are one account (IdentityFact.sameAs: Partiful's chat id beside its user id). Kept so
+-- the two are put with one person once, when first said: a split you made afterwards stays split.
+CREATE TABLE IF NOT EXISTS identity_same (
+  identity_id TEXT PRIMARY KEY REFERENCES identity(id) ON DELETE CASCADE,
+  same_as     TEXT NOT NULL,                  -- the identity it is the same account as
+  at          INTEGER NOT NULL
+) WITHOUT ROWID;
 
 -- 3. places ------------------------------------------------------------------
 
@@ -977,6 +987,58 @@ CREATE TABLE IF NOT EXISTS history_span (
   PRIMARY KEY (conversation_id, from_ts)
 ) WITHOUT ROWID;
 
+-- Catching up (catchup.ts, docs/catch-up.md): a stretch of time where the hub may be missing messages, across an
+-- account's chats (scope 'account') or only in the chats reports named ('chat'), and what it did about it. One open
+-- hole per account and time: reports close to it join it.
+CREATE TABLE IF NOT EXISTS catchup_hole (
+  id              TEXT PRIMARY KEY,
+  scope           TEXT NOT NULL CHECK (scope IN ('account', 'chat')),
+  account_id      TEXT NOT NULL,
+  conversation_id TEXT,                   -- the first chat a report named
+  from_ts         INTEGER NOT NULL,       -- the account's stretch; a 'chat' hole's spans its named chats
+  to_ts           INTEGER NOT NULL,
+  named           TEXT,                   -- JSON {conversation id: {from, to}}: chats fetched whatever the plan says
+  strength        TEXT NOT NULL CHECK (strength IN ('possible', 'likely', 'sure')),
+  causes          TEXT NOT NULL,          -- JSON CatchUpCause[], first first
+  notes           TEXT NOT NULL,          -- JSON string[], newest last
+  state           TEXT NOT NULL,          -- CatchUpState; 'planning' until its chats are planned
+  plan_at         INTEGER NOT NULL,       -- planned no sooner (reports a few minutes apart merge first)
+  all_chats       INTEGER NOT NULL DEFAULT 0, -- asked to check the chats a plan leaves out too
+  left_out        TEXT,                   -- JSON [{why, count}]: chats the plan left out
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS catchup_hole_account ON catchup_hole(account_id, state);
+
+-- One chat a hole fetches: paged back from to_ts to from_ts, jumping over history_span (historypage.ts).
+CREATE TABLE IF NOT EXISTS catchup_task (
+  hole_id         TEXT NOT NULL REFERENCES catchup_hole(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL,
+  account_id      TEXT NOT NULL,
+  rank            INTEGER NOT NULL,       -- the order it goes in, 0 first
+  probe           INTEGER NOT NULL DEFAULT 0, -- one of the few a 'possible' hole checks first
+  expected        REAL NOT NULL DEFAULT 0,    -- messages the hub expected in the stretch
+  why             TEXT NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'queued', -- queued, done, failed, skipped, unfetchable
+  from_ts         INTEGER NOT NULL,
+  to_ts           INTEGER NOT NULL,
+  cursor          INTEGER,                -- the next page ends before this ts; NULL: from to_ts
+  walk            TEXT,                   -- JSON {next, at, tries}: the adapter's own cursor there; times asked again
+  pages           INTEGER NOT NULL DEFAULT 0,
+  found           INTEGER NOT NULL DEFAULT 0,
+  unsure          INTEGER NOT NULL DEFAULT 0, -- a page's messages came after its answer: `found` may miss some
+  error           TEXT,
+  updated_at      INTEGER NOT NULL,
+  PRIMARY KEY (hole_id, conversation_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS catchup_task_account ON catchup_task(account_id, state);
+
+-- The latest a network said a chat's newest message was, once checked: the same claim does not open a hole twice.
+CREATE TABLE IF NOT EXISTS catchup_claim (
+  conversation_id TEXT PRIMARY KEY,
+  ts              INTEGER NOT NULL
+) WITHOUT ROWID;
+
 -- Remote media (an attachment's URL) the archiver could not keep, so it stops asking (mediaarchive.ts).
 CREATE TABLE IF NOT EXISTS media_archive_fail (
   key     TEXT PRIMARY KEY,               -- sha256 of the URL, as the media cache names it
@@ -1181,8 +1243,10 @@ CREATE TABLE IF NOT EXISTS attn_answer (
   answer          TEXT NOT NULL,             -- P.AttnAnswer
   source          TEXT NOT NULL,             -- P.AttnSource
   scope           TEXT,                      -- Louder / Quieter: 'person' | 'chat'; null: this kind of message
-  checkin_id      TEXT,
+  checkin_id      TEXT,                      -- the check-in (before the feed) or feed item it answers
   band            TEXT,                      -- the loudness band it had (shadow or live)
+  parts           TEXT,                      -- feed: JSON, the parts it was wrong about (the answer moves only those)
+  chance          REAL,                      -- feed: the chance its card was drawn with
   sounded         INTEGER NOT NULL DEFAULT 0, -- it sounded, as it was actually sent
   why_asked       INTEGER NOT NULL DEFAULT 0, -- the app was told to ask why
   reason          TEXT,                      -- P.WhyReason
@@ -1194,10 +1258,10 @@ CREATE TABLE IF NOT EXISTS attn_answer (
 );
 CREATE INDEX IF NOT EXISTS attn_answer_at ON attn_answer(at);
 CREATE INDEX IF NOT EXISTS attn_answer_conv ON attn_answer(conversation_id, at);
+CREATE INDEX IF NOT EXISTS attn_answer_author ON attn_answer(author, at);
 
--- Check-in questions (checkin.ts): up to three a day by your setting, waiting on the Notification calibration page
--- (at most QUEUE_CAP open, none older than EXPIRE_AFTER), half picked at random (with the chance each had, for the
--- scorecard's weighting) and half where the model is least sure.
+-- Check-in questions, before the calibration feed took their place (2026-11): kept for the scorecard's days and the
+-- answers that name them. Half were picked at random (with the chance each had) and half where the model was least sure.
 CREATE TABLE IF NOT EXISTS checkin (
   id          TEXT PRIMARY KEY,
   side        TEXT NOT NULL CHECK (side IN ('sounded', 'quiet', 'foryou')),
@@ -1217,14 +1281,44 @@ CREATE TABLE IF NOT EXISTS checkin (
 CREATE INDEX IF NOT EXISTS checkin_created ON checkin(created_at);
 CREATE INDEX IF NOT EXISTS checkin_message ON checkin(message_id);
 
--- Held for the next look (loudlearn.ts, DITHER_ATTENTION=on): one bundle when you next open the app, unlock the phone
--- (Android app) or at the times you set.
-CREATE TABLE IF NOT EXISTS next_look (
-  message_id      TEXT PRIMARY KEY REFERENCES message(id) ON DELETE CASCADE,
-  conversation_id TEXT NOT NULL,
-  held_at         INTEGER NOT NULL,
-  quiet           INTEGER NOT NULL DEFAULT 0  -- held by quiet hours: it would have sounded
+-- The calibration feed (feed.ts, docs/notifications.md "The calibration feed"): each message that reached you, once
+-- what you did with it is known, scored and drawn as a card, a row or hidden as sure, with the chance it was drawn
+-- with (answers are weighted back by it). What you answered, the chances before and after, the parts you said it was
+-- wrong about, and when a surprising answer comes back once.
+CREATE TABLE IF NOT EXISTS cal_item (
+  id              TEXT PRIMARY KEY,
+  message_id      TEXT NOT NULL UNIQUE,
+  conversation_id TEXT,
+  author          TEXT,                      -- the person (else identity) who wrote it
+  kind            TEXT NOT NULL CHECK (kind IN ('card', 'row', 'sure')),
+  sure_shown      INTEGER NOT NULL DEFAULT 0, -- sure, but shown at random (one in twenty), as a row
+  chance          REAL NOT NULL,             -- the chance it was drawn as it was
+  score           REAL NOT NULL,             -- worth asking, when drawn
+  surprise        REAL NOT NULL,             -- bits
+  unsure          REAL NOT NULL,
+  p               TEXT NOT NULL,             -- JSON [sound, show, inbox]: the model's chances when drawn
+  u               TEXT NOT NULL,             -- JSON: how unsure each is
+  loud            REAL NOT NULL,             -- its loudness then
+  loud_base       REAL,                      -- its loudness worked out again just before your answer was learned
+  did             TEXT NOT NULL,             -- sound | show | inbox: what was done
+  you             TEXT,                      -- sound | show | inbox: what you did
+  you_what        TEXT,
+  held            INTEGER NOT NULL DEFAULT 0, -- a sound held back
+  answers         INTEGER NOT NULL DEFAULT 0, -- answers about its person or chat, when drawn
+  drawn_at        INTEGER NOT NULL,
+  message_ts      INTEGER NOT NULL,
+  answer          TEXT,                      -- sound | show | inbox
+  answer_id       TEXT,                      -- its attn_answer
+  answered_at     INTEGER,
+  before          TEXT,
+  after           TEXT,                      -- JSON: the chances once the answer was learned
+  parts           TEXT,                      -- JSON: the parts you said it was wrong about
+  returns_at      INTEGER,                   -- a surprising answer comes back once, then
+  settled         TEXT,                      -- keep | once | undo
+  skipped         INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS cal_item_drawn ON cal_item(drawn_at);
+CREATE INDEX IF NOT EXISTS cal_item_ts ON cal_item(message_ts);
 
 -- The send queue (sendqueue.ts, docs/sync.md "The send queue"): every chat send from the app, by the app's id for it,
 -- kept for good so a repeat of that id from any tab or device is the same send. One worker per conversation sends

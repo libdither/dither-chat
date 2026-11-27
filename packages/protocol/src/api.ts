@@ -105,6 +105,20 @@ export interface PersonView {
   facePinned?: true;
   /** The account whose picture they show instead of their face's, when you chose one (PATCH `{ picture }`). */
   pictureIdentityId?: string;
+  /**
+   * The name you chose to show for them instead of their face's (PATCH `{ nameFrom }`): one of their accounts' nickname
+   * (yours), display name or handle. `name` is it while that account has it; absent where it follows the face.
+   */
+  nameFrom?: NameFrom;
+  /** Your nickname for them, no account's (PATCH `{ nickname }`): `name` is it, over every account's name. */
+  nickname?: string;
+}
+
+/** Which of an account's names a person's name is (docs/profile.md, "Which account speaks for them"). */
+export type NameField = 'nickname' | 'display' | 'handle';
+export interface NameFrom {
+  identityId: string;
+  field: NameField;
 }
 
 /**
@@ -1396,6 +1410,87 @@ export interface ActivityChartView {
   };
   /** Their status changes in the range, only while statuses are logged (an adversarial feature). null text and emoji: cleared. */
   statuses?: { at: number; hour: number; text: string | null; emoji: string | null; network: Network }[];
+}
+
+/**
+ * Someone's clock (hub theirclock.ts, docs/profile.md "Their time"): a zone you set for them, else the zone a profile of
+ * theirs states, else a fixed offset guessed from the hours they write in, with how sure the guess is.
+ */
+export type TheirClock =
+  | { source: 'pinned'; /** An IANA name, set on their card. */ zone: string }
+  | { source: 'profile'; /** An IANA name. */ zone: string; /** The network whose profile said it. */ network: Network }
+  | {
+      source: 'rhythm';
+      /** Minutes east of UTC, a whole hour. */
+      offset: number;
+      /** The chance the true offset is within an hour of it, 0 to 1. */
+      sure: number;
+      /** Days they were around (wrote, reacted, read, came online…) that it was guessed from. */
+      days: number;
+    };
+
+/** What counts as their being around, on their day (TheirDayView.counts): each a moment they did something. */
+export type TheirActivity = 'messages' | 'reactions' | 'reads' | 'votes' | 'calls' | 'statuses' | 'presence';
+
+/**
+ * GET /api/people/clocks?ids=<identity ids>&tz=<your zone>: each author's clock, null where none is known or the
+ * guess is too unsure to show. `asking`: ids whose profile is being asked for a zone now; ask again for them shortly.
+ */
+export interface TheirClocksView {
+  clocks: Record<string, TheirClock | null>;
+  asking?: string[];
+}
+
+/**
+ * GET /api/people/:id/day?tz=<your zone> (:id a person or an identity): when they are usually around, over the last
+ * 90 days, by hour of the day in `frame` (their zone, or yours when theirs is not known). Around is anything they did
+ * that the hub logs with a time (TheirActivity): a message, a reaction, a read receipt, a vote, a call, a status set,
+ * coming online or leaving (the last two only while presence is logged). Shares are of the days observed that had any
+ * of it in that hour, in percent, with an 80% interval, and the share that had a message: [share, low, high, wrote].
+ */
+export interface TheirDayView {
+  clock: TheirClock | null;
+  /** The zone the hours are in: theirs when `clock` is set, else yours. Its offset now, minutes east of UTC. */
+  frame: { theirs: boolean; zone: string; offsetNow: number };
+  /** Days observed (from the first thing they did in the window, or the window's start), and what they did in them, by kind. */
+  days: number;
+  counts: Partial<Record<TheirActivity, number>>;
+  hours: [share: number, low: number, high: number, wrote: number][];
+  /** Weekday by hour, 7 × 24, Monday first, and how many of each weekday were observed. */
+  week: [share: number, low: number, high: number][];
+  weekDays: number[];
+  /**
+   * Their usual night: when they go quiet and when they are around again, in minutes after midnight in `frame`, each
+   * with its spread (minutes, about one standard deviation), from `nights` nights. Absent with fewer than 7.
+   */
+  quiet?: { from: number; to: number; fromSpread: number; toSpread: number; nights: number };
+}
+
+/**
+ * GET /api/people/:id/answer: when they are likely to answer you (docs/profile.md "When they answer"), from how long
+ * they took with your earlier messages in your direct chats, timed in the hours they are usually around. For your
+ * message they have not answered yet, as of now; else for one you would send now.
+ */
+export interface TheirAnswerView {
+  /** When your unanswered message was sent (the first of your run); null: the last word is theirs, and this is for a message sent now. */
+  waiting: number | null;
+  /** The chance, in percent, they have answered by each half hour from now, for a day, given no answer yet. */
+  by: number[];
+  /** When that chance reaches a half, and 8 in 10; null when it does not within a week of the message. */
+  half: number | null;
+  likely: number | null;
+  /** The chance, in percent, of an answer within a week of the message. */
+  week: number;
+  /** Your earlier messages to them it is from, and how many days back the first was. */
+  turns: number;
+  days: number;
+  /** How much of it is theirs rather than everyone's answers to you, 0 to 1. */
+  own: number;
+}
+
+/** PUT /api/people/:id/zone: set their zone by hand (an IANA name), or null to go back to what is said or guessed. */
+export interface ZonePinBody {
+  zone: string | null;
 }
 
 /** POST /api/directs: a direct conversation, opened or found. */

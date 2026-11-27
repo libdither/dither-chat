@@ -15,7 +15,7 @@ import { type ActiveCall, callName, callNetwork, callRole, callStageCan, isCallS
 import { BADGE_WORDS } from '../callmarks.ts';
 import { convTitle } from '../model.ts';
 import { audienceList, RANK_WORDS, type Room, roomCounts, roomOf } from '../room.ts';
-import { db } from '../state.ts';
+import { db, metaRev } from '../state.ts';
 import { NetBadge } from './bits.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
@@ -53,6 +53,7 @@ function personWords(call: ActiveCall, p: P.CallParticipant, role?: string): str
  * plain element (nothing to press).
  */
 function Person({ can, p, size, role }: { can: Can; p: P.CallParticipant; size: number; role?: string }) {
+  metaRev.value; // names and who is you change without `p` changing
   const you = isCallSelf(can.call, p.id);
   const name = callName(p.id);
   const items = movesOn(can, p);
@@ -99,6 +100,7 @@ function InviteButton({ p }: { p: P.CallParticipant }) {
  * names, so you know the queue you would join.
  */
 function Requests({ can, room }: { can: Can; room: Room }) {
+  metaRev.value;
   const asks = roomRequests(can.call);
   if (can.canOn.includes('invite'))
     return (
@@ -150,6 +152,7 @@ function knownness(): (identityId: string) => number {
 
 /** The whole audience, searchable, people you know first; Invite on each for a moderator. Esc or Done closes it. */
 function AudienceList({ can, room, onClose }: { can: Can; room: Room; onClose: () => void }) {
+  metaRev.value; // names, and who you know, change without `room` changing
   const [q, setQ] = useState('');
   const input = useRef<HTMLInputElement>(null);
   useLayoutEffect(() => input.current?.focus(), []);
@@ -204,6 +207,7 @@ function InvitedNote({ invited }: { invited: boolean }) {
 
 /** The whole room, for the call in this conversation. */
 export function CallRoom({ call }: { call: ActiveCall }) {
+  metaRev.value; // the channel's name and the account's abilities change without `call` changing
   const c = db.conversations.get(call.conversationId);
   const room = roomOf(call.participants, (id) => isCallSelf(call, id), call.stage, !!call.stage || c?.variant === 'stage');
   const can: Can = { call, canOn: callStageCan(call).canOn };

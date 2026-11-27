@@ -2,8 +2,9 @@
  * Nicknames by account (docs/chats.md, Names), end to end against a multiaccount demo hub in headless Chromium: the
  * demo's nickname for one of Kit's accounts on its tile and its message heads; setting one on another tile from its
  * menu, seeing it in Kit's chat while Kit stays Kit, and taking it away; the identity menu of a message head offering
- * it; no pencil by the name of a chat of several routes; the pencil by a one-route chat's name, which the header and
- * the inbox row follow; the person-level rename answering 400; and no page errors.
+ * it; no pencil by the name of a chat of several routes; the pencil by a one-route chat's name, your nickname for the
+ * person (no account's), which the header and the inbox row follow; the old person-level rename (`name`) answering 400;
+ * and no page errors.
  *
  *   DITHER_DEMO_SCENARIO=multiaccount bun packages/hub/src/main.ts --demo --data /tmp/x --port 8577 --web <dist>
  *   bun scripts/verify-nicknames.ts http://127.0.0.1:8577 [/tmp/shots]
@@ -46,7 +47,13 @@ const click = async (sel: string, pick = '', button: 'left' | 'right' = 'left') 
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button, clickCount: 1 });
 };
 const menu = () => p.eval<string[]>(`[...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent.trim())`);
-const pickItem = (label: string) => p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
+/** Opens an account row's Edit (its menu's entries as buttons) and lists them. */
+const editRow = async (handle: string) => {
+  await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes(${JSON.stringify(handle)})).querySelector('.pf-acct-edit-btn').click()`);
+  await p.until(`!!document.querySelector('.pf-acct-edit button')`, 3000);
+  return p.eval<string[]>(`[...document.querySelectorAll('.pf-acct-edit button')].map((b) => b.textContent.trim())`);
+};
+const pickEdit = (label: string) => p.eval(`[...document.querySelectorAll('.pf-acct-edit button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
 const escape = () => p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
 /** Types into the focused input and presses Enter. */
 const typeEnter = async (v: string) => {
@@ -81,11 +88,9 @@ if (shots) {
   await p.shot(`${shots}/1-tile-with-nickname.png`);
 }
 await click('.pf-acct', 'kit.work');
-await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes('kit.work')).querySelector('button[aria-label^="More for"]').click()`);
-await Bun.sleep(150);
-let items = await menu();
-check(items.includes('Set Nickname…') && !items.includes('Remove Nickname'), 'a tile’s menu: Set Nickname…', items);
-await pickItem('Set Nickname…');
+let items = await editRow('kit.work');
+check(items.includes('Set Nickname…') && !items.includes('Remove Nickname'), 'a row’s Edit: Set Nickname…', items);
+await pickEdit('Set Nickname…');
 await p.until(`document.activeElement?.classList.contains('pf-acct-nick-input')`, 3000);
 await typeEnter('Kit at work');
 await p.until(`[...document.querySelectorAll('.pf-acct')].some((e) => e.innerText.startsWith('Kit at work'))`, 5000).catch(() => {});
@@ -111,9 +116,8 @@ check(items.includes('Change Nickname…') && items.includes('Remove Nickname'),
 await escape();
 
 await profile(kit.id);
-await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes('kit.work')).querySelector('button[aria-label^="More for"]').click()`);
-await Bun.sleep(150);
-await pickItem('Remove Nickname');
+items = await editRow('kit.work');
+await pickEdit('Remove Nickname');
 await p.until(`[...document.querySelectorAll('.pf-acct')].some((e) => e.innerText.startsWith('Kit Okafor'))`, 5000).catch(() => {});
 t = await tile('kit.work');
 check(t.startsWith('Kit Okafor') && !t.includes('their name'), 'Remove Nickname gives the tile its own name back', t.split('\n').slice(0, 2));
@@ -138,6 +142,7 @@ const r1 = await row();
 check(r1.includes('Buddy'), 'the inbox row follows', r1.slice(0, 80));
 const sb = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
 check(sb.persons.find((x: any) => x.id === solo.id)?.name === 'Buddy', 'their person is named by it on the hub', sb.persons.find((x: any) => x.id === solo.id)?.name);
+check(sb.persons.find((x: any) => x.id === solo.id)?.nickname === 'Buddy' && !sb.identities.find((x: any) => x.id === solo.identityIds[0])?.nickname, 'as your nickname for the person, not their account', sb.persons.find((x: any) => x.id === solo.id)?.nickname);
 if (shots) await p.shot(`${shots}/3-one-route-nickname.png`);
 await click('.conv-head .pair-nick-edit');
 await p.until(`document.activeElement?.classList.contains('pair-nick-input')`, 3000);
@@ -146,12 +151,12 @@ await typeEnter('');
 await p.until(`document.querySelector('.conv-head .conv-head-name')?.innerText === ${JSON.stringify(solo.name)}`, 5000).catch(() => {});
 const back = (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())) as any;
 check(
-  (await p.eval<string>(`document.querySelector('.conv-head .conv-head-name')?.innerText ?? ''`)) === solo.name && back.persons.find((x: any) => x.id === solo.id)?.name === solo.name && !back.identities.find((x: any) => x.id === solo.identityIds[0])?.nickname,
+  (await p.eval<string>(`document.querySelector('.conv-head .conv-head-name')?.innerText ?? ''`)) === solo.name && back.persons.find((x: any) => x.id === solo.id)?.name === solo.name && !back.persons.find((x: any) => x.id === solo.id)?.nickname,
   'left empty, the nickname goes and their own name comes back',
   solo.name,
 );
 
-// ---- The person-level rename is gone.
+// ---- The old person-level rename (`name`) is gone; a nickname is `{ nickname }`.
 const old1 = await api('PATCH', `/api/persons/${kit.id}`, { name: 'Kitty' });
 const old2 = await api('PATCH', `/api/chats/person:${kit.id}`, { name: 'Kitty' });
 const said = ((await old1.json()) as any).error as string;

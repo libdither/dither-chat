@@ -1,0 +1,4 @@
+{
+ "note": "bun scripts/check-redraws.ts --update: components that read the hub's data while they render, may be skipped by Preact, and read no change signal, when the check began. It should only shrink.",
+ "known": []
+}

@@ -302,7 +302,8 @@ export class NetSearch {
     // The hub's own hits, by place.
     const local = new Map<string, number>();
     try {
-      for (const h of this.store.search(input, 100).hits) {
+      // Its hits only: the people the words find would load people search's list on this thread.
+      for (const h of this.store.search(input, 100, null, 0, { people: false }).hits) {
         const cid = h.message.conversationId;
         const key = top(cid) ?? cid;
         local.set(key, (local.get(key) ?? 0) + 1);

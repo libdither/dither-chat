@@ -4,7 +4,7 @@ import type * as P from '@dither-chat/protocol';
 import { RETENTION_CHOICES } from '@dither-chat/protocol';
 import { activityInfo, deleteActivity, fetchActivity, setActivitySettings } from '../activity.ts';
 import { convTitle } from '../model.ts';
-import { api, db, toast } from '../state.ts';
+import { api, db, metaRev, toast } from '../state.ts';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
 
@@ -15,6 +15,7 @@ const dur = (ms: number | null) => (ms == null ? '–' : ms < 90_000 ? `${Math.r
 const day = (ts: number) => new Date(ts).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
 export function ActivityLogSettings() {
+  metaRev.value; // chats' names in what it learned
   useEffect(() => void fetchActivity(), []);
   const info = activityInfo.value;
   const on = info?.settings.enabled ?? true;

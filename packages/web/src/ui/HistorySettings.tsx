@@ -9,7 +9,7 @@ import { ABOUT_RULES } from '@dither-chat/protocol';
 import { useEffect } from 'preact/hooks';
 import { ADVERSARIAL_KINDS, eraseKept, keeping, kept, keeps, loadKept, loadRetention, retention, saveRetention, setSource } from '../history.ts';
 import { netName } from '../model.ts';
-import { db } from '../state.ts';
+import { db, metaRev } from '../state.ts';
 import { NetGlyph, showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
 
@@ -23,6 +23,7 @@ const KINDS: Kind[] = [
 
 /** Each kind for each network, and for each account where a network has several. */
 export function SourceTable({ kinds }: { kinds: Kind[] }) {
+  metaRev.value; // your accounts
   const r = retention.value;
   const accounts = [...db.accounts.values()];
   const nets = [...new Set(accounts.map((a) => a.network))];

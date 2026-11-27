@@ -10,7 +10,7 @@ import { JOB_PRIORITIES, JOB_REPEATS, NETWORK_META } from '@dither-chat/protocol
 import { signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
-import { api, db, go, rev, toast } from '../state.ts';
+import { api, db, go, metaRev, rev, toast } from '../state.ts';
 import { Modal, NetGlyph, showSection } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
@@ -30,6 +30,7 @@ function openIndexing() {
 }
 
 function IndexDialog({ kind, id, onClose }: { kind: P.JobTargetKind; id: string; onClose: () => void }) {
+  metaRev.value; // its name and what your accounts there can fetch
   const d = describe(kind, id);
   const [history, setHistory] = useState(d?.history ?? false);
   const [members, setMembers] = useState(false);
@@ -144,6 +145,7 @@ function repeatLabel(hours: number): string {
 }
 
 function JobRow({ j, reload }: { j: P.JobView; reload: () => void }) {
+  metaRev.value; // whether its place is a channel or a server (KIND_LABEL) is known once the place is
   const [busy, setBusy] = useState(false);
   const act = async (fn: () => Promise<unknown>, what: string) => {
     setBusy(true);

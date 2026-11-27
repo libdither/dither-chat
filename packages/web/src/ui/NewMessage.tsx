@@ -9,7 +9,7 @@ import type { JSX } from 'preact';
 import { ACTION_LABEL, CHECK_LINE, expiresIn, messagePeer, partialLine, previewCounts, previewKind, type AddRow } from '../add.ts';
 import { identityName, netName } from '../model.ts';
 import { confirmNext, sentence } from '../requests.ts';
-import { api, applyEvents, db, go, openDirect, toast } from '../state.ts';
+import { api, applyEvents, db, go, metaRev, openDirect, toast } from '../state.ts';
 import { LiveView } from './Accounts.tsx';
 import { AccountChip, Avatar } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -74,6 +74,7 @@ export async function actOn(c: Card, action: P.AddAction, set: (c: Card) => void
 
 /** A preview and what can be done with it. `inline`: a card under a message, which has no Back to the box. */
 export function AddCard({ card, live, setLive, onAccount, onAct, onOpen, onBack, onClose, inline }: { card: Card; live: boolean; setLive: (on: boolean) => void; onAccount: (id: string) => void; onAct: (a: P.AddAction, confirm?: boolean) => void; onOpen: (conversationId?: string | null, spaceId?: string | null) => void; onBack: () => void; onClose: () => void; inline?: boolean }) {
+  metaRev.value; // the account's label and who invited, by name
   const { row, view: v, done } = card;
   const net = row.ref.network;
   const accounts = row.state.kind === 'resolve' ? row.state.accounts : [];

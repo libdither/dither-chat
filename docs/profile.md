@@ -15,7 +15,7 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
 ## The frame
 
 - **Hero.** A banner (their Discord banner, else their accent colour, else the network's), the picture overlapping it,
-  the name (for a person of one account, with a pencil on hover for that account's nickname, also under More), then a
+  the name (a click copies it; a pencil beside it chooses which of their names shows: "Choosing from the hero"), then a
   line of what it is: a person's handle (click to copy), or for someone with several accounts their
   networks' marks and "N accounts", which scrolls to them; a place's network, kind,
   member and channel counts. Tags under it: pronouns, one per kind of connection with the networks' marks (Friend,
@@ -36,23 +36,18 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
 
 ## A person
 
-It grows with the person. Someone with one account looks as a single profile does: one handle under the name, the
-bio in About, the account on the right. Someone with several gets **Accounts** at the top of the left column instead.
+It grows with the person: someone with one account has one row in Accounts, someone with several a row each. Two
+columns: who they are and what passes between you on the left, their accounts and what you share on the right. A
+screen 900 px wide or less has one column, which takes the first part of each before the rest: the glance, About,
+Between you, Accounts and In common, then Activity and the others. Cards are tight (10 px inside, 10 px apart).
+Before 2026-11-25 the page had separate Recent messages, Mail, Mutual friends, Close to, Connections, Notifications and
+Note cards, about half again as tall; four layouts were drawn on the demo world (tidier columns, tabs, a folded digest,
+three columns; the PR has the pictures) and the owner picked the tidier columns.
 
 Left:
-- **Accounts**, for someone with several accounts (Kit's seven, Mo's two, yours): a row each, grouped by network
-  (`AccountRow` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
-  it (your nickname for it, else its display name, else handle, else id; with a nickname, the account's own name
-  beneath it, muted: "their name: kitty"), its handle or address as a chip that copies, the network and since when
-  they are on it, and **Main** or **Picture** when it speaks for them (below, "Which account speaks for them"). Its
-  bio is in About. A button goes to the account: its chat (the person's page, sending there), else Start a chat on that
-  network where an account of yours can, else Email. **Edit** opens the account's menu as buttons under the row (a
-  right-click or a hold opens it as a menu): Make Main Account, Use Its Picture, Set Nickname… (Change Nickname… and
-  Remove Nickname once it has one, editing the name on the row in place; only you see it, docs/chats.md "Names"), Copy
-  the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
-  speaks for them, and whether you chose it or the hub did. The merge hint and search sit under it. Before 2026-11-23 each account was a
-  tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero had a chip per handle and the right
-  column a plain row per identity, with one picture for the person.
+- **At a glance**, not on your own page: a line or three of how you stand, what you share and when you last heard from
+  them: "Friends on Discord, in your contacts on Telegram, Signal and WhatsApp. You share libdither, Climbing crew and
+  Book club and 3 friends (Ravi, Jordan and Theo). Last heard 49m ago in your Signal chat; last mail 1h ago."
 - **Maybe the same person**: up to four Same person? suggestions with this person in them (docs/same-person.md), each
   with the other side's name and accounts, the chance, the strongest three pieces of evidence, Merge and Not the same;
   All opens the whole list. Only when there are some, and never on your own page.
@@ -68,53 +63,65 @@ Left:
   Badges, the frame on their picture and their profile's colours, where the network shows them. On your own page,
   under your bio: your name, pronouns and banner on each network that lets you change them here
   (docs/account-self.md); your picture is the hero's ("Changing a picture", below).
-- **In common** (on your own page, **Your places**): servers as tiles with their icon, their nickname and roles
-  there, or how many messages they wrote in it, and the bio and pronouns they set for that server where Discord gives
-  them (a server profile); then group chats with their picture, kind, and how many messages are
-  from them. Discord's mutual servers count even where they never wrote; the rest comes from messages and member
-  lists the hub has. A server they wrote in says how many of their messages the hub holds there, and an estimate of
-  how many they posted when one can be made (below, "Message counts").
-- **Events** (docs/events.md, "People"): the Luma and Partiful events any of their accounts hosted or went to, hosting
-  first, then upcoming soonest, then the past, each with when, where and their part; one opens the event's page.
-- **Mail** (docs/mail.md, "People"), for someone with an email address: their newest threads across your mail
-  accounts, how many, and All mail with them. A thread opens in Mail.
-- **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies
-  and quotes marked, with pictures, counts and a link to each. A post opens its thread ([feed.md](feed.md#threads)),
-  and each is logged as a message.
-- **Recent messages**: each with the place's picture (the server's icon for a channel), the place, and when. A feed
-  item says what they did ("X notifications", "Liked your post: “…”"). Not shown for someone known only by mail.
+- **Between you** (on your own page, **Your messages**): their recent messages and your mail threads with them in one list,
+  newest first, six at a time with All for the rest. With both, chips choose All, Messages or Mail with their counts.
+  A message has the place's picture (the server's icon for a channel), the place, and when; a feed item says what they
+  did ("X notifications", "Liked your post: “…”"). A thread (docs/mail.md, "People") says "Mail" and who wrote, with
+  its subject bold while unread and its start, and opens in Mail; All mail opens every thread with them. Absent when
+  there is neither.
 - **Activity** (ui/ActivityCard.tsx): the current status and since when, and their presence now (from the log when it
   is logged, else the status dot's words: "Online on Zulip"); then
   the activity chart (below, "Activity"); then, with adversarial features shown (docs/history.md), the logged status
   history and presence history (each stretch with how long it lasted), each collapsed until opened. Absent when there
   is no status, nothing logged and no message or conversation with them.
+- **Recent posts** (X, [feed.md](feed.md#profiles)): their posts as their profile said them, pinned, reposts, replies
+  and quotes marked, with pictures, counts and a link to each. A post opens its thread ([feed.md](feed.md#threads)),
+  and each is logged as a message.
 - **Voice** (ui/VoiceClose.tsx; below, "Voice"): with the adversarial voice log on and something in it, their minutes in
   voice channels this month and in the past 30 days, who they are usually in voice with, and their latest stretches in
   a channel.
+- **Events** (docs/events.md, "People"): the Luma and Partiful events any of their accounts hosted or went to, hosting
+  first, then upcoming soonest, then the past, each with when, where and their part; one opens the event's page.
 - **History**: what changed about them, except statuses, presence and voice (ui/HistoryCard.tsx), and, while changes are kept,
   the roles and user groups they were given or lost in a place ("was given designers in Example Org"), which are
   kept against the place and show in its History too.
 
+
 Right:
-- **Mutual friends** (Discord), or on your own page **Friends and contacts** (`FriendsCard`): your Discord friends,
-  Signal and WhatsApp contacts and Matrix direct chats, each person once, saying which network each is from. Each
-  network has a chip with its count in its own word ("5 friends", "4 contacts", "mutuals" for a follow network); a chip
-  shows only that network's, All shows everyone again. Each row ends with its networks' badges, and a line says how
-  many are on more than one. With one network the chip is a plain line ("3 friends on Discord"). The card's title
-  takes the words of its networks. Click one for theirs. Before 2026-11-23 it was one merged count with no network.
-- **Connections** (below): how each of your accounts stands with them, grouped by kind, with Remove friend, Cancel
-  request, Unblock, Remove contact or Unfollow where the account can; each asks first (docs/add.md,
-  "Relationships"). Called How you stand until 2026-11-13.
-- **Accounts**, for someone with one account: it (by its name as you see it, and its own beside the handle when you
-  gave it a nickname), with Open on the network; a hint when someone elsewhere has the
-  same name, saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
-  or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`).
-- **Notifications**: Always alert, a person rule `all`: every message of theirs is an alert
-  ([notifications.md](notifications.md#rules)). Stars left the app on 2026-11-10 and the hub cleared the old ones
-  once (`clearStars`, packages/hub/src/store.ts), so Always alert is the only way to have someone always get through.
+- **Accounts**: a row an account, grouped by network
+  (`AccountRow` in ui/Profile.tsx). Each has the account's own picture with its network's badge, its name as you see
+  it (your nickname for it, else its display name, else handle, else id; with a nickname, the account's own name
+  beneath it, muted: "their name: kitty"), its handle or address as a chip that copies, the network and since when
+  they are on it, and **Main** or **Picture** when it speaks for them (below, "Which account speaks for them"). Its
+  bio is in About. A button goes to the account: its chat (the person's page, sending there), else Start a chat on that
+  network where an account of yours can, else Email. **Edit** opens the account's menu as buttons under the row (a
+  right-click or a hold opens it as a menu): Make Main Account, Use Its Picture, Set Nickname… (Change Nickname… and
+  Remove Nickname once it has one, editing the name on the row in place; only you see it, docs/chats.md "Names"), Copy
+  the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
+  speaks for them, whether you chose it or the hub did, and which accounts their name and picture are from when
+  another's. Under each row, how each of your accounts stands with it ("Connections", below: In your Telegram
+  contacts, Friends on Discord from alt and from main), each with its Remove friend or the like. A row whose name is
+  the person's leads with its handle instead of repeating the name. A hint when someone elsewhere has the same name,
+  saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
+  or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`), sit under
+  it. Before 2026-11-23 each account was a tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero
+  had a chip per handle and the right column a plain row per identity, with one picture for the person.
+- **In common** (on your own page, your friends and **Your places**): **People**, the friends you share and the people
+  they talk with most, in one list (`PeopleInCommon` in ui/VoiceClose.tsx; below, "People in common"), how many of each
+  on top, eight shown with All for the rest; then **Places**, a row each server and group chat you are both in, with
+  their nickname and roles there or how many of their messages the hub has in it (below, "Message counts"), the bio
+  and pronouns they set for that server in its tooltip, and for a group its kind and how many messages are from them.
+  Discord's mutual servers count even where they never wrote; the rest comes from messages and member lists the hub
+  has. On your own page, **Friends and contacts** (`FriendsCard`): your Discord friends, Signal and WhatsApp contacts
+  and Matrix direct chats, each person once, a chip per network with its count in its own word ("5 friends", "4
+  contacts", "mutuals" for a follow network) that shows only that network's, each row ending with its networks'
+  badges.
 - **Safety number** (Signal, capability `safetyNumbers`; below, "Safety numbers").
-- **Note**: yours only, kept on the hub, and on a network that keeps notes too (below, "Your nickname and note on the
-  network").
+- **Yours**: **Always alert**, a person rule `all`: every message of theirs is an alert
+  ([notifications.md](notifications.md#rules)); a place you muted still stays silent. Stars left the app on
+  2026-11-10 and the hub cleared the old ones once (`clearStars`, packages/hub/src/store.ts), so Always alert is the
+  only way to have someone always get through. Then your **note**: yours only, kept on the hub, and on a network that
+  keeps notes too (below, "Your nickname and note on the network"). On your own page only the note, as **Note**.
 
 More on a person also has **Block on <network>…** (asks first) or **Unblock on <network>** where an account can
 (capability `block`: `POST /api/identities/:id/block { unblock? }`). Nothing from someone your account's list says you
@@ -133,6 +140,32 @@ and so does making that account main or splitting it off. The hub keeps both on 
 `person.picture_identity_id`, set with `PATCH /api/persons/:id { face, picture }`, an identity id of theirs or null;
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
+
+**Choosing from the hero.** Their name is text a click copies, with nothing after it but the pencil. Under it, always
+shown, a line of their other names ("also"), each once with "×N" where it is shared (hover for which accounts), a
+click copying it; handles stay off it (the Accounts card has them), and the line wraps. The pencil beside the name
+turns it into a field, the name selected, with every name of theirs listed under it: the main account's name as you
+see it first ("Main account's", following it as it changes, once, with the marks of the accounts that share it), then
+their other names, then their handles ("Handle"), each text once with its accounts' network marks (a handle that is a
+phone number is left out). Typing filters the list; a name none of theirs is goes first as **Call them "…"**, so Enter
+saves what you typed as your nickname for the person, no account's, which then is the name shown and the list's first
+row, ticked ("Your nickname"); picking any name of theirs takes its place. Names that differ only in case ("Kit",
+"kit") are two names, each with its own row. Up and Down move through the list, Enter or ✓ takes the row, Escape or ✕
+leaves the name as it was. A pick names them everywhere their name shows, ticked when the field opens again, and
+follows that account: a new display name renames them, and while it lacks that name (a nickname you removed) the main
+account's shows, and the first row is the one ticked. The main account's row puts it back. Someone of one account has
+the same: its names, then its handle. Each account's own nickname is still set from its row in the Accounts card. The
+Accounts card's note says where their name and picture come from when not from the main account. Kept on the person
+(`person.name_identity_id` with `name_field`, set with `PATCH /api/persons/:id { nameFrom: { identityId, field:
+nickname | display | handle } | null }`, refused whole for an account not theirs or a name it lacks;
+`PersonView.nameFrom`) and cleared when that account is split off; your nickname for them as `person.nickname` (`{
+nickname }`, docs/chats.md "Names"). Where their accounts have more than one picture, their picture has a badge (a
+picture on it) and opens all of them in the image viewer, each once, the main account's first, starting on the one
+shown. Each has its account's name, network and handle in the bar, and a row of them along the bottom: the one in view
+ringed, the one shown ticked. Swipe, click one in the row or use the arrow keys to page through them; **Use this
+picture** shows the one in view (the main account's is `{ picture: null }`), and the tick moves to it once the hub has
+it (viewer.ts `choose`). Helpers in `namechoices.ts`, the hero's name in `ui/HeroName.tsx`; checked end to end, on a
+computer and on a phone, by `scripts/verify-name-picture.ts` on the `multiaccount` demo.
 
 ### Your own bio
 
@@ -154,7 +187,8 @@ and its code under My code (docs/add.md, "QR codes"), come from the last time it
 ### Changing a picture
 
 A hero's picture you may not change is a button that opens it full screen in the image viewer (ui/Viewer.tsx), to
-zoom and pan; one you may change has **View Picture** first in its menu.
+zoom and pan (for someone whose accounts have several pictures, all of them, to choose the one shown: "Which account
+speaks for them"); one you may change has **View Picture** first in its menu.
 
 Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
 a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists
@@ -227,14 +261,14 @@ null for one it does not have), friends into identities, pictures into signed me
 | Zulip | the first long-text field | custom status (an organization emoji as its picture) | the pronouns field | joined | | the organization, with their role and user groups | | | link and external-account fields | role, profile fields (person fields and a bot's owner linked, dates in words), time zone (`timeZone`) |
 
 **X** also answers with the person's recent posts (`PersonAbout.posts`, up to 20, a pinned one first), shown in a
-**Recent posts** card after About; its counts go in About and its following and `followsYou` in Connections
+**Recent posts** card after About; its counts go in About and its following and `followsYou` under the account in Accounts
 ([feed.md](feed.md#profiles), below). The
 people in your X notifications have their profile kept without asking (a `personAbout` event): their page shows it at
 once, says it came from your notifications, and still asks X when opened, for their posts.
 
 ### Connections
 
-How each of your accounts stands with them, in **one vocabulary across networks** (2026-11-13, from the owner: "discord
+How each of your accounts stands with them, under each of their accounts in Accounts, in **one vocabulary across networks** (2026-11-13, from the owner: "discord
 friends and twitter follows should be similar kinds of things"). Code: `packages/web/src/connections.ts` (pure),
 `ProfileConnections` in ui/Requests.tsx; the data is the accounts' lists (`ProfileView.links`, docs/add.md
 "Relationships") and what each network's profile said (`relationship`, `followsYou`).
@@ -286,7 +320,9 @@ and About had X's **Follows you** tag beside the counts. Three ways were drawn o
 pictures): one Connections card grouped by kind (built); the connection as a chip on each of their account tiles,
 with no card (left: your friendship is per account of yours, Discord main and alt, which a tile of theirs cannot
 hold, and someone with one account has no tiles); and a table of each network, you to them and them to you (left: the
-phone networks have no direction, so half of it is empty, and it reads heavier than the list).
+phone networks have no direction, so half of it is empty, and it reads heavier than the list). Since 2026-11-25 the
+card is gone: each connection is a line under the account of theirs it is with, in Accounts, which holds one line per
+account of yours.
 
 Checked by `scripts/verify-profile-relationships.ts` against a fresh demo hub, on a desktop and a phone, and by
 `packages/web/test/connections.test.ts` and `packages/hub/test/links.test.ts`.
@@ -320,7 +356,7 @@ fetches nothing (hub msgcount.ts). It never claims more than the data supports:
   Under a tenth, those are counted as seen only and named (`unestimated`), and the page puts a "+" on the top of the
   range: it is not a ceiling then.
 
-The profile's In common tiles show it ("≥120 seen; ~1,400 estimated, 900–2,100", rounded to two figures), with the
+The profile's In common rows show it ("≥120 seen; ~1,400 estimated, 900–2,100", rounded to two figures), with the
 share, the server's own estimated total and what it rests on in the tooltip.
 
 ### Voice
@@ -334,14 +370,19 @@ and since the log first has them; **Usually in voice with**: who was in the same
 or more at once, most minutes first, over the past 90 days (up to 8); and their latest 20 stretches, each with its
 channel, its server, how long, and "in it now". A channel opens its page. Hidden when they have no stretch.
 
-### Close to
+### People in common
 
-Who they are most tied to among people other than you (`CloseCard`), as the people graph ties people
-(docs/people-graph.md "Ties and circles"): replies, reactions, turns in a small chat, time in voice together and
-friendships, faded to now with your tuning's fade and voice weight, each divided by how much both have of it all.
-`GET /api/persons/:id/close` (or `/api/identities/:id/close`) answers `{close, identities}`: up to 12 `CloseView`s,
-strongest first, each with what it counted (shown as "12 replies · 3 h in voice · friends"). The small places two
-people share, which the graph also counts, are left out. Not on your own page.
+The friends you share and the people they are most tied to, one row a person, the friends first, each part strongest
+first (`tiesOf` and `PeopleInCommon` in ui/VoiceClose.tsx). The ties are the people graph's (docs/people-graph.md
+"Ties and circles"): replies, reactions, turns in a small chat, time in voice together and friendships, faded to now
+with your tuning's fade and voice weight, each divided by how much both have of it all. `GET /api/persons/:id/close`
+(or `/api/identities/:id/close`, `?limit=` up to 200, 12 by default; the page asks for 200) answers `{close,
+identities}`: `CloseView`s, strongest first, each with what it counted. The friends are each of their profiles' mutual
+friends, and a tie marked `friends`, which a friend's own profile naming them gives: friendship counts either way, so
+someone whose own profile came through one of your accounts still shows the friends another of your accounts sees them
+with. Each row says why ("friends" with the network's badge, "58 replies", "3 h in voice", the turns in its tooltip)
+and, where the graph ties them, a bar for how strong the tie is. The small places two people share, which the graph
+also counts, are left out. Not on your own page. Before 2026-11-25 these were two cards, Mutual friends and Close to.
 
 ### Activity
 
@@ -377,6 +418,103 @@ The presence band, the status marks and the grid's Online need adversarial featu
 `presence` only while presence is logged and `statuses` only while statuses are (shown, and their switches on), and
 leaves the fields out otherwise rather than sending zeros. Until then a line under the chart says they appear once
 those are turned on, with a link to Settings → Adversarial features. The rest needs nothing turned on.
+
+### Their time
+
+Where someone's clock differs from yours, their messages show their time beside yours: "3:06 PM · ~10:06 PM", "~"
+before a guess and a moon while it is night for them (10 at night to 7 in the morning), with the weekday when their
+date is not yours (ui/TheirTime.tsx, web theirclock.ts). A grouped message shows only yours, in the gutter on hover.
+Your own messages, and someone in your own zone, show none.
+
+**Their clock** (hub theirclock.ts), best first:
+
+1. A zone you set on their card (Set time zone), kept per person in the hub's meta (`zone_pins`).
+2. A zone a profile of theirs states: `PersonAbout.timeZone` (Zulip, Matrix's `m.tz`), or an older adapter's "Time
+   zone" fact, from any of their identities' kept profiles. Where none is kept and they are on Zulip or Matrix, the hub
+   asks for their profile in the background, two at a time and each identity once per hub run (not when one was kept
+   in the last 7 days); the answer says `asking` and the app asks again shortly. An ask that kept no profile (its
+   account not connected yet, just after a start, or the network erring) is tried again 5 s later, up to 5 times.
+3. A whole-hour offset guessed from when they are around, over the last 90 days. What places someone is where they
+   never are: work leaves a gap on weekdays that weekends fill, but nothing fills a night. The hub takes the share of
+   their days they were around in each UTC hour (a day's weight halved every three weeks back, so a change of clocks for summer
+   or winter is soon outweighed), finds the stretch of hours around the quietest that stays under 30% of their usual
+   hour's rate, and takes its middle as 4 in the morning for them. How sure it is (the chance the true offset is within
+   an hour) comes from how far people's nights differ (1.2 hours), how much longer than 8 hours the stretch is (someone
+   who writes only in the evening, or only at work, could be anywhere in it), how few days there are, and how plainly
+   quiet it is; your own offset is a little likelier. A guess shows only when it is at least 65% sure, from 10 days or
+   more, and two hours or more from yours.
+
+   Around is anything they did that the hub logs with a time, each a moment: a message (the first and last of each
+   hour, read from the author index alone; system lines they made count too), a reaction (the network's time, or when
+   the hub heard it), a read or play of a message (not a delivery: that is their phone), a poll vote, a call they
+   started, and while those are logged (adversarial features, docs/history.md), a status they set and coming online
+   (or to do not disturb) or leaving it. Idle to offline is left out: often a laptop's lid or a lost connection, hours
+   after they went. So is any minute in which 40 or more people's presence changed at once: an account's fresh
+   snapshot after a restart, not people coming and going (about 6 a minute is usual). Edits were tried and left out:
+   they added little beyond the messages they edit.
+
+   Checked against the message times on a copy of a real hub: right to the hour for its owner and for the people whose
+   profiles state a zone. With the rest of what they do, about a sixth more people get a guess (986 to 1,153); of the
+   172 sure from messages alone (75%, 20 days), 170 stay within an hour, and reactions and reads alone place 47 of 55
+   of them within an hour.
+   Made-up people (hub demo-clocks.ts `rhythmTimes`) keeping ordinary hours come out within an hour in every zone
+   tried, and people who write only in the evening or at work are never shown. What rhythm cannot tell apart, it gets
+   wrong: a night owl who sleeps from 3 to 11 reads as someone three zones west, which is what Set time zone is for.
+
+`GET /api/people/clocks?ids=<identity ids>&tz=<your zone>` answers a `TheirClocksView` for up to 100 authors at once;
+the app asks for a chat's authors as their messages are drawn and keeps the answers three hours.
+
+**Their usual day**: pointing at either time for a moment (or a click on theirs, a tap on a phone, which keeps it open;
+back and Escape close it) shows a card (ui/TheirDay.tsx, its own chunk): the message's time in their time or yours,
+where their clock comes from, and a bar of the day, hour by hour, of the share of the days they were around in that
+hour (its solid part the days they wrote), each with its 80% (Wilson) range as a line, their usual night shaded (its likely middle solid, its give-or-take paler),
+and the message and now marked, under it what it is from ("412 messages, 80 reactions and 31 read receipts"); "Usually quiet 11:05 PM to 7:25 AM, give or take 45 min (21 nights)". Their time and
+Your time slide the same day by the difference. Week shows a row a weekday. The night is the median start and end of
+the gaps of 3 to 20 hours that cover the middle of their quietest six hours, each with its spread (1.4826 × the median
+absolute deviation), said from 7 nights. `GET /api/people/:id/day?tz=<your zone>` answers a `TheirDayView`, in their
+zone where it is known, else in yours. `PUT /api/people/:id/zone {zone}` sets or clears (`null`) a zone by hand.
+
+**Setting their zone**: the card's globe button (Set time zone, or the zone's city once one is named) opens a world map
+(ui/ZoneMap.tsx, a chunk of its own, loaded when it opens) with each zone's main city as a dot and night shaded where
+it is night now. The cities on the same clock as the one pointed at or picked are lit, and before that those on the
+guessed clock, so a guess of UTC+9 shows where they might be. Pointing shows the nearest city with its time and UTC
+offset; a click or a tap picks it, a search finds any zone this browser knows, and Set keeps it. The map is Natural
+Earth's 1:110m land and tzdata's zone1970.tab, made into ui/zonemap-data.ts by scripts/gen-zone-map.ts.
+
+DITHER_DEMO_SCENARIO=clocks adds a Discord group of friends abroad with six weeks of messages and reactions on their own hours
+(Tokyo, Berlin, and one in Chicago), and a direct chat with each whose last message, yours, waits on them; with `zulip`
+too, the Zulip people's zones come from their profiles. scripts/verify-their-time.ts checks it all in a browser set to
+Chicago's time.
+
+### When they answer
+
+In a chat with one person whose last message is yours, the end of the typing line says when they are likely to answer
+it: "Answer likely by 9:40 PM, 8 in 10 by tomorrow 1:10 AM" ("any minute" when that close; "35% chance of an answer
+within the week" when a half is not reached within it). Pointing at it, or a click, opens their card (above), led by
+the same line and the chance they have answered by each half hour of the next day, their usual quiet hours shaded,
+with lines at a half and 8 in 10. Any other card of theirs says it in a line, for your waiting message or for one sent
+now. Nothing shows until they have had 3 of your messages (ui/Typing.tsx AnswerNote, web theiranswer.ts).
+
+**How** (hub theiranswer.ts): your turns are the first of each run of your messages in your direct chats with them,
+on any network together (yours on Signal, answered on Discord, counts), back two years; a turn is answered by their
+next message, or not at all if none comes within a week. Turns of the last week are left out, answered or not: of those
+only the quick answers are known yet. Each past answer is timed in their time, not the clock's: each hour counts at
+how often they were around in it over the 60 days before (as their usual day above; their quietest hours still 3%),
+so a message at their bedtime that waited for their morning took them little of their time. Each counts for less the
+older it is (halved every half year) and the less alike the quiet before it was to the quiet before yours (a
+log-normal kernel 1.5 wide: a message mid-conversation goes by the times you wrote mid-conversation). Everyone's answers
+to you over the last year, in plain time, fill in as 4 of theirs. As you wait, the answers sooner than the time gone by
+drop out, so the estimate moves later. Only times and authors are read, never what anyone wrote.
+`GET /api/people/:id/answer` answers a `TheirAnswerView`; the app asks again when the chat's last message changes and
+every 5 minutes while it is open.
+
+**How well** (backtested on a copy of a real hub, 2025-26, the estimate made as of each moment from what came before):
+against everyone's answers alone, their own timed in their hours scores 5% better at the moment you write (Brier, at 10
+minutes to 3 days), 6-8% better after an hour or six of waiting, and 5.5% on messages sent in their night. At the moment
+you write, answers come before the half mark 52% of the times and before the 8 in 10 mark 79%. After waiting an hour,
+47% and 65%: once a message has waited, it tends to wait longer than past answers say, more so lately (2026's
+chats were slower than 2025's), and after a whole day the chance within the week is said as 68% where it was 51%.
+Whether they wrote elsewhere since you wrote was tried and left out: it was rare, and said little.
 
 ## Status dots
 

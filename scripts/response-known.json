@@ -101,6 +101,20 @@
   "Notices / hub: a visit counted": [
    "M$1"
   ],
+  "Notification calibration / calibration answer show": [
+   "M$1"
+  ],
+  "Notification calibration / calibration answer sound": [
+   "M$1"
+  ],
+  "Notification calibration / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "Notification calibration / hub: a visit counted": [
+   "M$1"
+  ],
   "People / held: the app's clocks": [
    "Ago"
   ],
@@ -581,6 +595,7 @@
   ],
   "a person's profile / input:on": [
    "AccountDots",
+   "Avatar",
    "CallMark",
    "Count",
    "Icon",

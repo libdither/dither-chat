@@ -214,6 +214,11 @@ export interface IdentityFact {
   nickname?: string;
   /** Your private note about them as the network keeps it (Signal's contact note, capability 'contactNotes'); '' when none. */
   note?: string;
+  /**
+   * Another native id on this network for the same account (Partiful: a chat id, `stream:<id>`, beside the user id it
+   * belongs to). The hub puts the two with one person the first time it hears this; a split made after stays.
+   */
+  sameAs?: string;
 }
 
 /** Someone seen as a member of a space. The identity fact for `who` is emitted first. */
@@ -508,6 +513,13 @@ export type AdapterEvent =
        */
       layers?: StatusLayer[];
     }
+  /**
+   * The adapter may have missed messages from `from` to `to` (ms; absent: until now): a gateway session it could not
+   * resume, a sync the server cut short. `conversations`: only these chats (native ids); absent: any of the account's.
+   * The hub checks and fetches what is missing through `history` (docs/catch-up.md). An adapter that fills the hole
+   * itself (Matrix pages back after a limited sync) need not say.
+   */
+  | { t: 'gap'; from: number; to?: number; conversations?: string[]; note?: string }
   | { t: 'identity'; identity: IdentityFact }
   | { t: 'space'; space: SpaceFact }
   | { t: 'conversation'; conversation: ConversationFact }
@@ -632,10 +644,17 @@ export type AdapterEvent =
 
 /** The `history` command's reply. */
 export interface HistoryResult {
+  /**
+   * The message facts this page sent for exactly this conversation, before this reply (ones sent before too). Not
+   * reactions, edits, deletes or thread replies kept in their own threads: the hub checks each counted one came.
+   */
   count: number;
   /** The start of the conversation was reached. */
   done: boolean;
-  /** The ts of the page's oldest message, when there was one. */
+  /**
+   * The ts of the oldest thing the page read, when there was one. With `count` 0 and not `done`, the page read only
+   * things that are not this chat's messages: the hub takes it as whole down to here and reads on below it.
+   */
   oldest?: number;
   /** Where the next page starts, in the network's own terms (Discord: the oldest message's id): sent back as `cursor`. */
   next?: string;

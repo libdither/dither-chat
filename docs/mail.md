@@ -72,10 +72,10 @@ The people you write to by mail join the people the hub already knows (`hub/src/
 - **Never by name.** Sam by mail and Sam on Signal stay two people until you merge them. A profile's "Same name
   elsewhere" hint says who and where ("Alice Chen <alice@…>", "Alice Chen on Signal and Discord"), and the merge
   search finds people by an address too, and the email identities no person holds yet.
-- **A profile's Mail card**: their newest threads across every mail account, how many there are, and "All mail with
-  Sam", the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
+- **A profile's mail**, in its **Between you** list beside their messages: their newest threads across every mail
+  account, how many there are, and All mail, the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
   mail: the merged person's card and list hold every thread of every address of theirs, and a split takes it back.
-  An email-only person asks no network for a profile, and has no chat banner and no empty Recent messages card.
+  An email-only person asks no network for a profile, and has no chat banner.
 - **In the reader**, the sender's name opens their page. Thread and message views name the identity and person
   behind each address (`MailAddressView.identityId`, `personId`; `MailThreadView.personIds`).
 - **When an account's mail is deleted** (24 h after access ended), the identities and persons only it held go too;
@@ -90,7 +90,7 @@ own addresses becoming known, mail from before this slice on a first start) goes
 background. Views work out the person behind each address as they are made (so `mail_thread.person_ids` stays unused),
 and a merge, a split or a new person sends that person's threads again. The profile's card comes with `GET /api/persons/:id/profile` (`ProfileView.mail`), the merge search is
 `GET /api/persons/candidates?q=&except=`. Tests: `hub/test/mail-people.test.ts`, `web/test/mail-people.test.ts`, and
-`scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
+`scripts/verify-profile.ts` (the mail in Between you on a desktop in the dark theme and a phone in the light one, the reader's
 sender, all mail with them, the hint, the merge search by address, merge and split).
 
 ## Mail as chats
@@ -119,17 +119,43 @@ asked for, never copied into the message table.
 - **A mail as a chat message** (`MessageView.mail`, `MessageMailView`): `ts` is when it reached the server, as mail
   sorts; the body is the words above the quote when the body is here, else the preview; `rich` when its HTML is more
   than plain text would show (what the reader's body renderers decide); `quoted` when there is quoted text under it;
+  `blocks`, its words with their formatting, when its HTML can be told that way (below); 
   `opens` on the first message of its thread; `inReplyTo`, the Message-ID it answers. One mail that reached two of
   your accounts (two rows with one Message-ID) is shown once in a person's chat, as its earliest copy, with both
   accounts in `seenVia`. `only`, on a mail of yours in a thread with others that went to fewer of them than are on it
   (`mail_thread.participants`, less your addresses), lists who it went to, so the thread says "to Alice only".
+- **Formatted words** (`MailBlock`, `MailInline`, hub `mail/blocks.ts`, tests `hub/test/mail-blocks.test.ts`): the hub
+  walks the sanitised HTML (never the raw mail) with HTMLRewriter into a small tree: paragraphs (their lines split by
+  breaks), headings, lists (ordered, with a start), quotes, code blocks and rules; bold, italic, underline, struck
+  through, inline code, links (http(s) and mailto only) and line breaks. Whitespace collapses as HTML does, a `<div>`
+  is a line, an empty line ends a paragraph, and it stops where the quoted mail starts (a quote the sanitiser marked
+  that only more quotes follow, with an "On … wrote:" line right above it; a quote with an answer after it stays as a
+  quote). Sent as `blocks` on the body's view (`MailBodyView.blocks`) and on a chat page's mail when the tree says
+  more than the text part: formatting of its own, no text part (an HTML-only mail: the flattener's "• " and
+  "text [href]" do not show), or HTML that is not plain (a personal mail with a logo keeps its bold). No tree for a
+  designed mail: a table, a picture that is not small (over 200 × 120 px, or of no known size), more than three small
+  ones (a small one is left out of the words), more than one element with a background; and none past 400 nodes or
+  8 KB of JSON above the quote. Kept beside the sanitiser's cached result. `MessageView.body` stays the plain text,
+  so search, excerpts and notifications are as they were. The chat (`ui/MailChat.tsx`) draws the tree as elements,
+  never as HTML: headings sized for a chat row, code blocks and anything wide scrolling sideways inside the message; a
+  link shows its words, or its address shortened when its words are its address, opens as chat's links do, and one
+  whose words name another site asks first (`ui/mail/linkOut.tsx`, shared with the frame). Plain text is never read
+  as Markdown: a text-only mail is drawn as before. Markdown sent from the chat box comes back drawn with its
+  formatting, from the HTML it was sent as.
+- **A designed mail** (`rich` with no `blocks`: newsletters, receipts, a letter with a photo in it) shows as it was
+  sent, in place, without a click: the frame "Show as sent" opens (`HtmlBody`, the same picture and tracker policy,
+  nothing loads that it would not load), mounted only once the message comes within 600 px of the view, its height
+  capped at about 60% of the pane with a fade and "Show all" (`ui/mail/ChatMail.tsx` `Capped`). "Just the words" folds
+  it back to its words (for the session), where … has "Show as sent" again.
 - **Letter furniture** (`web/src/mail/letter.ts`, `web/test/mail-letter.test.ts`): a chat draws a mail's words as a
   chat message, in a person's chat and in a group thread alike. Folded behind a faint … at the end of the last line:
   only what is certainly not the message, what follows a `-- ` line (the delimiter itself is never drawn) and a last line that is only the sender's name (first name, full name, or
   their identity's, person's or your account's name). An unsure tail ("Best,\nSam", "Thanks!", "Love, Mom", "Sent from
   my phone") stays in place, small and faint. A greeting ("Hi both,") stays full size, with no blank line after it.
   A run of blank lines is one small gap. A link shows as its host and a short path (the middle cut out), the full
-  address on hover and in its long-press menu. The … shows only when it hides something: the folded lines, the quoted
+  address on hover and in its long-press menu. Formatted mail (`blocks`) has the same furniture (`letterBlocks`):
+  each paragraph's lines are read as text for the name, the sign-off, the greeting and the signature's `-- `, and
+  drawn with their formatting; a list, a quote or a code block is never furniture. The … shows only when it hides something: the folded lines, the quoted
   mail (unless it answers the message drawn right above it), and "Show as sent" for a mail whose HTML plain text would
   lose. A click or tap opens them under the message, and another closes them.
 - **The line over the box** (web `ui/MailChat.tsx`) holds pills, not captions. In a person's chat, after "To Sam
@@ -447,6 +473,11 @@ files made without the hub surviving a reload of the page (its draft does).
   Text, code, Markdown, JSON, CSV, PDF and archives open in the file viewers, pictures in the image viewer, anything
   else in its app or as a download. A message the server deletes, or an account deleted 24 hours after its access
   ended, takes its files with it.
+- **In a chat** a mail is drawn from its words' tree when it has one (bold, lists, links with their words, code: "Mail
+  as chats", "Formatted words"), and a designed one shows framed in place; "Show as sent" is the same frame. A plain
+  HTML part with a list, or a link whose words are not its address, is `formatted` too (its text part loses the list's
+  shape or the link's words), so the reader shows it as its HTML in the app's theme. A held picture of no known size
+  is marked `dc-img-unsized` in the sanitised HTML.
 - **Offline**, the frame cannot load and the text part shows instead. A body kept from an earlier session is asked
   for again once, so images allowed on another device show.
 - **Swipe back** works over the body on a phone: the frame's touches go to the pager (`Pager.ts forwardTouches`).

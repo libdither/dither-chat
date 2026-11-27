@@ -12,6 +12,7 @@ import type * as P from '@dither-chat/protocol';
 import { activeCall, callMedia } from '../call.ts';
 import { type Place, placeFor, type SlotKind, type WindowChoices } from '../callLayout.ts';
 import { phone } from '../phone.ts';
+import { metaRev } from '../state.ts';
 import { callBarOn, isCallChat } from './CallBar.tsx';
 import type { MenuEntry } from './ContextMenu.tsx';
 
@@ -95,6 +96,7 @@ export function fillsPage(c: P.ConversationView): boolean {
 
 /** Under the call's own chat's header: the window's slot. */
 export function CallSlot({ c }: { c: P.ConversationView }) {
+  metaRev.value; // which chat a route or a thread counts as can change without `c` changing
   if (!windowHere(c)) return null;
   return <PageSlot />;
 }

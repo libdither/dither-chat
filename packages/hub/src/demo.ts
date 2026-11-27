@@ -23,6 +23,7 @@ import { DemoStage, demoStageSeed } from './demostage.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
+import { DEMO_CLOCKS_ACCOUNT, DemoClocks, demoClocksOn } from './demo-clocks.ts';
 import { DEMO_ZULIP_ACCOUNT, DemoZulip, demoZulipOn } from './demo-zulip.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
@@ -51,6 +52,7 @@ const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('se
 /** DITHER_DEMO_SCENARIO=crowd adds about 120 people, eight servers and eleven groups, with pairs for Same person? to find (demo-crowd.ts). */
 const CROWD = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('crowd');
 // DITHER_DEMO_SCENARIO=zulip adds a made-up Zulip organization, its channels as forums of topics (demo-zulip.ts, demoZulipOn).
+// DITHER_DEMO_SCENARIO=clocks adds a group of friends abroad, six weeks of messages on their own hours (demo-clocks.ts).
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
@@ -2808,6 +2810,9 @@ class DemoAdapter implements InprocAdapter {
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-del` });
     msg(`${climb.nativeId}~h-gone`, S.alice, 60, 'door code for the gym is 4471');
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-gone`, reason: 'expired' });
+    // A mention of you, taken back two minutes after it was sent.
+    msg(`${climb.nativeId}~h-ping`, S.sam, 62, `<@${this.self.nativeId}> can you bring the spare rope tonight? mine is still drying from the weekend`, { mentionsSelf: true });
+    emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-ping` });
     // A pin, a reaction taken back, a role, a status, and your message read.
     msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
     emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
@@ -3422,6 +3427,7 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
   if (DEMO_POST_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoPosts(acc, dir);
   if (DEMO_EVENT_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoEvents(acc, dir);
   if (acc.id === DEMO_ZULIP_ACCOUNT.id) return new DemoZulip(acc, dir);
+  if (acc.id === DEMO_CLOCKS_ACCOUNT.id) return new DemoClocks(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
@@ -3438,7 +3444,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boole
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : []), ...(demoClocksOn() ? [DEMO_CLOCKS_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */
@@ -3589,7 +3595,10 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
     flags: { seen: false },
     bulk: { listId: '<weekly.rust-weekly.example>', unsubscribe: '<https://rust-weekly.example/unsubscribe>', precedence: 'bulk', autoSubmitted: null },
     text: 'Hello and welcome to another issue of This Week in Rust!\n\nUpdates from the Rust project:\n• Async closures are stable\n• A new edition guide\n\nRead it on the web: https://rust-weekly.example/512',
-    html: '<h1>This Week in Rust 512</h1><p>Hello and welcome to another issue!</p>',
+    html:
+      '<h1>This Week in Rust 512</h1><p>Hello and welcome to another issue of This Week in Rust!</p>' +
+      '<p>Updates from the Rust project:</p><ul><li>Async closures are stable</li><li>A new edition guide</li></ul>' +
+      '<p>Read it <a href="https://rust-weekly.example/512">on the web</a>.</p>',
   });
   put({
     messageId: id('gh-25'),
@@ -3621,6 +3630,25 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
 
   // Older, read: Theo, and what you sent Mom.
   put({ messageId: id('climb'), from: [theo], to: [ME], subject: 'Climbing on Sunday', receivedAt: now - 6 * D, text: 'Gym at 10 on Sunday? I can bring the spare harness.\n\nTheo' });
+  // Alice's trip notes, written with formatting (bold, lists, a link with its own words, a quote, code): her chat draws it.
+  put({
+    messageId: id('trip-notes'),
+    from: [alice],
+    to: [ME],
+    subject: 'Trip notes for Saturday',
+    receivedAt: now - 5 * D,
+    text:
+      'Hi!\n\nNotes for *Saturday*, so we don\'t forget anything:\n\n- Bring the big tent\n- Snacks for two days\n\nThe drive:\n1. Leave at 8\n2. Coffee in Millbrook\n3. Trailhead by 11\n\n' +
+      'The trail map is on the park\'s page: https://trails.example/maple-ridge\n\n> Pack light, walk far.\n\nThe packing list checks itself, run `pack --check` first:\n\n    pack --check\n    pack --print list.txt\n\nAlice',
+    html:
+      '<div dir="ltr"><p>Hi!</p><p>Notes for <b>Saturday</b>, so we <i>don\'t</i> forget anything:</p>' +
+      '<ul><li>Bring the <b>big</b> tent</li><li>Snacks for two days</li></ul>' +
+      '<p>The drive:</p><ol><li>Leave at 8</li><li>Coffee in Millbrook</li><li>Trailhead by 11</li></ol>' +
+      '<p>The trail map is <a href="https://trails.example/maple-ridge">on the park\'s page</a>.</p>' +
+      '<blockquote><p>Pack light, walk far.</p></blockquote>' +
+      '<p>The packing list checks itself, run <code>pack --check</code> first:</p>' +
+      '<pre><code>pack --check\npack --print list.txt</code></pre><p>Alice</p></div>',
+  });
   put({ mailboxId: 'Sent', messageId: id('photos'), from: [ME], to: [mom], subject: 'Photos from the weekend', receivedAt: now - 8 * D, text: 'Here are the photos from the lake. The one of the dog is my favourite.' });
   put({ messageId: id('photos-re'), inReplyTo: id('photos'), references: [id('photos')], from: [mom], to: [ME], subject: 'Re: Photos from the weekend', receivedAt: now - 7 * D, text: 'Lovely! Can you print the dog one for me?\n\nLove, Mom' });
   for (let i = 0; i < 12; i++)

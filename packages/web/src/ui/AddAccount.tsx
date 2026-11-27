@@ -221,6 +221,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
  * manager on this hub's grant; or, while this hub may not add the kind, asking for that on its page.
  */
 function ManagedAdd({ kind: k, onClose, onAsked }: { kind: P.ManagedKindView; onClose: () => void; onAsked: () => void }) {
+  rev.value; // the manager's page comes and goes with `db.accountsManager`, which moves only `rev`
   const [label, setLabel] = useState('');
   const [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -331,6 +332,7 @@ function ManagedAdd({ kind: k, onClose, onAsked }: { kind: P.ManagedKindView; on
 
 /** Adding a chat account: the hub makes it (in dither-accounts, when it runs them) from its network's form. */
 function AddChat({ network, onClose }: { network: P.Network; onClose: () => void }) {
+  rev.value; // whether dither-accounts runs it (`db.accountsManager`) moves only `rev`
   const [label, setLabel] = useState('');
   const [homeserver, setHomeserver] = useState('https://matrix.org');
   const [calendarUrl, setCalendarUrl] = useState(CALENDAR_URL_DEFAULT);

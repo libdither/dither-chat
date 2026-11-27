@@ -8,6 +8,7 @@ import { effect, signal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { activeCall, roomRequests, type ActiveCall } from '../call.ts';
+import { metaRev } from '../state.ts';
 
 type Parts = typeof import('./CallRoom.tsx');
 let parts: Parts | null = null;
@@ -65,6 +66,7 @@ export function roomSide(c: P.ConversationView): 'room' | 'chat' {
 
 /** Room / Chat, above a narrow pane while a room is on (hidden by CSS on a wide one, where both show). Room counts the requests a moderator has. */
 export function RoomSwitch({ c }: { c: P.ConversationView }) {
+  metaRev.value; // the account's abilities, which say who you may invite, change without `call` changing
   const call = roomCall(c);
   if (!call || !roomHasChat(c)) return null;
   const room = roomSide(c) === 'room';

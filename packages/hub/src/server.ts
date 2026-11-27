@@ -1,4 +1,3 @@
-import { calibrationStats } from './checkinstats.ts';
 import { unknownOutcome } from './outcome.ts';
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
@@ -26,6 +25,7 @@ import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { Jobs } from './jobs.ts';
+import { CatchUp } from './catchup.ts';
 import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
 import { type Clock, realClock } from './clock.ts';
 import { SendQueue, type QueueBody } from './sendqueue.ts';
@@ -39,7 +39,7 @@ import { JXL } from './jxlformat.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
-import { clampDays, parseZone } from './activitychart.ts';
+import { clampDays, offsetAt, parseZone } from './activitychart.ts';
 import { compress, PackedFiles, pickEncoding } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { firstLink, unfurl } from './unfurl.ts';
@@ -65,6 +65,8 @@ import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { Answers } from './theiranswer.ts';
+import { Clocks } from './theirclock.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
@@ -98,6 +100,7 @@ import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
 import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
+import { SearchCalledOff, SearchThread, type SearchAsk } from './search-thread.ts';
 import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
 
 
@@ -227,6 +230,8 @@ interface ServerOpts {
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
   /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
   matches?: { file: string | null; jevUrl: string | null };
+  /** The database file: /api/search runs on a thread of its own with a read-only connection to it (search-thread.ts). None: on this thread. */
+  searchFile?: string | null;
   /** New live messages the hub made itself (a followed post's replies, follows.ts): triage decides them (main.ts). */
   onFresh?: (messageIds: string[]) => void;
   /** How often a followed post is read again (follows.ts FOLLOW unless told otherwise). */
@@ -238,7 +243,7 @@ interface ServerOpts {
 /** A category's threshold from a request: a probability, or null for the provider's default. */
 const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0 && t <= 1 ? t : null);
 /** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
-const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
+const NICKNAME_MOVED = 'A nickname is { nickname }: PATCH /api/persons/:id for the person, /api/identities/:id for one account of theirs';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
 function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
@@ -297,23 +302,7 @@ export const validAdapterName = (a: unknown): a is string => typeof a === 'strin
 
 // ------------------------------------------------------------------ media
 
-export function mediaSigner(secret: string) {
-  // The same link signs the same way every time: a bootstrap signs every picture it names (15k on the live hub), so
-  // they are remembered rather than worked out again.
-  const signed = new Map<string, string>();
-  return (raw: string | null | undefined, accountId: string | null | undefined): string | null => {
-    if (!raw) return null;
-    if (raw.startsWith('data:')) return raw;
-    const key = `${raw}|${accountId ?? ''}`;
-    const hit = signed.get(key);
-    if (hit) return hit;
-    const sig = createHmac('sha256', secret).update(key).digest('base64url').slice(0, 16);
-    const out = `/media/${sig}/${Buffer.from(raw).toString('base64url')}${accountId ? `?a=${accountId}` : ''}`;
-    if (signed.size >= 100_000) signed.clear();
-    signed.set(key, out);
-    return out;
-  };
-}
+export { mediaSigner } from './mediasign.ts';
 
 /**
  * A request answered with 5xx, as a line of traces/errors.ndjson: the route's template, the status, and the answer's
@@ -371,6 +360,8 @@ export class HubServer {
   readonly gapfill: GapFill;
   /** Index jobs: servers, folders and conversations fetched whole (jobs.ts, docs/indexing.md). */
   readonly jobs: Jobs;
+  /** Missing messages found and fetched (catchup.ts, docs/catch-up.md). */
+  readonly catchup: CatchUp;
   /** The networks' own search (netsearch.ts). */
   readonly netsearch: NetSearch;
   private archiver?: MediaArchiver;
@@ -390,10 +381,16 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** What time it is for someone, and their usual day (theirclock.ts, docs/profile.md "Their time"). */
+  readonly clocks: Clocks;
+  /** When someone is likely to answer you (theiranswer.ts, docs/profile.md "When they answer"). */
+  readonly theirAnswers: Answers;
   /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
   readonly matches: SameMatches;
   /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
   readonly closeness: Closeness;
+  /** Message search on its own thread, when the hub was given its database file (search-thread.ts). */
+  readonly searchThread: SearchThread | null;
   readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
@@ -457,8 +454,14 @@ export class HubServer {
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
     // One pace for both, so the gap fill and a job never read through one account at once.
     const pace = new ReadingPace(store, opts.pace ?? READING, realClock);
-    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace);
-    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
+    // Every history reader waits until an account's page is applied before it counts or records it (historypage.ts).
+    const settled = (acc: string) => this.sup.settled(acc);
+    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace, settled);
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), settled, online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
+    // The same pace again: catching up reads through the account the jobs and the gap fill read through.
+    this.catchup = new CatchUp(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), settled, online: (a) => sup.online(a), backlog: () => sup.backlog, log: (msg) => console.warn(msg), pace });
+    // Told what comes, waits and is lost from here on (supervisor.ts).
+    sup.watch = this.catchup;
     this.netsearch = new NetSearch(store, {
       command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 60_000),
       online: (a) => sup.online(a),
@@ -497,8 +500,16 @@ export class HubServer {
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
+    this.clocks = new Clocks({
+      db: store.db,
+      pins: { get: store.zonePins, set: store.setZonePins },
+      askProfile: (id) => this.people.get(id),
+      logged: () => ({ presence: store.logsPresence(), statuses: store.logsStatuses() }),
+    });
+    this.theirAnswers = new Answers({ db: store.db, clocks: this.clocks });
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
+    this.searchThread = opts.searchFile ? new SearchThread({ store, file: opts.searchFile, secret: opts.secret, log: (l) => console.log(l) }) : null;
     // Its timer starts in start() with the others: a hub built and never started (a test's) runs nothing after its
     // store closes.
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
@@ -569,6 +580,7 @@ export class HubServer {
 
   start() {
     this.self.start();
+    this.searchThread?.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
       (req: Request, server: Server<WsData>) => {
@@ -680,6 +692,7 @@ export class HubServer {
     this.imports.resume();
     this.gapfill.resume();
     this.jobs.start();
+    this.catchup.start({ unclean: this.store.journal.started === 'unclean' });
     void this.archiver?.start();
     this.mediaInfo.start();
     this.packer?.start();
@@ -703,11 +716,13 @@ export class HubServer {
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
+    this.catchup.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
     this.packer?.stop();
     this.imports.stop();
     this.matches.stop();
+    this.searchThread?.stop();
     this.collector.stop();
     // The last frame carries presence held for coalescing too, so the journal a clean stop closes has it.
     this.flush(true);
@@ -715,11 +730,6 @@ export class HubServer {
     this.plain?.stop(true);
     for (const s of this.extra) s.stop(true);
   }
-
-  /** Called when you look (the app opened, the phone unlocked): the next look's bundle goes (main.ts). */
-  onLook: ((why: 'open' | 'unlock') => void) | null = null;
-  /** How many messages wait for the next look. */
-  nextLookHeld: (() => number) | null = null;
 
   private async loudRoute(path: string, method: string, body: <T>() => Promise<T>): Promise<Response | null> {
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
@@ -729,40 +739,47 @@ export class HubServer {
     const ok = (x: unknown = { ok: true }) => Response.json(x);
     let m: RegExpMatchArray | null;
     try {
-      if (path === '/api/loudness/state' && method === 'GET') return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      if (path === '/api/loudness/state' && method === 'GET') return ok(L.view());
       if (path === '/api/loudness/prefs' && method === 'PUT') {
         L.setPrefs(await body<Partial<P.AttentionPrefs>>());
-        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+        return ok(L.view());
       }
-      // The app opened (or came back) and asks how many questions wait, for the Notification calibration row: a look,
-      // so the next look's bundle is let go.
-      if (path === '/api/loudness/checkins/count' && method === 'GET') {
-        this.onLook?.('open');
-        L.checkins.fill(L.prefs());
-        return ok({ pending: L.checkins.pendingCount() });
+      // The inbox's Notification calibration row: how many cards and past answers wait on the feed.
+      if (path === '/api/loudness/feed/count' && method === 'GET') {
+        L.feed.fill(L.prefs());
+        return ok({ pending: L.feed.pendingCount() });
       }
-      // The Notification calibration page: what waits, each with where you came across it.
-      if (path === '/api/loudness/checkins' && method === 'GET') {
-        this.onLook?.('open');
-        return ok(L.checkins.due(L.prefs()));
-      }
-      if (path === '/api/loudness/calibration' && method === 'GET') return ok(calibrationStats(s.db));
-      if ((m = path.match(/^\/api\/loudness\/checkins\/([\w-]+)$/)) && method === 'POST') {
-        const b = await body<{ answer?: unknown; skip?: unknown }>();
-        const r = L.checkin(m[1], b.skip === true ? null : typeof b.answer === 'string' ? b.answer : null);
+      // The calibration feed (feed.ts): cards, rows, past answers back, and the sure ones apart.
+      if (path === '/api/loudness/feed' && method === 'GET') return ok(L.feed.view(L.prefs()));
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)$/)) && method === 'POST') {
+        const b = await body<{ answer?: unknown }>();
+        const r = L.feedAnswer(m[1], b.answer as P.CalAnswer);
         this.flush();
         return ok(r);
       }
-      if (path === '/api/loudness/ask-less' && method === 'POST') {
-        L.checkins.askLess();
-        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/parts$/)) && method === 'POST') {
+        const b = await body<{ parts?: unknown }>();
+        if (!Array.isArray(b.parts)) return bad('Say parts: a list');
+        return ok(L.feedParts(m[1], b.parts as P.CalPart[]));
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/settle$/)) && method === 'POST') {
+        const b = await body<{ settle?: unknown }>();
+        if (b.settle !== 'keep' && b.settle !== 'once' && b.settle !== 'undo') return bad('Say settle: keep, once or undo');
+        L.feedSettle(m[1], b.settle);
+        this.flush();
+        return ok();
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/skip$/)) && method === 'POST') {
+        const b = await body<{ skip?: unknown }>();
+        L.feed.skip(m[1], b.skip !== false);
+        return ok();
       }
       if (path === '/api/loudness/answers' && method === 'POST') {
         const b = await body<Partial<P.AttnAnswerBody>>();
         const answers: P.AttnAnswer[] = ['worth', 'could_wait', 'shouldnt', 'sooner', 'fine', 'louder', 'quieter'];
-        const sources: P.AttnSource[] = ['checkin', 'sheet', 'notification', 'followup'];
+        const sources: P.AttnSource[] = ['sheet', 'notification', 'followup'];
         if (typeof b.messageId !== 'string' || !answers.includes(b.answer as P.AttnAnswer)) return bad(`Say messageId and answer: one of ${answers.join(', ')}`);
-        const r = L.answer({ messageId: b.messageId, answer: b.answer as P.AttnAnswer, source: sources.includes(b.source as P.AttnSource) ? (b.source as P.AttnSource) : 'sheet', ...(b.scope === 'person' || b.scope === 'chat' ? { scope: b.scope } : {}), ...(typeof b.checkinId === 'string' ? { checkinId: b.checkinId } : {}) });
+        const r = L.answer({ messageId: b.messageId, answer: b.answer as P.AttnAnswer, source: sources.includes(b.source as P.AttnSource) ? (b.source as P.AttnSource) : 'sheet', ...(b.scope === 'person' || b.scope === 'chat' ? { scope: b.scope } : {}) });
         this.flush();
         return ok(r);
       }
@@ -771,17 +788,11 @@ export class HubServer {
         if (typeof b.answerId !== 'string') return bad('Say answerId');
         return ok(await L.why({ answerId: b.answerId, ...(typeof b.reason === 'string' ? { reason: b.reason as P.WhyReason } : {}), ...(typeof b.wait === 'string' ? { wait: b.wait as P.WhyWait } : {}), ...(typeof b.text === 'string' ? { text: b.text } : {}), ...(typeof b.until === 'number' ? { until: b.until } : {}) }));
       }
-      // The Android app saw the phone unlocked: a look.
-      if (path === '/api/loudness/look' && method === 'POST') {
-        const b = await body<{ why?: unknown }>();
-        this.onLook?.(b.why === 'unlock' ? 'unlock' : 'open');
-        return ok();
-      }
       if (path === '/api/loudness/forget' && method === 'POST') {
         const b = await body<{ key?: unknown; rejected?: unknown }>();
         if (typeof b.key !== 'string' || typeof b.rejected !== 'boolean') return bad('Say key and rejected: true or false');
         L.forget(b.key, b.rejected);
-        return ok(L.view(Date.now(), this.nextLookHeld?.() ?? 0));
+        return ok(L.view());
       }
       // The Why sheet: a message's loudness, whole, with its reasons.
       if ((m = path.match(/^\/api\/messages\/([\w-]+)\/loudness$/)) && method === 'GET') {
@@ -1421,7 +1432,7 @@ export class HubServer {
         const voice = personVoice(s.db, ids, (i) => ((keyOf.get(i) as { person_id: string | null } | null)?.person_id ?? i) as string);
         return ok({ voice, identities: s.identitiesByIds(voice?.with.map((w) => w.identityId) ?? []) });
       }
-      const close = closeTo(s, await this.closeness.get(), key, graphTuning(s.db));
+      const close = closeTo(s, await this.closeness.get(), key, graphTuning(s.db), Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 12)));
       return ok({ close, identities: s.identitiesByIds(close.map((c) => c.identityId)) });
     }
     if (path === '/api/graph/tuning' && method === 'GET') return ok(graphTuning(s.db));
@@ -1471,7 +1482,18 @@ export class HubServer {
       const v = m[2] && method === 'POST' ? await this.netsearch.more(m[1]) : this.netsearch.view(m[1]);
       return v ? ok(v) : bad('that search is over; search again', 404);
     }
-    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
+    if (path === '/api/search') {
+      // typing=1: asked as you type, so without the slow fallbacks (docs/search.md, "How a search runs").
+      const ask: SearchAsk = { q: url.searchParams.get('q') ?? '', limit: Math.min(num('limit') ?? 40, 100), cursor: url.searchParams.get('cursor'), context: num('context') ?? 0, typing: url.searchParams.get('typing') === '1' };
+      if (!this.searchThread) return ok(s.search(ask.q, ask.limit, ask.cursor, ask.context, { typing: ask.typing }));
+      try {
+        // A newer search as you type from the same session takes the place of one still queued.
+        return ok(await this.searchThread.search(ask, { key: cookieOf(req) ?? bearerOf(req) ?? '', signal: req.signal }));
+      } catch (e) {
+        if (e instanceof SearchCalledOff) return bad(e.message, 409);
+        throw e;
+      }
+    }
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
       const page = s.messageContext(m[1], Math.min(num('around') ?? 30, 100));
@@ -1496,6 +1518,28 @@ export class HubServer {
       const days = clampDays(url.searchParams.get('days'));
       const v = s.activityChart(m[1].startsWith('idn_') ? { identityId: m[1] } : { personId: m[1] }, days, zone);
       return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    // Their time: each author's clock, and someone's usual day by hour (theirclock.ts, docs/profile.md "Their time").
+    if (path === '/api/people/clocks' && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const ids = (url.searchParams.get('ids') ?? '').split(',').filter((x) => /^[\w-]{1,80}$/.test(x)).slice(0, 100);
+      return ok(this.clocks.clocks(ids, offsetAt(zone, Date.now()) / 60_000));
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/day$/)) && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const v = this.clocks.day(m[1], zone);
+      return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/answer$/)) && method === 'GET') {
+      const v = this.theirAnswers.answer(m[1]);
+      return v ? ok(v) : bad('nobody by that id, or you', 404);
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/zone$/)) && method === 'PUT') {
+      const b = await body<Partial<P.ZonePinBody>>();
+      if (b.zone !== null && typeof b.zone !== 'string') return bad('zone: an IANA name, or null');
+      return this.clocks.pin(m[1], b.zone) ? ok() : bad('nobody by that id, or no such zone', 404);
     }
     // What changed (docs/history.md): a place's name, description, settings and members; a person's names, pictures
     // and profile across their identities.
@@ -2123,6 +2167,25 @@ export class HubServer {
       else if (method === 'PATCH') v = this.jobs.update(id, await body<{ priority?: P.JobPriority; repeatHours?: number | null }>());
       return v ? ok(v) : bad('no such job', 404);
     }
+    // Catching up (catchup.ts, docs/catch-up.md).
+    if (path === '/api/catch-up' && method === 'GET') return ok({ holes: this.catchup.list() } satisfies P.CatchUpView);
+    if (path === '/api/catch-up/report' && method === 'POST') {
+      try {
+        return ok(this.catchup.reportFrom(await body<P.CatchUpReport>()));
+      } catch (e: any) {
+        return bad(String(e?.message ?? e));
+      }
+    }
+    if ((m = path.match(/^\/api\/catch-up\/([\w-]+)(?:\/(stop|all))?$/))) {
+      const id = m[1];
+      if (method === 'DELETE' && !m[2]) return this.catchup.remove(id) ? ok({ ok: true }) : bad('no such hole', 404);
+      let v: P.CatchUpHoleView | null = null;
+      if (method === 'GET' && !m[2]) v = this.catchup.get(id);
+      else if (method === 'POST' && m[2] === 'stop') v = this.catchup.stopHole(id);
+      else if (method === 'POST' && m[2] === 'all') v = this.catchup.allChats(id);
+      else return bad('not here', 405);
+      return v ? ok(v) : bad('no such hole', 404);
+    }
     // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
     if ((m = path.match(/^\/api\/history-gaps\/([\w-]+)(\/stop)?$/))) {
       if (!s.account(m[1])) return bad('no such account', 404);
@@ -2410,18 +2473,30 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown; nameFrom?: unknown; nickname?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // `nickname`: your name for them, no account's (docs/chats.md, Names); null or '' takes it away.
+      if (b.nickname !== undefined && b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
       // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
       // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
       const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
       if (!idOrNull(b.face) || !idOrNull(b.picture)) return bad('face and picture are an identity id or null');
-      if (b.face !== undefined || b.picture !== undefined) {
+      // `nameFrom`: one of their accounts' names to show for them instead of the face's, or null for the face's.
+      const nf = b.nameFrom as P.NameFrom | null | undefined;
+      if (nf !== undefined && nf !== null && !(typeof nf === 'object' && typeof nf.identityId === 'string' && ['nickname', 'display', 'handle'].includes(nf.field as string)))
+        return bad('nameFrom is { identityId, field: nickname | display | handle } or null');
+      if (b.face !== undefined || b.picture !== undefined || nf !== undefined || b.nickname !== undefined) {
         if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
-        // Both checked before either is saved, so a refused request changes nothing.
-        for (const id of [b.face, b.picture]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
+        // All checked before any is saved, so a refused request changes nothing.
+        for (const id of [b.face, b.picture, nf?.identityId]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
+        if (nf) {
+          const col = { nickname: 'nickname', display: 'display_name', handle: 'handle' }[nf.field];
+          if (!s.one(`SELECT 1 FROM identity WHERE id = ? AND COALESCE(${col}, '') != ''`, nf.identityId)) return bad('that account has no such name');
+        }
         if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
         if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
+        if (nf !== undefined) s.setPersonName(m[1], nf);
+        if (b.nickname !== undefined) s.setPersonNickname(m[1], b.nickname as string | null);
       }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').

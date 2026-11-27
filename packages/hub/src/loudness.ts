@@ -1,6 +1,6 @@
 /**
  * One loudness scale (docs/notifications.md): how much of your attention a message is worth right now, 0 to 100, and
- * the band the devices draw from it (sound, show now silent, next look, inbox, unread only).
+ * the band the devices draw from it (sound; show, silent in the shade; inbox; unread only).
  *
  * Three things are estimated for each message, each by its own small model, each trained only by the answers that
  * concern it (checkin.ts, attnanswers.ts):
@@ -16,18 +16,27 @@
  *
  *   lost(delay) = want · Σ wait_k (1 − 2^(−delay / halfLife_k)) + owed · delay / 1 day
  *   value(band) = lost(unread's delay) − lost(band's delay) − cost(band, moment)
- *   the band is the one of largest value; the loudness is where it sits between its neighbours, on the band's stretch.
+ *   the step is the one of largest value; the loudness is where it sits between its neighbours, on the step's stretch.
+ *
+ * The values are weighed over five steps of the scale: unread (0-10), inbox (10-30), a low step (30-55), show (55-80)
+ * and sound (80-100). The low step was the "next look" band, held for one bundle; since 2026-11 it is the bottom of
+ * Show, shown at once and silently like the rest of it (the devices fold several quiet ones into one row). Keeping the
+ * five steps keeps every loudness, and every sound, what it was.
  *
  * Learning keeps learn.ts's broad-to-narrow pooling: one weight per feature (network, server, chat, person, flags,
  * words), each held at its start the more firmly the broader it is. An answer that names a part (this chat, this
  * person, this topic, the moment) moves only that part.
  */
 import type * as P from '@dither-chat/protocol';
-import { BAND_NAME, BAND_RANGE, LOUD_BANDS } from '@dither-chat/protocol';
+import { BAND_NAME, bandOf } from '@dither-chat/protocol';
 import { describe, features, lambda, voteWeight, type Facts, type Namer } from './learn.ts';
 import { CONVERSING_REASON } from './tiers.ts';
 
 type Band = P.LoudBand;
+/** The scale's five steps (above): the low one is the bottom of Show. */
+type Step = Band | 'low';
+const STEPS: readonly Step[] = ['unread', 'inbox', 'low', 'show', 'sound'];
+const STEP_RANGE: Record<Step, readonly [number, number]> = { unread: [0, 10], inbox: [10, 30], low: [30, 55], show: [55, 80], sound: [80, 100] };
 type Why = keyof typeof CONVERSING_REASON;
 
 const MIN = 60_000;
@@ -39,14 +48,14 @@ export function attentionMode(v: string | undefined): P.AttentionMode {
   return v === 'tiers' || v === 'on' ? v : 'shadow';
 }
 
-/** How long each band keeps you from a message, roughly: the next look is when you next open the app or unlock. */
-const DELAY: Record<Band, number> = { sound: 3 * MIN, show: 20 * MIN, next: 3 * HOUR, inbox: 8 * HOUR, unread: 24 * HOUR };
+/** How long each step keeps you from a message, roughly: the low step is a silent row you come across in a while. */
+const DELAY: Record<Step, number> = { sound: 3 * MIN, show: 20 * MIN, low: 3 * HOUR, inbox: 8 * HOUR, unread: 24 * HOUR };
 /**
  * What each band costs you before the moment is counted, against what a message is worth (want 1 is "surely glad").
  * The inbox's is what a message that keeps for days at your list level (0.6) gains by being ranked: so the inbox band
  * starts where the list did. Chosen by the replay (docs/notifications.md, "The numbers").
  */
-const INTERRUPT: Record<Band, number> = { sound: 0.3, show: 0.15, next: 0.06, inbox: 0.036, unread: 0 };
+const INTERRUPT: Record<Step, number> = { sound: 0.3, show: 0.15, low: 0.06, inbox: 0.036, unread: 0 };
 /** The can-wait buckets' half-lives. */
 const HALF_LIFE = [10 * MIN, HOUR, 6 * HOUR, 7 * DAY] as const;
 /** P(needed within bucket k) = sigmoid(urgency + CUTS[k]); urgency is the log-odds of "needed within the hour". */
@@ -110,7 +119,7 @@ export interface LoudInput {
   /** The needs-reply chance where the inbox knows it (attention.ts); else worked out from the message. */
   owed?: number | null;
   moment: Moment;
-  /** A rule of yours: Always alert (100), List only (at most the next look). */
+  /** A rule of yours: Always alert (100), List only (at most the bottom of Show, folded with the other quiet ones). */
   rule?: 'always' | 'list';
 }
 
@@ -168,14 +177,13 @@ function score(r: Resolved): Scored {
   const cum = CUTS.map((c) => sigmoid(r.urgZ + c));
   const wait: [number, number, number, number] = [cum[0], Math.max(0, cum[1] - cum[0]), Math.max(0, cum[2] - cum[1]), Math.max(0, 1 - cum[2])];
   const lost = (d: number) => want * wait.reduce((s, p, k) => s + p * (1 - 2 ** (-d / HALF_LIFE[k])), 0) + (r.owed * Math.min(d, DAY)) / DAY;
-  const cost = (b: Band) => (b === 'sound' ? (r.quiet ? Infinity : INTERRUPT.sound * Math.exp(r.soundLog)) : b === 'show' ? INTERRUPT.show * Math.exp(r.showLog) : INTERRUPT[b]);
+  const cost = (b: Step) => (b === 'sound' ? (r.quiet ? Infinity : INTERRUPT.sound * Math.exp(r.soundLog)) : b === 'show' ? INTERRUPT.show * Math.exp(r.showLog) : INTERRUPT[b]);
   const base = lost(DELAY.unread);
-  const v = LOUD_BANDS.map((b) => base - lost(DELAY[b]) - cost(b));
+  const v = STEPS.map((b) => base - lost(DELAY[b]) - cost(b));
   let i = 0;
   for (let k = 1; k < v.length; k++) if (v[k] > v[i]) i = k;
   if (r.rule === 'list' && i > 2) i = 2;
-  const band = LOUD_BANDS[i];
-  const [lo, hi] = BAND_RANGE[band];
+  const [lo, hi] = STEP_RANGE[STEPS[i]];
   const down = i > 0 ? v[i] - v[i - 1] : null;
   const up = i < v.length - 1 ? v[i] - v[i + 1] : null;
   let pos: number;
@@ -185,7 +193,7 @@ function score(r: Resolved): Scored {
   pos = Math.max(0, Math.min(0.999, Number.isFinite(pos) ? pos : 0));
   let loudness = Math.round((lo + pos * (hi - lo)) * 10) / 10;
   if (r.rule === 'always') loudness = 100;
-  return { loudness, band: r.rule === 'always' ? 'sound' : band, want, wait };
+  return { loudness, band: bandOf(loudness), want, wait };
 }
 
 /** The owed part before what was learned: the inbox's needs-reply chance where it knows it, else from the message. */
@@ -204,10 +212,37 @@ interface LoudOut {
   reasons: P.LoudReason[];
 }
 
-/** One message's loudness, its parts, and what moved it, by how many points (each part taken away in turn). */
-export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['readily'] = 'learned', namer?: Namer | null): LoudOut {
+/**
+ * How many points of loudness each part of the model gave a message (the calibration feed's "What was it wrong
+ * about?"): the person (what was learned of them, and their waiting on you), the chat, the topic (its words), how
+ * long it can wait, and the moment's cost of a sound. Each is the loudness less the loudness with that part taken away.
+ */
+export function partPoints(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['readily'] = 'learned'): Record<'person' | 'chat' | 'topic' | 'wait' | 'moment', number> {
+  const { r, fs, nudge } = resolve(i, m, readily);
+  const s = score(r).loudness;
+  const learned = (pre: (k: string) => boolean) => ({
+    want: fs.reduce((t, [k, x]) => t + (pre(k) ? (m.want[k] ?? 0) * x : 0), 0),
+    wait: fs.reduce((t, [k, x]) => t + (pre(k) ? (m.wait[k] ?? 0) * x : 0), 0),
+  });
+  const without = (alt: Partial<Resolved>) => Math.round((s - score({ ...r, ...alt }).loudness) * 10) / 10;
+  const person = learned((k) => k.startsWith('author:'));
+  const chat = learned((k) => k.startsWith('conv:') || k.startsWith('space:'));
+  const topic = learned((k) => k.startsWith('w:'));
+  const chatStart = i.why.filter((w) => w === 'dm' || w === 'followed' || w === 'wrote' || w === 'answers');
+  const topicStart = i.why.filter((w) => w === 'keyword' || w === 'about');
+  return {
+    person: without({ wantZ: r.wantZ - person.want, urgZ: r.urgZ - person.wait, owed: 0 }),
+    chat: without({ wantZ: r.wantZ - chat.want - chatStart.reduce((t, w) => t + WANT_START[w], 0), urgZ: r.urgZ - chat.wait - chatStart.reduce((t, w) => t + WAIT_START[w], 0) }),
+    topic: without({ wantZ: r.wantZ - topic.want - topicStart.reduce((t, w) => t + WANT_START[w], 0), urgZ: r.urgZ - topic.wait - topicStart.reduce((t, w) => t + WAIT_START[w], 0) }),
+    wait: without({ urgZ: logit(UNJUDGED) }),
+    moment: without({ soundLog: nudge, showLog: nudge / 2 }),
+  };
+}
+
+/** Where the parts stand for a message, with its features: what loudness() and partPoints() start from. */
+function resolve(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['readily']) {
   const fs = attnFeatures(i.facts, i.words, i.why);
-  const sum = (w: Record<string, number>, only?: (k: string) => boolean) => fs.reduce((s, [k, x]) => s + (only && !only(k) ? 0 : (w[k] ?? 0) * x), 0);
+  const sum = (w: Record<string, number>) => fs.reduce((s, [k, x]) => s + (w[k] ?? 0) * x, 0);
   const wantStart = i.why.reduce((s, w) => s + WANT_START[w], 0);
   const waitStart = i.why.reduce((s, w) => s + WAIT_START[w], 0) + (i.facts.active ? ACTIVE_WAIT : 0);
   const alert = startAlert(i.alert, i.why);
@@ -215,7 +250,6 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
   const owedMult = author ? 2 * sigmoid(m.owed[author] ?? 0) : 1;
   const keys = momentKeys(i.moment);
   const mom = (k: string) => (MOMENT_START[k] ?? 0) + Math.max(-MOMENT_REACH, Math.min(MOMENT_REACH, m.moment[k] ?? 0));
-  const deskLog = i.moment.desk ? mom('desk') : 0;
   const nudge = Math.log(NUDGE[readily] ?? 1);
   const r: Resolved = {
     wantZ: logit(i.importance) + wantStart + sum(m.want),
@@ -227,6 +261,13 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
     quiet: i.moment.quiet,
     ...(i.rule ? { rule: i.rule } : {}),
   };
+  return { r, fs, alert, author, keys, mom, nudge };
+}
+
+/** One message's loudness, its parts, and what moved it, by how many points (each part taken away in turn). */
+export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['readily'] = 'learned', namer?: Namer | null): LoudOut {
+  const { r, fs, alert, author, keys, mom, nudge } = resolve(i, m, readily);
+  const deskLog = i.moment.desk ? mom('desk') : 0;
   const s = score(r);
   const parts: P.LoudParts = {
     want: round3(s.want),
@@ -266,8 +307,8 @@ export function loudness(i: LoudInput, m: AttnModel, readily: P.AttentionPrefs['
   if (Math.abs(mom(hk)) >= 0.1) add(hk === 'hour:night' ? 'Late at night' : `At this time of day`, by({ soundLog: r.soundLog - mom(hk) }));
   if (Math.abs(mom('all')) >= 0.1) add(mom('all') > 0 ? 'Your answers: sounds have often been more than needed' : 'Your answers: you wanted to know sooner', by({ soundLog: r.soundLog - mom('all') }));
   if (nudge) add(readily === 'less' ? 'You asked it to sound less readily' : 'You asked it to sound more readily', by({ soundLog: r.soundLog - nudge, showLog: r.showLog - nudge / 2 }));
-  if (r.quiet) add('Quiet hours: anything that would sound waits for the next look', by({ quiet: false }));
-  if (r.rule === 'list') reasons.push({ text: 'A rule of yours: List only, at most the next look', by: 0 });
+  if (r.quiet) add('Quiet hours: anything that would sound shows silently', by({ quiet: false }));
+  if (r.rule === 'list') reasons.push({ text: 'A rule of yours: List only, at most a quiet row', by: 0 });
   reasons.sort((a, b) => Math.abs(b.by) - Math.abs(a.by));
   reasons.unshift({ text: `${BAND_NAME[s.band]}: wanted ${pct(s.want)}, ${staleWords(s.wait)}`, by: 0 });
   return { loudness: s.loudness, band: s.band, parts, reasons };
@@ -280,8 +321,8 @@ function staleWords(w: readonly number[]): string {
   return ['goes stale in minutes', 'keeps for about an hour', 'keeps for the day', 'keeps for days'][k];
 }
 
-/** The decision code a band is stored as, so older apps keep working: sound push, show quiet, next look and inbox digest, unread drop. */
-export const BAND_DECISION: Record<Band, P.NotifyTier> = { sound: 'push', show: 'quiet', next: 'digest', inbox: 'digest', unread: 'drop' };
+/** The decision code a band is stored as, so older apps keep working: sound push, show quiet, inbox digest, unread drop. */
+export const BAND_DECISION: Record<Band, P.NotifyTier> = { sound: 'push', show: 'quiet', inbox: 'digest', unread: 'drop' };
 /** The band today's tiers amount to, for comparing (shadow.ts). */
 export const TIER_BAND: Record<P.NotifyTier, Band> = { push: 'sound', quiet: 'show', digest: 'inbox', drop: 'unread' };
 

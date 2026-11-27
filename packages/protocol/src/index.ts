@@ -38,3 +38,4 @@ export * from './accounts.ts';
 export * from './foryou.ts';
 export * from './loudness.ts';
 export * from './matches.ts';
+export * from './catchup.ts';

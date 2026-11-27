@@ -2,9 +2,9 @@
 
 Every new message from someone else gets a **loudness**, 0 to 100, on [one scale](#one-scale-loudness): what it is
 worth to see it now rather than later, against what an interruption costs at that moment. Where it falls says how it
-reaches you: it sounds, shows silently now, waits for your next look, sits in the inbox, or stays unread in its chat.
-It learns mostly from your answers: Louder and Quieter on a message, a few questions a day, and the buttons on a
-notification.
+reaches you: it sounds, shows silently in the shade, sits in the inbox, or stays unread in its chat. It learns mostly
+from your answers: Louder and Quieter on a message, Sound, Show or Inbox on [the calibration
+feed](#the-calibration-feed), and the buttons on a notification.
 
 The scale replaces [the three tiers](#the-tiers) (Alert, Conversation, List) once it is switched on. Until then it is
 worked out beside them, in shadow: shown on each message's bell and scored, while the tiers still decide what is sent.
@@ -15,8 +15,7 @@ worked out beside them, in shadow: shown on each message's bell and scored, whil
 | Band | Loudness | Reaches you |
 | --- | --- | --- |
 | **Sound** | 80 to 100 | sounds, with a heads-up; a notification on a computer |
-| **Show now** | 55 to 80 | a silent notification of its own on the phone, now |
-| **Next look** | 30 to 55 | held; one silent bundle, *Next look · N waiting*, when you unlock the phone or open the app, or at set times |
+| **Show** | 30 to 80 | silent and minimized: in the phone's shade only (no sound, status-bar icon or lock-screen card); a silent notification on a computer |
 | **Inbox** | 10 to 30 | nothing sent; listed in the inbox |
 | **Unread** | 0 to 10 | unread in its chat only |
 
@@ -31,20 +30,32 @@ The number is worked out from four separate parts (`packages/hub/src/loudness.ts
 - **The moment's cost**: what a sound costs now. It starts at one and is dearer while a computer is in use, at night,
   and minutes after another sound. It is learned for each kind of moment, from your answers about sounds then.
 
-What is lost by waiting is `want × Σ wait_k (1 − 2^(−delay/h_k)) + owed × min(delay, day) / day`. Each band has its
-delay (a sound 3 minutes, show 20 minutes, next look 3 hours, the inbox 8 hours, unread a day) and its interruption
-cost; the band picked is the one worth most, and the number sits within that band's range by how clearly it won. There
-is **no budget**: nothing caps the sounds a day. Settings shows how many sounded today, for your information, and has
-one nudge on what was learned: **Less readily / As it learned / More readily**.
+What is lost by waiting is `want × Σ wait_k (1 − 2^(−delay/h_k)) + owed × min(delay, day) / day`. The hub weighs five
+steps, each with its delay and its interruption cost (a sound 3 minutes; worth showing within 20 minutes, 55 to 80;
+worth showing within 3 hours, 30 to 55; the inbox 8 hours; unread a day); the step picked is the one worth most, and
+the number sits within that step's range by how clearly it won. The two middle steps are both **Show**: they keep the
+number where it was before the bands were four, so nothing that sounded sounds more or less. There is **no budget**:
+nothing caps the sounds a day. Settings shows how many sounded today, for your information, and has one nudge on what
+was learned: **Less readily / As it learned / More readily**.
 
-Your rules stay absolute: Always alert is 100, Mute 0, List only caps it at next look, quiet hours take the sound band
-away, and a message its sender sent silently goes no higher than show. Nothing explores on sounds: no message is made
-louder to learn from it. A notification's row keeps its loudest band for an hour, so a quieter message after a sound
-does not take its place silently.
+Your rules stay absolute: Always alert is 100, Mute 0, List only caps it at a quiet row (below 55), quiet hours take
+the sound band away (it shows silently instead), and a message its sender sent silently goes no higher than show.
+Nothing explores on sounds: no message is made louder to learn from it. A notification's row keeps its loudest band
+for an hour, so a quieter message after a sound does not take its place silently.
+
+Several Show notifications fold into one row of the shade on Android, *N chats* ([android.md](android.md)); the fold is
+only how they look, each still comes when its message does. Browsers group an app's notifications themselves.
 
 The decision codes stay the tiers' (`push`, `quiet`, `digest`, `drop`): with the scale on, sound is `push`, show
-`quiet`, next look and the inbox `digest`, unread `drop`. A message's `triage` carries `loudness`, the number; its
-bell fetches the whole of it (`GET /api/messages/:id/loudness`: band, parts and reasons).
+`quiet`, the inbox `digest`, unread `drop`. A message's `triage` carries `loudness`, the number; its bell fetches the
+whole of it (`GET /api/messages/:id/loudness`: band, parts and reasons).
+
+**Next look went** (2026-11-25). There was a fifth band, 30 to 55, held for one silent bundle when you unlocked the
+phone, opened the app or at set times. It is gone, with its unlock and set-time sending and its settings: what fell in
+it shows now, minimized. The hub's migration (`bandsWithoutNextLook` in `store.ts`, once) rewrote what was stored as
+next look to show: the scale's view on each message (`triage.loud_view`), the old check-ins' bands, the answers'
+bands (`attn_answer.band`), and dropped the `next_look` table and the `nextLook` and `times` settings. The model's
+targets are kept by answer, not by band, so they needed nothing; the replay reads next look as show.
 
 ### Why, on every message
 
@@ -62,7 +73,7 @@ What you say about a message. Each answer changes only the part of the model it 
 | A notification that sounded | **Worth it**, **Could have waited** |
 | A silent one | **Louder** |
 | A list row | **Quieter**, **Louder** |
-| A check-in (on the Notification calibration page) | about a sound: Worth it, Could have waited, Shouldn't have reached me; about a quiet one: Wish I'd known sooner, Fine where it was |
+| The calibration feed | **Sound**, **Show**, **Inbox**, and what it was wrong about |
 
 An answer from a notification's button takes the notification's place with a silent one: **Noted: Worth it** and what
 it changes ("More like this will sound."), which closes itself after four seconds once the hub has the answer, or
@@ -83,36 +94,71 @@ Should have alerted; Quieter as Alert was wrong on an alert and Less like this e
 alert as the old Not urgent; Shouldn't have reached me as Less like this (and Alert was wrong on an alert). A mark
 taken back on the old route takes back the answer it stood as.
 
-### Check-ins
+### The calibration feed
 
-Questions about single notifications (`checkin.ts`), waiting on their own page, **Notification calibration**
-(`#/calibration`), until you get to them. Nothing pops up for them anywhere: the inbox has a quiet row with the count,
-like Requests and Notices (no sound, no push), shown while any wait, and Settings → *Ask me* links to the page. Up to
-three a day are put there, one about something that sounded and one about something that stayed quiet, by the hub's
-minute round and when the app asks how many wait (which is also a look, for the next look). *Sounded* means a push of it played a sound (`notification.alert`),
-not only that it was decided an alert: one in a burst, while a computer was in use or in a watched chat stayed silent.
-With one question a day (*Rarely*), either side is asked at even odds. Each pick tosses a fair coin between the two
-arms: at random, with the chance it had of being picked kept (a half, then one of the side's pool), so the scorecard
-can weigh them back honestly; or where the model is least sure. **Ask me less** halves the rate, down to an eighth;
-what is left over of a question is a chance drawn once a day, so at an eighth of three it is about one a week; what
-already waits stays. Three explicit **Skip**s in a row pause it for a week; a question left waiting is never a skip.
-For you puts one card a day on the page on top of these, *Worth seeing?* ([foryou.md](foryou.md)), thinned by the same
-rate; nothing is asked on the card itself.
+One page, **Notification calibration** (`#/calibration`, `calfeed.ts`, `CalibrationPane.tsx`), of the last three
+days' notifications as they looked, each with three answers: **Sound**, **Show**, **Inbox**. Nothing pops up for it
+anywhere: the inbox has a quiet row with the count of cards waiting, like Requests and Notices (no sound, no push), and
+Settings → *Ask me* links to it.
 
-The questions wait: at most 20 open (`QUEUE_CAP`; past it the oldest are dropped), none older than two weeks
-(`EXPIRE_AFTER`). Dropped ones keep `expired_at` and count as neither answers nor skips; dropping does not change the
-chance any question had of being picked, so the random half's weights stay honest. Each keeps when it was asked
-(`created_at`) and answered (`answered_at`), and the page shows each one's age. Memory of a moment fades, so in what
-is learned an answer counts in full within a day of the message and then less, in a straight line down to half at two
-weeks (`lateWeight`); the scorecard's rates leave that out and count each answer once.
+Each item draws the notification as you came across it: its picture, network, who, the text and the time, in the look
+it had (the phone's shade, a toast or browser notification, or only a row in the app when none went out). Under each
+answer a bar, on a fixed scale of 0 to 100%:
+
+- its fill is the chance the model gave that answer, and a whisker how unsure it was;
+- **▲** marks what you did, read from how soon you opened, tapped or answered it (within 10 minutes of a sound or
+  shown: Sound; within 3 hours: Show; later or never: Inbox);
+- the underlined answer is what the model did (it sounded, showed silently, or sent nothing).
+
+The chances are the loudness blurred by how few answers there are about that person or chat (a normal spread of 30
+points with none, down to 4), cut at the bands. Tapping an answer sends it and draws the chances again as the model
+gives them after learning it, with a dashed line at the old one. **What was it wrong about?** then opens six parts: the
+person, the chat, the topic, can wait, the moment and the delivery, each with a small bar of which way it pushed this
+one (from taking that part away). Picking parts routes the answer to them only and draws the after-bars again: the
+person moves only want and owed for that author, the chat only that chat's, the topic only the words, can wait only the
+wait, the moment only the moment's cost, and the delivery (it went to the wrong device, or late) teaches the scale
+nothing. With no part picked the answer moves all of them a little. The parts picked are kept with the answer
+(`attn_answer.parts`). The context line (where it was seen, whether it sounded, while a computer was in use) and what
+moved it, by how many points, are under a closed `<details>`, as is **Open the chat**.
+
+**Worth asking.** Each notification gets a score:
+
+```
+surprise    = −log₂ P(what you did), capped at 5 bits
+unsure      = spread of its guess (entropy over the three, 0 to 1) × few answers (1 / (1 + n/5))
+worth asking = (0.6 · surprise/5 + 0.4 · unsure) × 2^(−age / 3 days)
+```
+
+Those over 0.5 may open as **cards**, about three a day (*Ask me*: never, one a day, up to three): each is drawn at
+random with a chance in proportion to its score, `min(1, per day × worth / the day's total)`, and that chance is kept
+(`cal_item.chance`). The scorecard and the learner weigh a card's answer back by it (`min(3, max(1, 0.5 / chance))`),
+so the cards' lean towards surprises does not tilt what is learned. The rest are compact **rows**, three small bars
+each; tapping one opens it in place as a card. The hub draws once an hour, and when the page or the inbox row asks.
+
+**A past answer comes back once**, as a dashed card a day after you gave it, when the model had given that answer
+under 20%: what you said, its guess then and its guess now. **Keep** leaves it learned; **Only that once** says it was a
+one-off: it stays in the history but teaches nothing from then on (`attn_answer.until`); **Undo** takes it back, with
+the mark it stood as.
+
+**The ones it is sure of** sit under a closed *N it was sure of* at the end, only when all of these hold: it gave
+what you did 95% or more, there are 30 or more answers about that person or chat, none of them against it in 30 days,
+and it was not a sound held back (quiet hours, a computer in use, a burst). One in 20 of them is still shown, at
+random, and says so.
+
+On a phone: one column; **×** at a card's or row's top right skips it, and so does a swipe of about 100 px sideways,
+with **Undo** on the toast. On a computer: the list on the left, the chosen one open on the right; × shows on hover,
+**1**–**3** answer, **x** skips, **j** and **k** move, **w** opens what it was wrong about. Escape goes back, as
+everywhere ([desktop.md](desktop.md)). Cards and past answers wait up to two weeks; a skip is kept and never counts as an
+answer. A late answer counts a little less in what is learned: in full within a day of the message, then in a straight
+line down to half at two weeks (`lateWeight`).
 
 #### Where you saw it
 
-Each question draws again what you came across, from what the hub keeps (`seen.ts`): the notification as the hub
-composed it (title, body, the grouped lines with who wrote each, the chat, the tier, whether it was meant to sound,
-whether a computer was in use; `notification.title`, `body`, `look`, `computer_in_use`, kept 15 days, `WORDS_KEPT`,
-then cleared), each push registration it went to (`notification_device`: its label then, the Android app or a
-browser), and each device's own word on where it showed it (`notification_event.seen`, codes and ids only):
+Each item's look and context line come from what the hub keeps (`seen.ts`): the notification as the hub composed it
+(title, body, the grouped lines with who wrote each, the chat, the tier, whether it was meant to sound, whether a
+computer was in use; `notification.title`, `body`, `look`, `computer_in_use`, kept 15 days, `WORDS_KEPT`, then
+cleared), each push registration it went to (`notification_device`: its label then, the Android app or a browser), and
+each device's own word on where it showed it (`notification_event.seen`, codes and ids only):
 
 | | Android app | Web Push (sw.js) | The open page |
 |---|---|---|---|
@@ -121,43 +167,24 @@ browser), and each device's own word on where it showed it (`notification_event.
 | beside it | the tags of our other notifications showing | not known: asking the browser while another push is still being drawn drops that one for good | |
 | also | locked, screen on | whether a page of the app was open | |
 
-The tags beside it are turned into those chats' latest notifications at the time, so the picture shows them too.
-Then the push it skipped (`push_skip`: watched on a computer, or capped), the first time you opened its chat after it
-came and from which list (`visit.source`, on which device), and For you's serving of it (`foryou_item`,
-`foryou_event`). The page draws an Android notification (shade, lock screen or heads-up, with what showed beside it),
-a computer's browser notification, the app's toast, or the inbox row when no notification went out, with a line like
-*Phone (Pixel), vibrated, 2:02 PM, on the lock screen, while you were on the computer*. What the hub cannot say it
-says in words under **What we don't know**: no device said it showed it, a device too old to say where, words no
-longer kept, a chat never opened since. All of it stays in the hub's database.
-
-#### The numbers
-
-At the top of the page (`GET /api/loudness/calibration`, `checkinstats.ts`): sounds a day over the last 7 and 30 days
-with each day (the scorecard's `attn.sounds`; shown, never a limit), the share of sounds you said were worth it and of
-quiet ones you said should have sounded (the scorecard's weighted `attn.worth` and `attn.missed` over 30 days), how
-many wait, were answered, skipped and dropped, how long questions wait before you answer and how old the message was
-by then, and the model's chance you wanted it (`want`) against what you answered, in five bins with its Brier score.
-A demo world seeds a few questions with invented devices (`demo-calibration.ts`).
+Then the push it skipped (`push_skip`: watched on a computer, or capped) and the first time you opened its chat after
+it came and from which list (`visit.source`, on which device). All of it stays in the hub's database. A demo world
+seeds every kind of item with invented devices (`demo-calibration.ts`): cards in the shade, as a toast and as a row,
+past answers, rows, and sure ones.
 
 ### What it learns from
 
-Answers and check-ins count most (weight 1, a check-in answered late a little less: above), as do the marks from before. Then what you did: a reply 0.3, an open of
-five seconds or more 0.1 (never one right after a sound, which says only that it sounded), a swipe 0.05. Each part is
-fitted with the same L2 pooling as the importance. *What it learned* in Settings lists what moved most, each with
-**Forget**.
-
-### Next look
-
-What lands in the next look's band waits (`nextlook.ts`), and goes in one silent notification when you unlock the
-phone (the Android app tells the hub), at the times you set (12:00 and 18:00 to start), or both. Opening the app counts
-as a look too: what was held is then in the inbox, and no bundle is sent.
+Answers count most (weight 1; a feed answer late a little less, and a card's weighed by its chance: above), as do the
+marks from before. Then what you did: a reply 0.3, an open of five seconds or more 0.1 (never one right after a sound,
+which says only that it sounded), a swipe 0.05. Each part is fitted with the same L2 pooling as the importance. *What
+it learned* in Settings lists what moved most, each with **Forget**. A feed answer also stands as a mark: Show or
+Inbox on one that sounded as Alert was wrong, Sound on one that did not as Should have alerted.
 
 ### Settings
 
-Settings → Notifications: how readily it sounds, when the next look comes, **the computer comes first** (while a
-computer is in use, a chat open and read there sends nothing to the phone), how many questions a day go on the
-Notification calibration page, a note on people you're
-drifting from, and what it learned. Quiet hours stay where they were.
+Settings → Notifications: how readily it sounds, **the computer comes first** (while a computer is in use, a chat
+open and read there sends nothing to the phone), how many cards a day open on the calibration feed, a note on people
+you're drifting from, and what it learned. Quiet hours stay where they were.
 
 ### The replay
 
@@ -1049,24 +1076,26 @@ dry run.
 `POST /api/triage/policy/relearn`, `POST /api/triage/factors/:key { rejected }`, `GET /api/triage/shadow`,
 `PUT /api/rules`, `GET`/`PUT /api/quiet-hours`, `GET /api/inbox`, `GET /api/model/scores` ([scorecard.md](scorecard.md)).
 
-The scale: `GET /api/loudness/state` (the mode, your settings, sounds today, what it asks and learned),
-`PUT /api/loudness/prefs`, `GET /api/loudness/checkins/count` (`{ pending }`, the row's count; also a look),
-`GET /api/loudness/checkins` (what waits, each with its `context`; also a look), `GET /api/loudness/calibration`
-(the page's numbers), `POST /api/loudness/checkins/:id { answer | skip }`, `POST /api/loudness/ask-less`, `POST /api/loudness/answers { messageId, answer, source, scope?,
-checkinId? }` (answers `{ answerId, why? }`), `POST /api/loudness/why { answerId, reason?, wait?, text?, until? }`,
-`POST /api/loudness/look { why: unlock | open }`, `POST /api/loudness/forget { key, rejected }`,
-`GET /api/messages/:id/loudness`. Types in `packages/protocol/src/loudness.ts`.
+The scale: `GET /api/loudness/state` (the mode, your settings, sounds today, cards asked and answered today, what
+waits and what it learned), `PUT /api/loudness/prefs`, `GET /api/loudness/feed/count` (`{ pending }`, the row's
+count), `GET /api/loudness/feed` (`CalFeedView`: the cards, past answers and rows, and the sure ones apart),
+`POST /api/loudness/feed/:id { answer }` (`{ answerId, before, after }`), `POST /api/loudness/feed/:id/parts
+{ parts }` (`{ after }`), `POST /api/loudness/feed/:id/settle { settle: keep | once | undo }`,
+`POST /api/loudness/feed/:id/skip { skip }`, `POST /api/loudness/answers { messageId, answer, source, scope? }`
+(answers `{ answerId, why? }`), `POST /api/loudness/why { answerId, reason?, wait?, text?, until? }`,
+`POST /api/loudness/forget { key, rejected }`, `GET /api/messages/:id/loudness`. Types in
+`packages/protocol/src/loudness.ts`.
 
 A message's `triage` (`P.TriageView`): `decision`, `score` (its importance), `reasons`, `decidedBy`, `probs`
 (`{ alert, important }`), `judge` (the local model's answer, when it was asked) with `bar` (the bar it was held to), `marks`, `feedback` (a vote from
 before the tiers), and `loudness` (0 to 100, where the scale was worked out).
 
 Storage: the scale's number and view in `triage.loud` and `triage.loud_view`; answers in `attn_answer` (never your
-words), check-ins in `checkin` (with the chance each had of being picked, and `expired_at` for those dropped unanswered), what
-each notification looked like and where it went in `notification` (`title`, `body`, `look`, `computer_in_use`),
-`notification_device` and `notification_event.seen`, what waits for the next look in
-`next_look`; the scale's model in `meta` (`attn_model`), your settings (`attention_prefs`) and the check-ins' state
-(`checkin_state`). `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
+words; a feed answer with its `parts` and the `chance` its card was drawn with), the calibration feed in `cal_item`
+(each item's kind, chance, surprise, unsure, the model's chances and what it and you did, your answer and the chances
+after it, and when a past answer comes back), the old check-ins in `checkin` (history only), what each notification
+looked like and where it went in `notification` (`title`, `body`, `look`, `computer_in_use`), `notification_device`
+and `notification_event.seen`; the scale's model in `meta` (`attn_model`) and your settings (`attention_prefs`). `triage` (`decision`, `score`, `reasons`, `decided_by`, `facts` as JSON, `probs` and `shadow` as JSON
 chances, `alert_mark`, `less_mark`, `marked_at`, `was`, and from before the tiers `feedback`, `explore`,
 `propensity`); the models in `meta` (`triage_policy`: `model`, `rejected`, and `candidate` for the shadow);
 `list_level`, `quiet_hours` and `tiers_at` in `meta` too; the phone's list in `phone_episode` and `phone_snooze`; the scorecard in `model_score`; what each desktop browser was alerted about and the clears it was sent in `push_shown` and `push_clear` (ids and times only), and when a push last reached a Firefox while its page was in use in `push_subscription.refilled_at`. Triage rows older than 90 days go when nothing can be

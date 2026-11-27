@@ -1,7 +1,7 @@
 /**
  * The loudness scale on the page (docs/notifications.md), a chunk of its own (LoudnessLazy.tsx): a message's Why
  * (the scale, the reasons with how far each moved it, Louder / Quieter for the person or the chat), the one optional
- * why after an answer, and its part of Settings. The questions themselves wait on their own page (CalibrationPane.tsx).
+ * why after an answer, and its part of Settings. The calibration feed is a page of its own (CalibrationPane.tsx).
  */
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
@@ -13,7 +13,7 @@ import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 import './loudness.css';
 
-/** The scale, 0 to 100, its five bands and where this one sits. */
+/** The scale, 0 to 100, its four bands and where this one sits. */
 function LoudScale({ loudness, band }: { loudness: number; band: P.LoudBand }) {
   return (
     <div class="loud-scale" data-loudness={Math.round(loudness)} aria-label={`Loudness ${Math.round(loudness)} of 100: ${BAND_NAME[band]}`}>
@@ -25,7 +25,7 @@ function LoudScale({ loudness, band }: { loudness: number; band: P.LoudBand }) {
       </div>
       <div class="loud-legend">
         <span>Unread</span>
-        <span>Next look</span>
+        <span>Show</span>
         <span>Sound</span>
       </div>
     </div>
@@ -172,10 +172,10 @@ function Choice<T extends string>({ value, options, onPick, label }: { value: T;
 const MODE_NOTE: Record<P.AttentionMode, string> = {
   tiers: 'Notifications follow the tiers; the scale is off.',
   shadow: 'Worked out beside the tiers for now: what it says is shown and scored, the tiers still decide.',
-  on: 'The scale decides what sounds, shows, waits for your next look, or stays in the inbox.',
+  on: 'The scale decides what sounds, what shows silently in the shade, and what stays in the inbox.',
 };
 
-/** Settings → How readily it sounds: the nudge, next look, the computer first, asking, drifting, and what it learned. */
+/** Settings → How readily it sounds: the nudge, the computer first, asking, drifting, and what it learned. */
 export function LoudnessSettings() {
   useEffect(() => void loadAttention(), []);
   const s = attnState.value;
@@ -199,36 +199,6 @@ export function LoudnessSettings() {
       <small data-sounds-today>
         {s.soundsToday} {s.soundsToday === 1 ? 'sound' : 'sounds'} today. Shown, never a limit.
       </small>
-      <b>Next look</b>
-      <small>What can wait comes together in one quiet notification: when you open the app or unlock the phone, at set times, or both.</small>
-      <Choice
-        label="When the next look comes"
-        value={p.nextLook}
-        onPick={(nextLook) => set({ nextLook })}
-        options={[
-          ['open', 'When I look'],
-          ['times', 'At set times'],
-          ['both', 'Both'],
-        ]}
-      />
-      {p.nextLook !== 'open' && (
-        <div class="quiet-times">
-          {p.times.map((t, i) => (
-            <input class="input" type="time" value={t} aria-label={`Next look time ${i + 1}`} onChange={(e) => set({ times: p.times.map((x, j) => (j === i ? (e.target as HTMLInputElement).value : x)) })} />
-          ))}
-          {p.times.length < 4 && (
-            <button class="chip-btn" onClick={() => set({ times: [...p.times, '20:00'] })}>
-              Add a time
-            </button>
-          )}
-          {p.times.length > 0 && (
-            <button class="chip-btn" onClick={() => set({ times: p.times.slice(0, -1) })}>
-              Remove the last
-            </button>
-          )}
-        </div>
-      )}
-      {s.held > 0 && <small>{s.held} waiting for the next look.</small>}
       <label class="toggle-row">
         <input type="checkbox" checked={p.computerFirst} onChange={(e) => set({ computerFirst: (e.target as HTMLInputElement).checked })} />
         <span>
@@ -238,13 +208,13 @@ export function LoudnessSettings() {
       </label>
       <b>Ask me</b>
       <small>
-        Questions about something that sounded or stayed quiet wait on the Notification calibration page, never in your way: answer them when you get to them. Your answers teach it most.{' '}
+        Notifications worth asking about open on the Notification calibration page, never in your way: Sound, Show or Inbox, when you get to them. Your answers teach it most.{' '}
         <button class="link-btn" data-track="loud open calibration" onClick={() => go({ view: 'calibration' })}>
-          {s.pending ? `${s.pending} waiting` : 'Open it'}
+          {s.pending ? `${s.pending} to answer` : 'Open it'}
         </button>
       </small>
       <Choice
-        label="How often it asks"
+        label="How many open as cards"
         value={p.ask}
         onPick={(ask) => set({ ask })}
         options={[
@@ -253,7 +223,6 @@ export function LoudnessSettings() {
           ['often', 'Up to three a day'],
         ]}
       />
-      {s.pausedUntil && s.pausedUntil > Date.now() && <small>Paused after three skips, until {new Date(s.pausedUntil).toLocaleDateString()}.</small>}
       <label class="toggle-row">
         <input type="checkbox" checked={p.drifting} onChange={(e) => set({ drifting: (e.target as HTMLInputElement).checked })} />
         <span>

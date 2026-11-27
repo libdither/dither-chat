@@ -10,6 +10,7 @@ import { POLL_RULES, pollDraftProblem, pollHoursLabel } from '@dither-chat/proto
 import { renderMarkdown } from '../markdown.ts';
 import { identityName } from '../model.ts';
 import { canEndPoll, endPoll, makePoll, vote, voter } from '../polls.ts';
+import { metaRev } from '../state.ts';
 import { SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import './Poll.css';
@@ -26,6 +27,7 @@ function left(ms: number): string {
 }
 
 export function PollCard({ m }: { m: P.MessageView }) {
+  metaRev.value; // whether an account that can vote is connected
   const p = m.poll!;
   const mine = p.options.filter((o) => o.mine).map((o) => o.id);
   const [picked, setPicked] = useState<string[] | null>(null);
@@ -125,6 +127,7 @@ export function PollCard({ m }: { m: P.MessageView }) {
  */
 /** `focus`: the question takes the focus as it opens (not in the phone's panel, where a tap brings the keyboard). */
 export function PollMaker({ conversationId, network, accountId, question: initial = '', onClose, onSent, focus = true }: { conversationId: string; network: P.Network; accountId?: string; question?: string; onClose: () => void; onSent?: () => void; focus?: boolean }) {
+  metaRev.value; // the accounts' labels on its chip
   const rules = POLL_RULES[network]!;
   const [question, setQuestion] = useState(initial.replace(/\s+/g, ' ').trim().slice(0, rules.questionMax));
   const [options, setOptions] = useState(['', '']);

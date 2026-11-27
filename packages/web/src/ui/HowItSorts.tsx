@@ -11,7 +11,7 @@ import { BELOW_DAYS, isMailItem, lineKey, linesOf, listPreview, reasonsOf, topIm
 import { authorName, board, boardUnread, communitiesOf, convLabel, convTitle, plainBody } from '../model.ts';
 import type { FunctionComponent } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { db, go, loadMailTriage, rev } from '../state.ts';
+import { db, go, loadMailTriage, mailRev, rev } from '../state.ts';
 import { forgetFactor, loadNeedsCalibration, loadPolicy, loadShadow, needsCalibration, relearn, triagePolicy, triageShadow } from '../triage.ts';
 import { MarkToggles, percent, TIER_ICON } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
@@ -50,6 +50,8 @@ function Importance({ score, title }: { score: number | null | undefined; title:
 
 /** One conversation in one tier: how many of its messages landed there, its importance, its marks, and why. */
 function Line({ l, below }: { l: BoardLine; below: boolean }) {
+  // The rest comes new with `l`, made again each time HowItSorts draws for `rev`.
+  mailRev.value; // a mail's unread is its thread's (mailUnread), which moves only `mailRev`
   const [open, setOpen] = useState(false);
   const face = lineFace(l);
   if (!face) return null;
@@ -96,6 +98,7 @@ function Line({ l, below }: { l: BoardLine; below: boolean }) {
 const WHY_SHOWN = 20;
 
 /** The reasons, each once, and the messages themselves, each with its own importance and marks. */
+// redraws: Line passes `l` new each time HowItSorts draws for `rev`, which is what the inbox's lift moves.
 function Why({ l }: { l: BoardLine }) {
   const [all, setAll] = useState(false);
   const reasons = reasonsOf(l.items);

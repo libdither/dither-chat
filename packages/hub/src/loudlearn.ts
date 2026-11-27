@@ -4,6 +4,12 @@
  * day, when what you did (answered, opened, swiped away) joins in at low weight.
  *
  * Where each answer goes:
+ *  - The calibration feed's Sound / Show / Inbox (calfeed.ts): what it should have been. With no part named, want and
+ *    can-wait move toward it for this kind of message (Sound: wanted, now; Show: wanted, not within minutes; Inbox:
+ *    could wait hours), and a sound's cost at that moment a little. With parts named ("What was it wrong about?"),
+ *    only those move: the person (want and owed), the chat, the topic (its words), how long it can wait, the moment
+ *    (a sound's cost then); delivery teaches nothing (a fault of how it was sent, not of the message). Each answer is
+ *    weighted back by the chance its card was drawn with (calfeed.ts ipsWeight).
  *  - Worth it: want and can't-wait up, for this kind of message. Shouldn't have reached me: want down. Could have
  *    waited: can-wait longer (want unchanged), and a sound at that moment a little dearer. Wish I'd known sooner:
  *    can't-wait up, want up, a sound a little cheaper. Fine where it was: nothing moves.
@@ -18,10 +24,10 @@
  * row swiped away unopened 0.05; an open right after a sound 0 (the sound caused it).
  */
 import type * as P from '@dither-chat/protocol';
-import { bandOf, DEFAULT_ATTENTION_PREFS, LOUDER_WHY, QUIETER_WHY } from '@dither-chat/protocol';
+import { bandOf, DEFAULT_ATTENTION_PREFS, CAL_ANSWERS, LOUDER_WHY, QUIETER_WHY } from '@dither-chat/protocol';
 import { words, type Facts, type Namer } from './learn.ts';
-import { answerWeight, ATTN_WEIGHTS, emptyAttnModel, learnedList, trainAttn, validAttnModel, type AttnExample, type AttnModel } from './loudness.ts';
-import { Checkins, lateWeight, newId, type CheckinState } from './checkin.ts';
+import { answerWeight, ATTN_WEIGHTS, emptyAttnModel, learnedList, loudness, partPoints, trainAttn, validAttnModel, type AttnExample, type AttnModel, type LoudInput } from './loudness.ts';
+import { CalibrationFeed, ipsWeight, lateWeight, newId } from './calfeed.ts';
 import { gatherOutcomes, LATE, OPEN_DWELL, type Outcome } from './labels.ts';
 import { previewText, type Store } from './store.ts';
 import { jobFailed } from './errors.ts';
@@ -67,7 +73,7 @@ interface Saved {
 }
 
 export class LoudLearner {
-  readonly checkins: Checkins;
+  readonly feed: CalibrationFeed;
   /** What it learned (loudness.ts), read by triage at each decision. */
   model: AttnModel = emptyAttnModel();
   private rejected: string[] = [];
@@ -87,22 +93,18 @@ export class LoudLearner {
       this.model = saved.model;
       this.rejected = saved.rejected ?? [];
     }
-    this.checkins = new Checkins(
-      store.db,
-      { get: () => store.metaValue<CheckinState>('checkin_state'), set: (s) => store.setMetaValue('checkin_state', s) },
-      (id) => this.describe(id),
-    );
+    this.feed = new CalibrationFeed(store.db, (id) => this.describe(id), { loudNow: (id) => this.loudNow(id), points: (id) => this.points(id) });
   }
 
   prefs(): P.AttentionPrefs {
-    return { ...DEFAULT_ATTENTION_PREFS, ...(this.store.metaValue<Partial<P.AttentionPrefs>>('attention_prefs') ?? {}) };
+    const s = this.store.metaValue<Partial<P.AttentionPrefs>>('attention_prefs') ?? {};
+    const d = DEFAULT_ATTENTION_PREFS;
+    return { readily: s.readily ?? d.readily, computerFirst: s.computerFirst ?? d.computerFirst, ask: s.ask ?? d.ask, drifting: s.drifting ?? d.drifting };
   }
 
   setPrefs(p: Partial<P.AttentionPrefs>): P.AttentionPrefs {
     const next = { ...this.prefs() };
     if (p.readily === 'less' || p.readily === 'learned' || p.readily === 'more') next.readily = p.readily;
-    if (p.nextLook === 'open' || p.nextLook === 'times' || p.nextLook === 'both') next.nextLook = p.nextLook;
-    if (Array.isArray(p.times)) next.times = p.times.filter((t) => typeof t === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(t)).slice(0, 6);
     if (typeof p.computerFirst === 'boolean') next.computerFirst = p.computerFirst;
     if (p.ask === 'never' || p.ask === 'rarely' || p.ask === 'often') next.ask = p.ask;
     if (typeof p.drifting === 'boolean') next.drifting = p.drifting;
@@ -110,8 +112,8 @@ export class LoudLearner {
     return next;
   }
 
-  /** A message's title and one line, for a check-in. */
-  private describe(messageId: string): { title: string; preview: string; conversationId: string | null; network: string | null; shape: string | null } | null {
+  /** A message's title and one line, who wrote it and where, for the calibration feed. */
+  private describe(messageId: string): { title: string; preview: string; conversationId: string | null; network: string | null; shape: string | null; author: string | null; chat: string | null } | null {
     const s = this.store;
     const m = s.one<Row>(
       `SELECT m.body, m.kind, m.conversation_id, c.name, c.shape, c.network, COALESCE(p.name, i.display_name, i.handle) AS author
@@ -120,13 +122,13 @@ export class LoudLearner {
     );
     if (!m) return null;
     const where = m.shape === 'direct' ? (m.author ?? 'Direct message') : `${m.name ?? 'A chat'}${m.author ? ` · ${m.author}` : ''}`;
-    return { title: where, preview: previewText(m.body ?? '', m.kind).slice(0, 160), conversationId: m.conversation_id, network: m.network ?? null, shape: m.shape ?? null };
+    return { title: where, preview: previewText(m.body ?? '', m.kind).slice(0, 160), conversationId: m.conversation_id, network: m.network ?? null, shape: m.shape ?? null, author: m.author ?? null, chat: m.name ?? null };
   }
 
   // ------------------------------------------------------------ answers
 
   /**
-   * An answer about a message (a check-in, the Why sheet, a notification's action). Louder / Quieter also stand as
+   * An answer about a message (the Why sheet, a notification's action). Louder / Quieter also stand as
    * today's marks. Says whether to ask why: at most one a chat a day, and never twice in a row for the same answer.
    */
   answer(b: P.AttnAnswerBody, now = Date.now()): P.AttnAnswerResult {
@@ -143,10 +145,9 @@ export class LoudLearner {
     const asked = side ? this.whyDue(t.conversation_id, b.answer, now) : false;
     s.db
       .query(
-        `INSERT INTO attn_answer (id, message_id, conversation_id, author, answer, source, scope, checkin_id, band, sounded, why_asked, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO attn_answer (id, message_id, conversation_id, author, answer, source, scope, band, sounded, why_asked, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, b.messageId, t.conversation_id, t.author, b.answer, b.source, b.scope ?? null, b.checkinId ?? null, t.loud != null ? bandOf(t.loud) : null, t.sounded ? 1 : 0, asked ? 1 : 0, now);
-    if (b.checkinId) this.checkins.answer(b.checkinId, b.answer, now);
+      .run(id, b.messageId, t.conversation_id, t.author, b.answer, b.source, b.scope ?? null, t.loud != null ? bandOf(t.loud) : null, t.sounded ? 1 : 0, asked ? 1 : 0, now);
     // The tiers keep learning from these as from the marks they replace: Louder as "Should have alerted"; Quieter as
     // "Alert was wrong" on an alert, else "Less like this"; "Could have waited" on an alert as "Not urgent" did;
     // "Shouldn't have reached me" as both.
@@ -247,23 +248,102 @@ export class LoudLearner {
     );
   }
 
-  /** A check-in's answer (or a skip: null). For you's: glad / not. */
-  checkin(id: string, answer: string | null, now = Date.now()): P.AttnAnswerResult | { ok: true } {
-    const r = this.store.one<Row>('SELECT * FROM checkin WHERE id = ?', id);
-    if (!r) throw new Error('No such question');
-    if (answer === null) {
-      this.checkins.answer(id, null, now);
-      return { ok: true };
+  // ------------------------------------------------------------ the calibration feed
+
+  /**
+   * Sound / Show / Inbox on a feed item: kept as an answer, mirrored on today's marks where it says the alert was
+   * wrong or missing (so the tiers learn too), learned at once. Says the chances before and after. Answering again
+   * replaces the earlier answer.
+   */
+  feedAnswer(id: string, answer: P.CalAnswer, now = Date.now()): P.CalAnswerResult {
+    if (!CAL_ANSWERS.includes(answer)) throw new Error(`Say one of ${CAL_ANSWERS.join(', ')}`);
+    const it = this.feed.get(id);
+    if (!it) throw new Error('No such item');
+    const s = this.store;
+    if (it.answer_id) this.takeBack(it);
+    // Its loudness worked out again before the answer is learned: what "after" is measured against (calfeed.ts afterOf).
+    const base = typeof it.loud_base === 'number' ? it.loud_base : this.loudNow(it.message_id);
+    const t = s.one<Row>(`SELECT t.decision, m.conversation_id, COALESCE(i.person_id, m.author_id) AS author FROM message m LEFT JOIN triage t ON t.message_id = m.id LEFT JOIN identity i ON i.id = m.author_id WHERE m.id = ?`, it.message_id);
+    const answerId = newId('ans');
+    s.db
+      .query(`INSERT INTO attn_answer (id, message_id, conversation_id, author, answer, source, checkin_id, band, sounded, chance, at) VALUES (?, ?, ?, ?, ?, 'feed', ?, ?, ?, ?, ?)`)
+      .run(answerId, it.message_id, t?.conversation_id ?? it.conversation_id, t?.author ?? it.author, answer, id, bandOf(it.loud), it.did === 'sound' ? 1 : 0, it.kind === 'row' && !it.sure_shown ? null : it.chance, now);
+    this.feed.answered(id, answer, answerId, base, now);
+    const mark = feedMark(it.did, answer);
+    if (mark && this.mark && t?.decision && t.decision !== 'silent') this.tryMark(it.message_id, mark);
+    this.learn(now);
+    const after = this.feed.afterOf(this.feed.get(id)!) ?? (JSON.parse(it.p) as P.Trio);
+    this.feed.settleAfter(id, after, now);
+    return { ok: true, answerId, before: JSON.parse(it.p), after };
+  }
+
+  /** "What was it wrong about?": the answer moves only these parts from now on. */
+  feedParts(id: string, parts: P.CalPart[], now = Date.now()): P.CalPartsResult {
+    const it = this.feed.get(id);
+    if (!it?.answer_id) throw new Error('Answer it first');
+    const ok = parts.filter((p, i) => (['person', 'chat', 'topic', 'wait', 'moment', 'delivery'] as const).includes(p) && parts.indexOf(p) === i);
+    this.store.db.query('UPDATE attn_answer SET parts = ? WHERE id = ?').run(ok.length ? JSON.stringify(ok) : null, it.answer_id);
+    this.feed.setParts(id, ok);
+    this.learn(now);
+    const after = this.feed.afterOf(this.feed.get(id)!) ?? (JSON.parse(it.p) as P.Trio);
+    this.store.db.query('UPDATE cal_item SET after = ? WHERE id = ?').run(JSON.stringify(after), id);
+    return { ok: true, after };
+  }
+
+  /** A past answer come back: Keep it; Only that once (kept, but it teaches nothing from now); Undo (taken back). */
+  feedSettle(id: string, how: P.CalSettle, now = Date.now()) {
+    const it = this.feed.get(id);
+    if (!it?.answer_id) throw new Error('Nothing answered');
+    if (how === 'once') this.store.db.query('UPDATE attn_answer SET until = ? WHERE id = ?').run(now, it.answer_id);
+    if (how === 'undo') this.takeBack(it);
+    this.feed.settle(id, how);
+    if (how !== 'keep') this.learn(now);
+  }
+
+  /** An answer taken back, and the mark it stood as. */
+  private takeBack(it: Row) {
+    this.store.db.query('DELETE FROM attn_answer WHERE id = ?').run(it.answer_id);
+    if (it.answer && feedMark(it.did, it.answer)) this.tryMark(it.message_id, { alert: null });
+  }
+
+  private tryMark(messageId: string, marks: P.TriageMarks) {
+    try {
+      this.mark?.(messageId, marks);
+    } catch (e) {
+      console.error('attention: the mark could not be kept', e);
     }
-    if (r.side === 'foryou') {
-      if (answer !== 'glad' && answer !== 'not') throw new Error('Say glad or not');
-      this.checkins.answer(id, answer, now);
-      this.learn(now);
-      return { ok: true };
-    }
-    const ok: P.AttnAnswer[] = r.side === 'sounded' ? ['worth', 'could_wait', 'shouldnt'] : ['sooner', 'fine'];
-    if (!ok.includes(answer as P.AttnAnswer)) throw new Error(`Say one of ${ok.join(', ')}`);
-    return this.answer({ messageId: r.message_id, answer: answer as P.AttnAnswer, source: 'checkin', checkinId: id }, now);
+  }
+
+  /** A message's loudness with what is learned now (or `model`), as triage would work it out again. */
+  loudNow(messageId: string, model: AttnModel = this.model): number | null {
+    const i = this.inputOf(messageId);
+    return i ? loudness(i, model, this.prefs().readily).loudness : null;
+  }
+
+  /** How many points each part of the model gives it now. */
+  points(messageId: string) {
+    const i = this.inputOf(messageId);
+    return i ? partPoints(i, this.model, this.prefs().readily) : null;
+  }
+
+  /** What triage worked its loudness out from, as it kept it: the moment from its kinds, the rule from its words. */
+  private inputOf(messageId: string): LoudInput | null {
+    const r = this.store.one<Row>(`SELECT t.facts, t.probs, t.loud_view, m.body FROM triage t JOIN message m ON m.id = t.message_id WHERE t.message_id = ? AND t.facts IS NOT NULL AND t.loud_view IS NOT NULL`, messageId);
+    const base = r && baseOf(r);
+    if (!base) return null;
+    const lv = JSON.parse(r!.loud_view) as { moment?: string[]; parts?: P.LoudParts; rule?: string };
+    const keys = lv.moment ?? [];
+    const hour = keys.includes('hour:night') ? 2 : keys.includes('hour:morning') ? 9 : keys.includes('hour:evening') ? 20 : 14;
+    return {
+      facts: base.facts,
+      words: base.words,
+      importance: base.importance,
+      ...(base.alert !== undefined ? { alert: base.alert } : {}),
+      why: base.why as LoudInput['why'],
+      owed: null,
+      moment: { desk: keys.includes('desk'), hour, sinceSound: keys.includes('burst5') ? MIN : keys.includes('burst30') ? 10 * MIN : null, quiet: !!lv.parts?.quiet },
+      ...(lv.rule === 'Always alert' ? { rule: 'always' as const } : lv.rule === 'List only' ? { rule: 'list' as const } : {}),
+    };
   }
 
   // ------------------------------------------------------------ learning
@@ -280,11 +360,13 @@ export class LoudLearner {
       if (r.until != null && r.until <= now) continue;
       const base = baseOf(r);
       if (!base) continue;
-      // A check-in answered long after the message counts a little less (checkin.ts lateWeight).
-      const late = r.source === 'checkin' && typeof r.message_ts === 'number' ? lateWeight(r.at - r.message_ts) : 1;
-      out.push(...routed(r, base, answerWeight(r.at, now) * ATTN_WEIGHTS.answer * late));
+      // A check-in or feed answer long after the message counts a little less (calfeed.ts lateWeight); a feed card
+      // drawn with a small chance more (ipsWeight).
+      const late = (r.source === 'checkin' || r.source === 'feed') && typeof r.message_ts === 'number' ? lateWeight(r.at - r.message_ts) : 1;
+      const drawn = r.source === 'feed' ? ipsWeight(r.chance) : 1;
+      out.push(...routed(r, base, answerWeight(r.at, now) * ATTN_WEIGHTS.answer * late * drawn));
     }
-    // For you's answers: want, for the chat and the author.
+    // For you's answers (from before the feed): want, for the chat and the author.
     for (const r of s.raw<Row>(
       `SELECT c.answer, c.answered_at, t.facts, t.probs, t.loud_view, m.body, m.ts AS message_ts FROM checkin c JOIN triage t ON t.message_id = c.message_id JOIN message m ON m.id = c.message_id
        WHERE c.side = 'foryou' AND c.answer IS NOT NULL AND t.facts IS NOT NULL ORDER BY c.answered_at DESC LIMIT 2000`,
@@ -346,8 +428,7 @@ export class LoudLearner {
     return 2 / (1 + Math.exp(-z));
   }
 
-  view(now = Date.now(), held = 0): P.AttentionStateView {
-    const st = this.checkins.state();
+  view(now = Date.now()): P.AttentionStateView {
     const day = new Date(now);
     day.setHours(0, 0, 0, 0);
     const sounds = this.store.one<Row>(`SELECT COUNT(*) AS n FROM triage INDEXED BY triage_created WHERE created_at >= ? AND decision = 'push'`, day.getTime())?.n ?? 0;
@@ -355,12 +436,9 @@ export class LoudLearner {
       mode: this.mode,
       prefs: this.prefs(),
       soundsToday: sounds,
-      asked: this.checkins.askedToday(now),
-      answered: this.checkins.answeredToday(now),
-      pending: this.checkins.pendingCount(),
-      pausedUntil: st.pausedUntil !== null && st.pausedUntil > now ? st.pausedUntil : null,
-      rate: st.rate,
-      held,
+      asked: this.feed.cardsToday(now),
+      answered: this.feed.answeredToday(now),
+      pending: this.feed.pendingCount(now),
       learned: learnedList(this.model, this.namer),
     };
   }
@@ -396,6 +474,7 @@ export function routed(a: Row, base: AttnExample, weight: number): AttnExample[]
   const keys = base.moment?.keys ?? [];
   const e = (x: Partial<AttnExample>): AttnExample => ({ ...base, moment: undefined, ...x, weight, at: a.at });
   const scope = a.scope === 'chat' ? 'conv' : a.scope === 'person' ? 'author' : undefined;
+  if (a.source === 'feed' && (CAL_ANSWERS as readonly string[]).includes(a.answer)) return feedRouted(a, base, e, keys);
   const reason = a.reason as P.WhyReason | null;
   if (reason) {
     switch (reason) {
@@ -435,6 +514,49 @@ export function routed(a: Row, base: AttnExample, weight: number): AttnExample[]
     default:
       return [];
   }
+}
+
+/** The answers' order, quietest first: which way a feed answer said it should have gone. */
+const RANK: Record<P.CalAnswer, number> = { inbox: 0, show: 1, sound: 2 };
+const asAnswer = (band: unknown): P.CalAnswer => (band === 'sound' ? 'sound' : band === 'show' || band === 'next' ? 'show' : 'inbox');
+
+/** A feed answer as the mark it stands for on the tiers: it should have sounded, or the sound was wrong. */
+function feedMark(did: P.CalAnswer, answer: P.CalAnswer): P.TriageMarks | null {
+  if (did === 'sound' && answer !== 'sound') return { alert: false };
+  if (did !== 'sound' && answer === 'sound') return { alert: true };
+  return null;
+}
+
+/** What each answer says of how long it can wait: needed within 10 minutes, an hour, the day. */
+const FEED_WAIT: Record<P.CalAnswer, AttnExample['wait']> = { sound: [1, 1, 1], show: [0, undefined, 1], inbox: [0, 0, undefined] };
+
+/**
+ * A feed answer (Sound / Show / Inbox) as what it teaches: with no parts named, want and can-wait toward it and a
+ * sound's cost at that moment a little; with parts named, only those parts (above). `y`: louder than what the model
+ * gave (1) or quieter (0); the same, the answer's own side.
+ */
+export function feedRouted(a: Row, base: AttnExample, e: (x: Partial<AttnExample>) => AttnExample, keys: string[]): AttnExample[] {
+  const ans = a.answer as P.CalAnswer;
+  const gave = asAnswer(a.band);
+  const dir = Math.sign(RANK[ans] - RANK[gave]);
+  const y: 0 | 1 = dir > 0 ? 1 : dir < 0 ? 0 : ans === 'inbox' ? 0 : 1;
+  let parts: P.CalPart[] = [];
+  try {
+    parts = a.parts ? (JSON.parse(a.parts) as P.CalPart[]) : [];
+  } catch {}
+  // A sound it gave wrongly makes one at that moment a little dearer; one it should have given, a little cheaper.
+  const nudge = dir && (ans === 'sound' || gave === 'sound') ? { moment: { keys, by: dir > 0 ? -MOMENT_NUDGE : MOMENT_NUDGE } } : {};
+  if (!parts.length) return [e({ ...(ans === 'inbox' ? {} : { want: 1 as const }), wait: FEED_WAIT[ans], ...nudge })];
+  const out: AttnExample[] = [];
+  for (const p of parts) {
+    if (p === 'person') out.push(e({ want: y, owed: y, only: 'author' }));
+    if (p === 'chat') out.push(e({ want: y, only: 'conv' }));
+    if (p === 'topic' && base.words.length) out.push(e({ want: y, only: 'words' }));
+    if (p === 'wait') out.push(e({ wait: FEED_WAIT[ans] }));
+    if (p === 'moment' && keys.length && dir) out.push(e({ moment: { keys, by: dir > 0 ? -MOMENT_STEP : MOMENT_STEP } }));
+    // delivery: how it was sent, not the message: nothing to learn.
+  }
+  return out;
 }
 
 /** What you did, as a label of want: answered (0.3), opened and stayed, not right after a sound (0.1), swiped away unopened (0.05). */

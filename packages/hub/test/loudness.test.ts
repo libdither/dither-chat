@@ -7,11 +7,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { bandOf } from '@dither-chat/protocol';
+import { asBand, bandOf, LOUD_BANDS } from '@dither-chat/protocol';
 import type { Facts } from '../src/learn.ts';
 import { BAND_DECISION, emptyAttnModel, loudness, momentKeys, trainAttn, type AttnExample, type LoudInput, type Moment } from '../src/loudness.ts';
 import { behaviourLabel, LoudLearner, routed } from '../src/loudlearn.ts';
-import { PAUSE, SKIPS_TO_PAUSE } from '../src/checkin.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { dayBounds, dayOf, loudnessScores } from '../src/scorecard.ts';
 import { Triage } from '../src/triage.ts';
@@ -29,7 +28,7 @@ const input = (x: Partial<LoudInput> = {}): LoudInput => ({ facts: facts(), word
 describe('the scale', () => {
   const m = emptyAttnModel();
 
-  test('a DM that cannot wait sounds; at a desk it shows silently; in quiet hours it waits for the next look', () => {
+  test('a DM that cannot wait sounds; at a desk it shows silently; in quiet hours it shows silently', () => {
     const now = loudness(input(), m);
     expect(now.band).toBe('sound');
     expect(now.loudness).toBeGreaterThanOrEqual(80);
@@ -51,7 +50,8 @@ describe('the scale', () => {
     expect(['unread', 'inbox']).toContain(channel.band);
     // A group you are not talking in, that the network notifies: wanted, keeps for days, so it waits.
     const keeps = loudness(input({ facts: facts({ shape: 'group' }), alert: undefined, why: [] }), m);
-    expect(['next', 'inbox']).toContain(keeps.band);
+    expect(['show', 'inbox']).toContain(keeps.band);
+    expect(keeps.loudness).toBeLessThan(55);
     // A friend's "ok" in a DM shows now, silently, as a Conversation did.
     expect(loudness(input({ alert: 0.01 }), m).band).toBe('show');
   });
@@ -65,10 +65,10 @@ describe('the scale', () => {
     expect(momentKeys({ ...free, hour: 2 })).toContain('hour:night');
   });
 
-  test('your rules stay absolute: Always alert is 100, List only at most the next look', () => {
+  test('your rules stay absolute: Always alert is 100, List only at most the bottom of Show', () => {
     expect(loudness(input({ rule: 'always', alert: 0.01, importance: 0.05 }), m)).toMatchObject({ loudness: 100, band: 'sound' });
     const listed = loudness(input({ rule: 'list' }), m);
-    expect(['unread', 'inbox', 'next']).toContain(listed.band);
+    expect(listed.loudness).toBeLessThan(55);
   });
 
   test('the nudge: less readily sounds less, more readily more; nothing caps it', () => {
@@ -78,7 +78,11 @@ describe('the scale', () => {
   });
 
   test('every band is stored as a code older apps know', () => {
-    expect(BAND_DECISION).toEqual({ sound: 'push', show: 'quiet', next: 'digest', inbox: 'digest', unread: 'drop' });
+    expect(BAND_DECISION).toEqual({ sound: 'push', show: 'quiet', inbox: 'digest', unread: 'drop' });
+    // Four bands, no next look: what was 30 to 55 is the bottom of Show.
+    expect(LOUD_BANDS).toEqual(['unread', 'inbox', 'show', 'sound']);
+    expect([bandOf(5), bandOf(29.9), bandOf(30), bandOf(54), bandOf(79.9), bandOf(80)]).toEqual(['unread', 'inbox', 'show', 'show', 'show', 'sound']);
+    expect(asBand('next')).toBe('show');
   });
 
   test('the reasons say how far each part moved it', () => {
@@ -87,7 +91,7 @@ describe('the scale', () => {
     const urgent = r.find((x) => x.text.startsWith("Can't wait an hour"));
     expect(urgent?.by).toBeGreaterThan(0);
     expect(r.some((x) => x.text === 'A direct message' && x.by > 0)).toBe(true);
-    // A person waiting on you adds, most where it decides between the next look and the inbox.
+    // A person waiting on you adds, most where it decides between a quiet row and the inbox.
     const later = (owed: number) => loudness(input({ alert: 0.01, importance: 0.3, why: [], owed }), m).loudness;
     expect(later(0.9)).toBeGreaterThan(later(0));
   });
@@ -259,52 +263,6 @@ describe('through the hub', () => {
     loud.ask = null;
   });
 
-  test('check-ins: one from each side, half at random with the chance kept; skips pause them; "ask me less" halves', () => {
-    // A fixed local noon, every decision an hour before it: the day's bounds never fall between.
-    const T = new Date(2030, 0, 15, 12).getTime();
-    store.db.query('UPDATE triage SET created_at = ?').run(T - HOUR);
-    loud.checkins.random = () => 0.1;
-    store.db.exec('DELETE FROM checkin');
-    loud.setPrefs({ ask: 'often' });
-    const qs = loud.checkins.due(loud.prefs(), T);
-    expect(qs.length).toBeGreaterThanOrEqual(1);
-    expect(new Set(qs.map((q) => q.side)).size).toBe(qs.length);
-    const rows = store.raw<{ arm: string; propensity: number; pool: number }>('SELECT arm, propensity, pool FROM checkin');
-    for (const r of rows) expect(r.propensity).toBeCloseTo(r.arm === 'random' ? 0.5 / r.pool : 0.5, 6);
-    // Open questions wait until answered; none new within the pace.
-    expect(loud.checkins.due(loud.prefs(), T + MIN).map((q) => q.id)).toEqual(qs.map((q) => q.id));
-    // Each says when it was asked and carries where it was seen (no notification went out in this test).
-    for (const q of qs) expect(q.askedAt).toBe(T);
-    for (const q of qs) expect(q.context.sent).toBeNull();
-    const sounded = qs.find((q) => q.side === 'sounded');
-    if (sounded) expect(() => loud.checkin(sounded.id, 'sooner')).toThrow();
-    for (let i = 0; i < SKIPS_TO_PAUSE; i++) {
-      const id = `chk_skip${i}`;
-      store.db.query(`INSERT INTO checkin (id, side, message_id, arm, propensity, pool, created_at) VALUES (?, 'quiet', 'x', 'random', 1, 1, ?)`).run(id, T);
-      loud.checkin(id, null, T);
-    }
-    expect(loud.checkins.state().pausedUntil).toBe(T + PAUSE);
-    // Paused: nothing new goes on the page, and what already waits stays there.
-    const waiting = loud.checkins.pendingCount();
-    expect(loud.checkins.due(loud.prefs(), T + 3 * HOUR).length).toBe(waiting);
-    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM checkin')!.n).toBe(qs.length + SKIPS_TO_PAUSE);
-    loud.checkins.askLess();
-    expect(loud.checkins.state().rate).toBe(0.5);
-    // Three a day at half the rate: one, and the half left over is a chance drawn once a day (0.1 < 0.5: it came up).
-    expect(loud.checkins.quota(loud.prefs(), T)).toBe(2);
-    loud.checkins.random = () => 0.9;
-    expect(loud.checkins.quota(loud.prefs(), T + HOUR)).toBe(2);
-    expect(loud.checkins.quota(loud.prefs(), T + 26 * HOUR)).toBe(1);
-    // "Ask me less" to the floor: an eighth of three, so most days none, never a floor of one a day.
-    for (let i = 0; i < 4; i++) loud.checkins.askLess();
-    expect(loud.checkins.quota(loud.prefs(), T + 50 * HOUR)).toBe(0);
-    loud.checkins.random = () => 0.1;
-    expect(loud.checkins.quota(loud.prefs(), T + 74 * HOUR)).toBe(1);
-    store.setMetaValue('checkin_state', null);
-    loud.setPrefs({ ask: 'never' });
-    expect(loud.checkins.quota(loud.prefs())).toBe(0);
-  });
-
   test('"could have waited" and "shouldn\'t have reached me" still teach the tiers, as "Not urgent" and "Less like this" did', async () => {
     const T = Date.now();
     const a = post('dm', 'ann', T - 20 * MIN);
@@ -325,33 +283,6 @@ describe('through the hub', () => {
     expect(store.raw('SELECT 1 FROM attn_answer WHERE message_id = ?', a).length).toBe(1);
     loud.fromMark(a, { alert: null });
     expect(store.raw('SELECT 1 FROM attn_answer WHERE message_id = ?', a).length).toBe(0);
-  });
-
-  test('a check-in asks "this sounded" only about what actually sounded', async () => {
-    const T = new Date(2030, 0, 20, 12).getTime();
-    store.db.exec('DELETE FROM checkin');
-    store.setMetaValue('checkin_state', null);
-    loud.setPrefs({ ask: 'often' });
-    const a = post('dm', 'ann', T - 2 * HOUR);
-    const d = await decide(a, T - 2 * HOUR);
-    expect(d.decision).toBe('push');
-    store.db.query('UPDATE triage SET created_at = ? WHERE message_id = ?').run(T - HOUR, a);
-    // Decided an alert, but no push of it played a sound (a burst, a computer in use): not on the sounded side.
-    expect(loud.checkins.pick('sounded', 'random', T)).toBeNull();
-    store.db.query(`INSERT INTO notification (id, kind, message_id, sent_at, alert) VALUES ('n1', 'message', ?, ?, 1)`).run(a, T - HOUR);
-    expect(loud.checkins.pick('sounded', 'random', T)).not.toBeNull();
-  });
-
-  test('For you asks one card a day, at random among the first ten, with its chance', () => {
-    store.db.exec(`DELETE FROM checkin WHERE side = 'foryou'`);
-    store.setMetaValue('checkin_state', null);
-    loud.setPrefs({ ask: 'often' });
-    loud.checkins.random = () => 0.35;
-    const items = Array.from({ length: 12 }, (_, i) => ({ id: `fy${i}`, messageId: `m${i}` }));
-    const p = loud.checkins.pickForYou(items, loud.prefs())!;
-    expect(p.itemId).toBe('fy3');
-    expect(store.one<{ propensity: number }>('SELECT propensity FROM checkin WHERE id = ?', p.checkinId)!.propensity).toBeCloseTo(0.1, 6);
-    expect(loud.checkins.pickForYou(items, loud.prefs())).toBeNull();
   });
 
   test('the old marks are aliases of Louder / Quieter', () => {

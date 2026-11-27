@@ -28,6 +28,15 @@ export function since(ts: number, now = Date.now()): string {
   if (d < DAY) return `${Math.floor(d / HOUR)}h`;
   return `${Math.floor(d / DAY)}d`;
 }
+/** How long something lasted, for a line: "10 s", "2 min", "5h", "3 days". */
+export function gap(ms: number): string {
+  const d = Math.max(0, ms);
+  if (d < MIN) return `${Math.max(1, Math.floor(d / 1000))} s`;
+  if (d < HOUR) return `${Math.floor(d / MIN)} min`;
+  if (d < DAY) return `${Math.floor(d / HOUR)}h`;
+  const n = Math.floor(d / DAY);
+  return `${n} day${n === 1 ? '' : 's'}`;
+}
 // Made once: toLocale*String builds a formatter per call, which a long list or timeline pays thousands of times per render.
 let weekdayFmt: Intl.DateTimeFormat | undefined;
 let dayFmt: Intl.DateTimeFormat | undefined;
@@ -57,7 +66,7 @@ export function stamp(ts: number, now = Date.now()): string {
 let yearDayFmt: Intl.DateTimeFormat | undefined;
 
 /** Minutes a time zone is ahead of UTC at that moment, or null for a zone this browser does not know. */
-function zoneOffset(zone: string, ts: number): number | null {
+export function zoneOffset(zone: string, ts: number): number | null {
   try {
     const p = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(ts);
     const n = (t: string) => Number(p.find((x) => x.type === t)?.value);

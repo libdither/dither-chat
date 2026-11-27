@@ -284,13 +284,6 @@ test('an answer from a notification goes to the loudness answers; mail\'s "Less 
   expect(w.closed).toHaveLength(4);
 });
 
-test('the next look is one notification, each in the last one\'s place', async () => {
-  const w = worker();
-  await w.push({ title: 'Next look · 3 waiting', body: 'a, b', tier: 'digest', level: 'quiet', nextLook: { count: 3, chats: 2 }, keep: true });
-  expect(w.shown.at(-1)!.o.tag).toBe('next-look');
-  expect(w.shown.at(-1)!.o.silent).toBe(true);
-});
-
 test('only an alert may sound: a Conversation and a list row are silent, whatever else the push says', async () => {
   const w = worker();
   const said = () => {

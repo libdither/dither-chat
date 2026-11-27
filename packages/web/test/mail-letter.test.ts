@@ -1,6 +1,7 @@
 /** A mail's letter furniture in a chat (mail/letter.ts): what folds behind ···, what is drawn faint, the gaps. */
 import { expect, test } from 'bun:test';
-import { letter, shortLink, type Letter } from '../src/mail/letter.ts';
+import type * as P from '@dither-chat/protocol';
+import { type BlockLetter, inlineText, letter, letterBlocks, shortLink, type Letter } from '../src/mail/letter.ts';
 
 /** The letter as lines: paragraphs apart by "¶", a faint line marked "~". */
 const shape = (l: Letter) => l.paras.map((p) => p.map((x) => (x.faint ? `~${x.text}` : x.text)).join('\n')).join('\n¶\n');
@@ -112,4 +113,38 @@ test('links: host and path, the middle cut, the query left out when long', () =>
   expect(shortLink('https://example.org/a/long/path/that/goes/on?with=a&query=that-is-long-enough')).toBe('example.org/a/long/path/that/goes/on');
   expect(shortLink('mailto:sam@rivera.example')).toBe('sam@rivera.example');
   expect(shortLink('not a url')).toBe('not a url');
+});
+
+// ------------------------------------------------------------------ formatted mail (letterBlocks)
+
+/** A formatted letter as lines, as `shape` writes a text one; a block as [its kind], formatting as its text. */
+const shapeB = (paras: BlockLetter['paras']) =>
+  paras.map((p) => p.map((x) => ('block' in x ? `[${x.block.t}]` : `${x.faint ? '~' : ''}${inlineText(x.c)}`)).join('\n')).join('\n¶\n');
+const p = (...c: P.MailInline[]): P.MailBlock => ({ t: 'p', c });
+const br = { t: 'br' } as const;
+
+test('formatted: the same furniture over the tree; the lines keep their formatting', () => {
+  const bold: P.MailInline = { t: 'b', c: ['Saturday'] };
+  const l = letterBlocks([p('Hi!'), p('Notes for ', bold, ':'), { t: 'list', ordered: false, items: [[p('tent')]] }, p('Best,', br, 'Alice')], ['Alice Chen']);
+  // The greeting joins what follows it; the list is a block of its own; "Best,\nAlice" is an unsure tail, faint.
+  expect(shapeB(l.paras)).toBe('Hi!\nNotes for Saturday:\n¶\n[list]\n¶\n~Best,\n~Alice');
+  expect(l.rest).toBeNull();
+  const line = l.paras[0][1];
+  expect('c' in line && line.c).toEqual(['Notes for ', bold, ':']);
+});
+
+test('formatted: a lone name at the end and the signature fold behind …, a block is never furniture', () => {
+  const l = letterBlocks([p('See you ', { t: 'b', c: ['there'] }, '!'), { t: 'pre', text: 'pack --check' }, p('Alice'), p('--', br, 'Alice Chen', br, { t: 'a', href: 'https://alice.example', c: ['alice.example'] })], ['Alice Chen']);
+  expect(shapeB(l.paras)).toBe('See you there!\n¶\n[pre]');
+  expect(l.rest && shapeB(l.rest)).toBe('Alice\n¶\nAlice Chen\nalice.example');
+  // A block at the end is not a name, even when its text is one.
+  const q = letterBlocks([p('Who signs?'), { t: 'quote', c: [p('Alice')] }], ['Alice Chen']);
+  expect(shapeB(q.paras)).toBe('Who signs?\n¶\n[quote]');
+  expect(q.rest).toBeNull();
+});
+
+test('formatted: a mail that is only a block keeps it', () => {
+  const l = letterBlocks([{ t: 'list', ordered: true, items: [[p('one')], [p('two')]] }], ['Sam Rivera']);
+  expect(shapeB(l.paras)).toBe('[list]');
+  expect(l.rest).toBeNull();
 });

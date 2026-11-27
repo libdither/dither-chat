@@ -1,125 +1,178 @@
 /**
- * Notification calibration (docs/notifications.md, "Asking, without nagging"): the questions about single
- * notifications, waiting until you get to them, newest first. Each one draws again what you saw, as the hub kept it
- * (seen.ts): the Android notification in the shade, on the lock screen or as a heads-up, with what showed beside it;
- * a browser's notification on a computer; the toast in the open app; or the inbox row when no notification went out.
- * A line says where, whether it sounded and when, and what the hub does not know is said too. Above them, the numbers:
- * sounds a day, what you said of them, how late you answer, and the model's chances against your answers.
+ * Notification calibration (docs/notifications.md, "The calibration feed"): one feed of notifications as they looked,
+ * each with three answers, Sound, Show and Inbox. Under each answer a bar: its fill is the chance the model gave it, the
+ * whisker how unsure it was, ▲ what you did, and the underlined answer what the model did. Answering draws the chances
+ * again, after the answer, over a dashed line at the old one; "What was it wrong about?" routes the answer to parts of
+ * it (the person, the chat, the topic, how long it could wait, the moment, the delivery).
+ *
+ * The few worth asking open as cards; the rest are rows that open in place. A past answer that surprised the model
+ * comes back once (Keep, Only that once, Undo). The ones it was sure of sit folded at the end.
+ *
+ * On a phone: one column, × or a swipe skips (Undo on the toast). On a computer: the list on the left, the chosen one
+ * open on the right, 1–3 answer, x skips, j and k move, w opens what it was wrong about.
  */
+import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { NETWORKS } from '@dither-chat/protocol';
-import { useEffect } from 'preact/hooks';
-import { clock, hueOf, initials, stamp } from '../format.ts';
-import { answerCheckin, askLess, calibration, checkins, loadCheckins } from '../loudness.ts';
-import { go } from '../state.ts';
+import { CAL_ANSWER_NAME, CAL_ANSWERS, CAL_PART_NAME, NETWORK_META, NETWORKS } from '@dither-chat/protocol';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import { countKey } from '../clicklog.ts';
+import { hueOf, initials, stamp } from '../format.ts';
+import { answerFeed, calFeed, feedParts, loadFeed, settleFeed, skipFeed } from '../loudness.ts';
+import { phone } from '../phone.ts';
+import { go, toast } from '../state.ts';
 import { Empty, NetBadge } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
+import { memo } from './memo.ts';
 import { HeadOrb } from './Offline.tsx';
 import './calibration.css';
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
+/** What this page did with one item: your answer, the chances before and after, the parts, the drill open. */
+interface Local {
+  answer?: P.CalAnswer;
+  before?: P.Trio;
+  after?: P.Trio;
+  parts: P.CalPart[];
+  drill: boolean;
+  /** A past answer settled: it leaves the page. */
+  settled?: P.CalSettle;
+}
+const NONE: Local = { parts: [], drill: false };
 
-const ANSWERS: Record<P.CheckinView['side'], { q: string; answers: [string, string][] }> = {
-  sounded: {
-    q: 'This sounded. Was it worth it?',
-    answers: [
-      ['worth', 'Worth it'],
-      ['could_wait', 'Could have waited'],
-      ['shouldnt', "Shouldn't have reached me"],
-    ],
-  },
-  quiet: {
-    q: 'This stayed quiet. Would you have wanted it sooner?',
-    answers: [
-      ['sooner', "Wish I'd known sooner"],
-      ['fine', 'Fine where it was'],
-    ],
-  },
-  foryou: {
-    q: 'For you showed you this. Was it worth seeing?',
-    answers: [
-      ['glad', 'Glad I saw this'],
-      ['not', 'Not for me'],
-    ],
-  },
-};
+const local = signal<ReadonlyMap<string, Local>>(new Map());
+const skipped = signal<ReadonlySet<string>>(new Set());
+/** Rows opened in place (phone). */
+const opened = signal<ReadonlySet<string>>(new Set());
+/** The one open on the right (computer). */
+const chosen = signal<string | null>(null);
+
+const stOf = (id: string) => local.value.get(id) ?? NONE;
+function setSt(id: string, f: (s: Local) => Local) {
+  const m = new Map(local.value);
+  m.set(id, f(stOf(id)));
+  local.value = m;
+}
 
 const asNet = (n: string | null | undefined): P.Network | null => (n && (NETWORKS as readonly string[]).includes(n) ? (n as P.Network) : null);
-
-/** "3 h", "2 days": how long, in words for a sentence. */
-function age(ms: number): string {
-  if (ms < HOUR) return `${Math.max(1, Math.round(ms / MIN))} min`;
-  if (ms < DAY) return `${Math.round(ms / HOUR)} h`;
-  const d = Math.round(ms / DAY);
-  return `${d} ${d === 1 ? 'day' : 'days'}`;
-}
-
-const SOURCE: Record<string, string> = {
-  notification: 'its notification',
-  toast: 'the notification in the app',
-  inbox: 'the inbox',
-  triage: 'the inbox',
-  foryou: 'For you',
-  rail: 'the list',
-  list: 'the list',
-  search: 'search',
-  link: 'a link',
-  back: 'going back',
-  forward: 'going forward',
-  start: 'opening the app',
-  resume: 'coming back to the app',
+const netName = (n: string | null) => {
+  const net = asNet(n);
+  return net ? NETWORK_META[net].name : (n ?? 'dither');
 };
+const idx = (a: P.CalAnswer) => CAL_ANSWERS.indexOf(a);
 
-const SURFACE: Record<P.SeenSurface, string> = {
-  heads_up: 'as a heads-up over the screen',
-  shade: 'in the notification shade',
-  lock: 'on the lock screen',
-  list_row: "on the phone's list",
-  browser: 'as a browser notification',
-  toast: 'in the open app',
-};
+// ------------------------------------------------------------------ what you do
 
-/** The device you most likely saw it on: the one that said it showed, or was tapped, first. */
-function mainDevice(s: P.SeenSent): P.SeenDevice | null {
-  const first = (d: P.SeenDevice) => d.tapped ?? d.shown ?? d.dismissed ?? 0;
-  const said = s.devices.filter((d) => d.tapped || d.shown || d.dismissed).sort((a, b) => first(a) - first(b));
-  return said[0] ?? s.devices.find((d) => d.phone) ?? s.devices[0] ?? null;
+async function answerIt(it: P.CalItem, a: P.CalAnswer) {
+  const was = stOf(it.id);
+  setSt(it.id, (s) => ({ ...s, answer: a, drill: true }));
+  const r = await answerFeed(it, a);
+  if (!r) return setSt(it.id, () => was);
+  setSt(it.id, (s) => ({ ...s, before: r.before, after: r.after, parts: [] }));
 }
 
-function soundWord(d: P.SeenDevice | null, s: P.SeenSent): string {
-  if (d?.sound === 'sound') return 'sounded';
-  if (d?.sound === 'vibrate') return 'vibrated';
-  if (d?.sound === 'silent') return d.meantToSound ? 'silent (the device was on silent)' : 'silent';
-  return s.sounded ? 'meant to sound' : 'silent';
+async function togglePart(it: P.CalItem, part: P.CalPart) {
+  const s = stOf(it.id);
+  if (!s.answer) return;
+  const parts = s.parts.includes(part) ? s.parts.filter((x) => x !== part) : [...s.parts, part];
+  setSt(it.id, (x) => ({ ...x, parts }));
+  const after = await feedParts(it, parts);
+  if (after) setSt(it.id, (x) => ({ ...x, after }));
 }
 
-/** One line: "Phone (Pixel), sounded, 14:02, while you were on the computer". */
-function summary(c: P.CheckinView, now = Date.now()): string {
-  const x = c.context;
-  const s = x.sent;
-  if (!s) {
-    const why = x.notSent === 'watched' ? 'its chat was open on your computer' : x.notSent === 'capped' ? 'one had gone out for this chat minutes before' : 'it waited in the inbox';
-    return `No notification: ${why}. It came ${stamp(c.at, now)}.`;
-  }
-  const d = mainDevice(s);
-  const where = d ? `${d.phone ? 'Phone' : 'Computer'} (${d.label})` : 'No device known';
-  const parts = [where, soundWord(d, s), stamp(s.at, now)];
-  if (d?.surface) parts.push(SURFACE[d.surface]);
-  if (s.computerInUse) parts.push('while you were on the computer');
-  else if (s.computerInUse === false) parts.push('with no computer in use');
-  return parts.join(', ');
+function skip(it: P.CalItem) {
+  skipped.value = new Set([...skipped.value, it.id]);
+  if (chosen.value === it.id) chosen.value = nextOf(it.id, 1);
+  void skipFeed(it, true);
+  toast({
+    kind: 'info',
+    title: 'Skipped',
+    body: it.who,
+    actionLabel: 'Undo',
+    action: () => {
+      const s = new Set(skipped.value);
+      s.delete(it.id);
+      skipped.value = s;
+      void skipFeed(it, false);
+    },
+  });
 }
+
+async function settle(it: P.CalItem, how: P.CalSettle) {
+  setSt(it.id, (s) => ({ ...s, settled: how }));
+  await settleFeed(it, how);
+}
+
+/** A row: on a phone it opens where it is; on a computer it is the one shown on the right. */
+function pick(it: P.CalItem) {
+  if (phone.value) opened.value = new Set([...opened.value, it.id]);
+  else chosen.value = it.id;
+}
+
+const setDrill = (it: P.CalItem, open: boolean) => stOf(it.id).drill !== open && setSt(it.id, (s) => ({ ...s, drill: open }));
+
+/** The items on the page, in their order: cards and past answers, then the rows (the sure ones apart). */
+function shownItems(v: P.CalFeedView | null): P.CalItem[] {
+  if (!v) return [];
+  return v.items.filter((i) => !skipped.value.has(i.id) && !stOf(i.id).settled);
+}
+
+function nextOf(id: string, by: 1 | -1): string | null {
+  const l = shownItems(calFeed.value);
+  const at = l.findIndex((i) => i.id === id);
+  const to = l[at + by] ?? l[at - by] ?? null;
+  return to && to.id !== id ? to.id : null;
+}
+
+// ------------------------------------------------------------------ the page
 
 export function CalibrationPane({ onBack }: { onBack?: () => void }) {
-  useEffect(() => void loadCheckins(), []);
-  const list = checkins.value;
-  const stats = calibration.value;
-  const n = list?.length ?? 0;
+  useEffect(() => {
+    void loadFeed();
+    const back = () => document.visibilityState === 'visible' && void loadFeed();
+    document.addEventListener('visibilitychange', back);
+    return () => document.removeEventListener('visibilitychange', back);
+  }, []);
+  const v = calFeed.value;
+  const items = shownItems(v);
+  const sure = (v?.sure ?? []).filter((i) => !skipped.value.has(i.id));
+  const ask = items.filter((i) => (i.kind === 'card' || i.kind === 'past') && !stOf(i.id).answer).length;
+  const onPhone = phone.value;
+  const cur = onPhone ? null : ([...items, ...sure].find((i) => i.id === chosen.value) ?? items[0] ?? null);
+
+  // 1–3 answer, x skips, j and k move, w opens what it was wrong about; never while typing or under a menu.
+  useLayoutEffect(() => {
+    if (onPhone) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.('input, textarea, select, [contenteditable], .cm, .sheet-layer, .modal-backdrop, .switcher-back')) return;
+      if (document.querySelector('.cm, .sheet-layer, .modal-backdrop, .switcher-back, .viewer')) return;
+      const all = [...shownItems(calFeed.value), ...(calFeed.value?.sure ?? []).filter((i) => !skipped.value.has(i.id))];
+      const it = all.find((i) => i.id === chosen.value) ?? all[0];
+      if (!it) return;
+      const at = all.indexOf(it);
+      if (e.key === '1' || e.key === '2' || e.key === '3') {
+        if (it.kind === 'past') return;
+        void answerIt(it, CAL_ANSWERS[Number(e.key) - 1]);
+      } else if (e.key === 'x') skip(it);
+      else if (e.key === 'j' || e.key === 'k') {
+        const to = all[Math.max(0, Math.min(all.length - 1, at + (e.key === 'j' ? 1 : -1)))];
+        if (!to) return;
+        chosen.value = to.id;
+        requestAnimationFrame(() => document.querySelector(`.cal-side [data-cal-id="${CSS.escape(to.id)}"]`)?.scrollIntoView({ block: 'nearest' }));
+      } else if (e.key === 'w') {
+        if (!stOf(it.id).answer) return;
+        setDrill(it, !stOf(it.id).drill);
+      } else return;
+      countKey(`calibration: key ${e.key}`);
+      e.preventDefault();
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  }, [onPhone]);
+
   return (
-    <section class="pane requests-pane calibration-pane" aria-label="Notification calibration">
+    <section class="pane requests-pane calibration-pane" aria-label="Notification calibration" data-track-area="calibration">
       <header class="conv-head">
         {onBack && (
           <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
@@ -132,390 +185,378 @@ export function CalibrationPane({ onBack }: { onBack?: () => void }) {
         <div class="conv-head-text">
           <h2>Notification calibration</h2>
           <div class="conv-head-sub">
-            <span class="muted-label">{list === null ? 'Loading…' : n ? `${n} waiting · answer whenever you like` : 'Nothing waiting'}</span>
+            <span class="muted-label">{v === null ? 'Loading…' : ask ? `${ask} to answer · whenever you like` : 'Nothing to answer'}</span>
           </div>
         </div>
         <HeadOrb />
       </header>
-      <div class="requests-scroll calib-scroll">
-        {stats && <Numbers s={stats} />}
-        {list === null && <Loading label="Loading…" />}
-        {list && !list.length && (
-          <Empty icon="bell" title="Nothing waiting">
-            Now and then a question about one notification lands here: was a sound worth it, should a quiet one have sounded. Your answers teach it what to sound for.
+      {v === null ? (
+        <Loading label="Loading…" />
+      ) : !items.length && !sure.length ? (
+        <div class="requests-scroll cal-scroll">
+          <Empty icon="bell" title="Nothing here yet">
+            Notifications from the last few days land here, the ones worth asking about open with their answers. Your answers teach it what to sound for.
           </Empty>
-        )}
-        {list?.map((c) => <Question key={c.id} c={c} />)}
-        {list && list.length > 0 && (
-          <div class="calib-foot">
-            <button class="link-btn" data-track="calibration ask less" onClick={() => void askLess()}>
-              Ask me less
-            </button>
-            <span>Questions older than two weeks, or past twenty, go by themselves. Leaving one is not a skip.</span>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-// ------------------------------------------------------------------ the numbers
-
-const pct = (v: number | null) => (v === null ? '–' : `${Math.round(v * 100)}%`);
-const num = (v: number | null, d = 1) => (v === null ? '–' : v.toFixed(d).replace(/\.0$/, ''));
-
-function Numbers({ s }: { s: P.CalibrationStats }) {
-  const days = s.sounds.days;
-  const max = Math.max(1, ...days.map((d) => d.n ?? 0));
-  return (
-    <section class="calib-numbers" aria-label="The numbers">
-      <div class="calib-tile" data-stat="sounds">
-        <b>{num(s.sounds.last7)}</b>
-        <span>sounds a day, last 7 days</span>
-        <small>{num(s.sounds.last30)} over 30 days · shown, never a limit</small>
-        {days.length > 1 && (
-          <svg class="calib-spark" viewBox={`0 0 ${days.length * 6} 24`} preserveAspectRatio="none" aria-hidden="true">
-            {days.map((d, i) => (d.n === null ? null : <rect x={i * 6 + 1} y={24 - (22 * d.n) / max} width="4" height={(22 * d.n) / max} rx="1" />))}
-          </svg>
-        )}
-      </div>
-      <div class="calib-tile" data-stat="worth">
-        <b>{pct(s.worth.value)}</b>
-        <span>of sounds were worth it</span>
-        <small>{s.worth.n ? `weighted, from ${s.worth.n} random picks` : 'no answers yet'}</small>
-      </div>
-      <div class="calib-tile" data-stat="missed">
-        <b>{pct(s.missed.value)}</b>
-        <span>of quiet ones should have sounded</span>
-        <small>{s.missed.n ? `weighted, from ${s.missed.n} random picks` : 'no answers yet'}</small>
-      </div>
-      <div class="calib-tile" data-stat="counts">
-        <b>{s.pending}</b>
-        <span>waiting</span>
-        <small>
-          {s.answered} answered, {s.skipped} skipped, {s.expired} dropped (30 days)
-        </small>
-      </div>
-      <div class="calib-tile" data-stat="delay">
-        <b>{s.delay.median === null ? '–' : age(s.delay.median)}</b>
-        <span>typical wait before you answer</span>
-        <small>{s.age.mean === null ? 'no answers yet' : `the message ${age(s.age.mean)} old on average; late answers count a little less`}</small>
-      </div>
-      <Reliability c={s.calibration} />
-    </section>
-  );
-}
-
-/** The model's chance you wanted it, against your answers: dots on the diagonal are a model that knows. */
-function Reliability({ c }: { c: P.CalibrationStats['calibration'] }) {
-  const W = 120;
-  const at = (v: number) => 4 + v * (W - 8);
-  return (
-    <div class="calib-tile calib-rel" data-stat="calibration">
-      <span>Its chances against your answers</span>
-      {c.n ? (
-        <>
-          <svg viewBox={`0 0 ${W} ${W}`} width={W} height={W} role="img" aria-label={`Calibration from ${c.n} answers`}>
-            <rect x="4" y="4" width={W - 8} height={W - 8} class="calib-rel-frame" />
-            <line x1={at(0)} y1={at(1)} x2={at(1)} y2={at(0)} class="calib-rel-diag" />
-            {c.bins.map((b) => (
-              <circle cx={at(b.predicted)} cy={at(1 - b.observed)} r={Math.min(9, 3 + Math.sqrt(b.n) * 1.5)} class="calib-rel-dot">
-                <title>{`It said ${pct(b.predicted)}; you said yes to ${pct(b.observed)} of ${b.n}`}</title>
-              </circle>
-            ))}
-          </svg>
-          <small>
-            Across: what it gave. Up: how often you said yes. {c.n} answers{c.brier !== null ? `, Brier ${c.brier.toFixed(2)}` : ''}.
-          </small>
-        </>
+        </div>
+      ) : onPhone ? (
+        <div class="requests-scroll cal-scroll cal-phone">
+          <Legend />
+          {items.map((it) => (it.kind === 'row' && !opened.value.has(it.id) ? <Row key={it.id} it={it} sel={false} done={!!local.value.get(it.id)?.answer} /> : <Card key={it.id} it={it} st={local.value.get(it.id) ?? NONE} desk={false} />))}
+          <Sure items={sure} desk={false} />
+          <How />
+        </div>
       ) : (
-        <small>Shown once you have answered some.</small>
+        <div class="cal-desk">
+          <div class="cal-side" aria-label="The feed">
+            {items.map((it) => (
+              <Row key={it.id} it={it} sel={it.id === cur?.id} done={!!local.value.get(it.id)?.answer} />
+            ))}
+            <Sure items={sure} desk sel={cur?.id ?? null} />
+          </div>
+          <div class="requests-scroll cal-main">
+            <Legend />
+            {cur && <Card key={cur.id} it={cur} st={local.value.get(cur.id) ?? NONE} desk />}
+            <div class="cal-hints" aria-hidden="true">
+              <span>
+                <kbd>1</kbd>–<kbd>3</kbd> answer
+              </span>
+              <span>
+                <kbd>x</kbd> skip
+              </span>
+              <span>
+                <kbd>j</kbd> <kbd>k</kbd> next, back
+              </span>
+              <span>
+                <kbd>w</kbd> what it was wrong about
+              </span>
+            </div>
+            <How />
+          </div>
+        </div>
       )}
+    </section>
+  );
+}
+
+function Legend() {
+  return (
+    <div class="cal-key">
+      <span>
+        <svg width="12" height="16" aria-hidden="true">
+          <rect x="2" y="7" width="8" height="9" fill="currentColor" opacity=".4" />
+          <path d="M3 2h6M6 2v11M3 13h6" stroke="currentColor" stroke-width="1.5" />
+        </svg>
+        its guess, and how unsure
+      </span>
+      <span>▲ what you did</span>
+      <span>
+        <u>Show</u> what it did
+      </span>
+      <span>- - - its guess before</span>
     </div>
   );
 }
 
-// ------------------------------------------------------------------ one question
-
-function Question({ c }: { c: P.CheckinView }) {
-  const s = ANSWERS[c.side];
-  const now = Date.now();
-  const x = c.context;
-  const devices = x.sent?.devices ?? [];
-  // Draw each place it showed: the Android app and computers' browsers; a page's toast. At least one picture.
-  const drawn = devices.filter((d) => d.shown || d.tapped || d.dismissed || d.delivered);
+/** The ones it was sure of, folded. */
+function Sure({ items, desk, sel }: { items: P.CalItem[]; desk: boolean; sel?: string | null }) {
+  if (!items.length) return null;
   return (
-    <article class="calib-q" data-checkin={c.side} data-checkin-id={c.id} aria-label="A question about a notification">
-      <header class="calib-q-head">
-        <Icon name={c.side === 'sounded' ? 'bell' : c.side === 'quiet' ? 'bellOff' : 'sparkles'} size={15} />
-        <b>{s.q}</b>
-        <span class="calib-age" title={`Asked ${stamp(c.askedAt, now)}`}>
-          {age(now - c.at)} ago{now - c.at > 3 * DAY ? ' · think back' : ''}
-        </span>
-      </header>
-      <p class="calib-line" data-summary>
-        {summary(c, now)}
-      </p>
-      <div class="calib-mocks">
-        {x.sent && drawn.map((d) => <DeviceMock c={c} s={x.sent!} d={d} />)}
-        {x.sent && !drawn.length && <DeviceMock c={c} s={x.sent} d={devices.find((d) => d.phone) ?? devices[0] ?? null} />}
-        {(!x.sent || x.forYou || c.side === 'quiet') && <InAppMock c={c} />}
-      </div>
-      <ul class="calib-facts">
-        {devices.map((d) => (
-          <li>{deviceFact(d)}</li>
-        ))}
-        {x.opened && (
-          <li>
-            You opened the chat {stamp(x.opened.at, now)} from {SOURCE[x.opened.source] ?? x.opened.source}, on {x.opened.phone ? 'the phone' : 'a computer'} ({x.opened.device}).
-          </li>
-        )}
-        {x.forYou && (
-          <li>
-            For you served it {x.forYou.position + 1}
-            {ordinal(x.forYou.position + 1)} on the page, {stamp(x.forYou.servedAt, now)}
-            {x.forYou.shownAt ? `; on screen${x.forYou.ms ? ` for ${Math.max(1, Math.round(x.forYou.ms / 1000))} s` : ''}` : ''}.
-          </li>
-        )}
-        {c.note && <li>{c.note[0].toUpperCase() + c.note.slice(1)}.</li>}
-      </ul>
-      {x.unknown.length > 0 && (
-        <div class="calib-unknown">
-          <b>What we don't know</b>
-          <ul>
-            {x.unknown.map((u) => (
-              <li>{u}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <div class="calib-answers">
-        {s.answers.map(([a, label]) => (
-          <button class="chip-btn" data-answer={a} data-track={`checkin ${a}`} onClick={() => void answerCheckin(c, a)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      <div class="calib-q-foot">
-        <button class="link-btn" data-track="checkin skip" onClick={() => void answerCheckin(c, null)}>
-          Skip
-        </button>
-        {c.conversationId && (
-          <button class="link-btn" data-track="checkin open chat" onClick={() => go({ view: 'inbox', conv: c.conversationId!, msg: c.messageId })}>
-            Open the chat
-          </button>
-        )}
-      </div>
-    </article>
+    <details class="cal-sure">
+      <summary data-track="calibration sure fold">{items.length} it was sure of</summary>
+      {items.map((it) => (!desk && opened.value.has(it.id) ? <Card key={it.id} it={it} st={local.value.get(it.id) ?? NONE} desk={false} /> : <Row key={it.id} it={it} sel={sel === it.id} done={!!local.value.get(it.id)?.answer} />))}
+    </details>
   );
 }
 
-const ordinal = (n: number) => (n % 100 >= 11 && n % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'));
-
-function deviceFact(d: P.SeenDevice): string {
-  const name = `${d.label} (${d.kind === 'android' ? 'Android app' : d.kind === 'browser' ? (d.phone ? "phone's browser" : 'browser') : 'open app'})`;
-  if (d.suppressed) return `${name}: not shown, the app was open in front at ${clock(d.suppressed)}.`;
-  const bits: string[] = [];
-  if (d.shown) bits.push(`shown ${clock(d.shown)}${d.surface ? ` ${SURFACE[d.surface]}` : ''}`);
-  else if (d.delivered) bits.push(`reached it ${clock(d.delivered)}, but it did not say it showed`);
-  else bits.push('sent, no word back');
-  if (d.sound) bits.push(d.sound === 'sound' ? 'with sound' : d.sound === 'vibrate' ? 'vibrating' : 'silently');
-  else if (d.shown) bits.push(d.meantToSound ? 'meant to sound (it did not say if it did)' : 'meant to be silent');
-  if (d.locked) bits.push('the phone was locked');
-  if (d.screenOn === false && !d.locked) bits.push('the screen was off');
-  if (d.pageOpen) bits.push('a page of the app was open behind');
-  if (d.tapped) bits.push(`tapped ${clock(d.tapped)}`);
-  if (d.dismissed) bits.push(`swiped away ${clock(d.dismissed)}`);
-  if (d.beside) bits.push(d.beside.length ? `${d.beside.length} other ${d.beside.length === 1 ? 'notification' : 'notifications'} beside it` : 'nothing else of ours beside it');
-  return `${name}: ${bits.join(', ')}.`;
+function How() {
+  return (
+    <details class="cal-how">
+      <summary data-track="calibration how">How the order and the hiding work</summary>
+      <p>Each notification gets a worth asking score: how surprised the model is by what you did, mixed with how unsure it was, fading by half every 3 days.</p>
+      <div class="cal-formula">
+        surprise = −log₂ P(what you did), capped at 5 bits
+        <br />
+        unsure = how spread its guess was × how few answers are behind it
+        <br />
+        worth asking = (0.6 · surprise/5 + 0.4 · unsure) × fading(age)
+      </div>
+      <p>The few over 0.5 (about 3 a day) open with their answers; the rest are rows, tap one to open it. Open ones are drawn at random in proportion to the score, and that chance is kept so the scorecard can weight answers back.</p>
+      <p>A past answer comes back once if it surprised the model (it gave it under 20%), with its guess before and after.</p>
+      <p>Hidden as sure only when all hold: it gave what you did 95% or more, 30 or more answers about that person or chat, none against it in 30 days, and not a sound it held back. 1 in 20 of those still shows, at random.</p>
+    </details>
+  );
 }
 
-// ------------------------------------------------------------------ the pictures
+// ------------------------------------------------------------------ a swipe (phone)
 
-/** What a notification said: the hub's words, else the message's own (the words are kept a little while only). */
-function words(c: P.CheckinView, s: P.SeenSent): { title: string; lines: { author?: string; body: string }[]; network: P.Network | null } {
-  const network = asNet(s.network) ?? asNet(c.context.row.network);
-  if (s.lines.length && s.conv) {
-    const direct = s.conv.shape === 'direct';
-    const n = Math.max(s.count, s.lines.length);
-    return { title: direct || n < 2 ? (s.title ?? c.title) : `${s.conv.title} (${n})`, lines: s.lines.map((l) => (direct ? { body: l.body } : { author: l.author, body: l.body })), network };
-  }
-  return { title: s.title ?? c.title, lines: (s.body ?? c.preview).split('\n').map((body) => ({ body })), network };
+/** A sideways drag past ~100 px skips; less springs back. Only from the card itself, never a button on it. */
+function useSwipe(it: P.CalItem, on: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!on || !el) return;
+    let x0: number | null = null;
+    let y0 = 0;
+    let dx = 0;
+    let id = -1;
+    const down = (e: PointerEvent) => {
+      if ((e.target as HTMLElement).closest('button, summary, a, details[open] > :not(summary)')) return;
+      x0 = e.clientX;
+      y0 = e.clientY;
+      dx = 0;
+      id = e.pointerId;
+      el.style.transition = 'none';
+    };
+    const move = (e: PointerEvent) => {
+      if (x0 === null || e.pointerId !== id) return;
+      dx = e.clientX - x0;
+      if (Math.abs(e.clientY - y0) > Math.abs(dx) + 8 && Math.abs(dx) < 10) return void end();
+      if (Math.abs(dx) > 6) {
+        if (!el.hasPointerCapture(id)) el.setPointerCapture(id);
+        el.style.transform = `translateX(${dx}px)`;
+        el.style.opacity = String(1 - Math.min(Math.abs(dx) / 300, 0.6));
+      }
+    };
+    const end = () => {
+      if (x0 === null) return;
+      x0 = null;
+      el.style.transition = '';
+      if (Math.abs(dx) > 100) {
+        el.style.transform = `translateX(${dx < 0 ? -110 : 110}%)`;
+        el.style.opacity = '0';
+        el.dataset.swiped = '1';
+        setTimeout(() => skip(it), 180);
+      } else {
+        el.style.transform = '';
+        el.style.opacity = '';
+      }
+      dx = 0;
+    };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', end);
+      el.removeEventListener('pointercancel', end);
+    };
+  }, [it, on]);
+  return ref;
 }
 
-function DeviceMock({ c, s, d }: { c: P.CheckinView; s: P.SeenSent; d: P.SeenDevice | null }) {
-  if (d?.kind === 'page' || d?.surface === 'toast') return <ToastMock c={c} s={s} />;
-  if (d && !d.phone) return <DesktopMock c={c} s={s} d={d} />;
-  return <AndroidMock c={c} s={s} d={d} />;
-}
+// ------------------------------------------------------------------ one row
 
-/** The person's or chat's picture, or its letters on a colour. */
-function Pic({ id, name, url, size }: { id: string; name: string; url: string | null; size: number }) {
-  return url ? (
-    <img class="calib-pic" src={url} alt="" width={size} height={size} loading="lazy" />
-  ) : (
-    <span class="calib-pic" style={{ width: `${size}px`, height: `${size}px`, background: hueOf(id) }}>
-      {initials(name)}
+const Row = memo(function Row({ it, sel, done }: { it: P.CalItem; sel: boolean; done: boolean }) {
+  const ref = useSwipe(it, phone.value);
+  const mx = Math.max(...it.p, 0.01);
+  return (
+    <div
+      ref={ref}
+      class={`cal-row${sel ? ' cal-sel' : ''}${it.kind === 'card' ? ' cal-asks' : ''}${done ? ' cal-done' : ''}`}
+      data-cal-id={it.id}
+      data-kind={it.kind}
+      role="button"
+      tabIndex={0}
+      data-track={`calibration row ${it.kind}`}
+      onClick={(e) => {
+        if ((e.currentTarget as HTMLElement).dataset.swiped) return;
+        pick(it);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          pick(it);
+        }
+      }}
+    >
+      <Pic it={it} size={22} />
+      <span class="cal-row-main">
+        <span class="cal-row-who">{it.who}</span>
+        <span class="cal-row-text">
+          {it.kind === 'past' ? '↺ ' : ''}
+          {it.text}
+        </span>
+      </span>
+      <span class="cal-mini" aria-label={`It gave ${CAL_ANSWERS.map((a, i) => `${CAL_ANSWER_NAME[a]} ${Math.round(it.p[i] * 100)}%`).join(', ')}`}>
+        {it.p.map((v, i) => (
+          <i class={`${CAL_ANSWERS[i] === it.you ? 'cal-y' : ''}${CAL_ANSWERS[i] !== it.did ? ' cal-f' : ''}`} style={{ height: `${Math.max(2, (v / mx) * 18)}px` }} />
+        ))}
+      </span>
+      {phone.value && (
+        <button
+          class="cal-x"
+          aria-label="Skip"
+          data-track="calibration skip"
+          onClick={(e) => {
+            e.stopPropagation();
+            skip(it);
+          }}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+});
+
+// ------------------------------------------------------------------ one card
+
+function Pic({ it, size }: { it: P.CalItem; size: number }) {
+  const net = asNet(it.network);
+  return (
+    <span class="cal-ico" style={{ width: `${size}px`, height: `${size}px` }}>
+      {it.icon ? (
+        <img src={it.icon} alt="" width={size} height={size} loading="lazy" />
+      ) : (
+        <span class="cal-ico-letters" style={{ background: hueOf(it.conversationId ?? it.messageId), fontSize: `${Math.round(size * 0.4)}px` }}>
+          {size < 20 ? initials(it.who).slice(0, 1) : initials(it.who)}
+        </span>
+      )}
+      {net && size >= 20 && <NetBadge network={net} size={11} class="cal-ico-net" />}
     </span>
   );
 }
 
-const netTitle = (n: P.Network) => n[0].toUpperCase() + n.slice(1);
+const H = 32;
 
-/** An Android notification: in the shade (with what was beside it), on the lock screen, or as a heads-up. */
-function AndroidMock({ c, s, d }: { c: P.CheckinView; s: P.SeenSent; d: P.SeenDevice | null }) {
-  const w = words(c, s);
-  const surface = d?.surface ?? 'shade';
-  const at = d?.shown ?? s.at;
-  const heard = d?.sound === 'sound' || (!d?.sound && s.sounded);
+/** One answer's bar: the chance as a fill, how unsure as a whisker, the chance before as a dashed line. */
+function Bar({ p, u, old }: { p: number; u: number; old?: number }) {
+  const lo = Math.max(0, p - u) * H;
+  const hi = Math.min(1, p + u) * H;
   return (
-    <figure class={`calib-mock android am-${surface}`} data-mock="android" data-surface={surface}>
-      <div class="am-screen">
-        {surface === 'lock' && (
-          <div class="am-lock">
-            <span class="am-clock">{clock(at)}</span>
-            <Icon name="lock" size={12} />
-          </div>
-        )}
-        {surface === 'heads_up' && <div class="am-app-behind" aria-hidden="true" />}
-        {surface !== 'lock' && surface !== 'heads_up' && (
-          <div class="am-status" aria-hidden="true">
-            {clock(at)}
-          </div>
-        )}
-        <div class="am-card" data-mock-card>
-          <div class="am-head">
-            <span class="am-app">
-              <Icon name="chat" size={11} />
-            </span>
-            <span>dither-chat</span>
-            {w.network && <span>· {netTitle(w.network)}</span>}
-            <span>· {clock(at)}</span>
-            {heard && <Icon name="bell" size={10} />}
-            {d?.sound === 'vibrate' && (
-              <span class="am-vib" title="Vibrated">
-                ≋
-              </span>
-            )}
-          </div>
-          <div class="am-body">
-            <div class="am-text">
-              <b class="am-title">{w.title}</b>
-              {w.lines.slice(-4).map((l) => (
-                <span class="am-line">
-                  {l.author && <b>{l.author} </b>}
-                  {l.body}
-                </span>
+    <span class="cal-bar" aria-hidden="true">
+      <span class="cal-u" style={{ bottom: `${lo}px`, height: `${Math.max(3, hi - lo)}px` }} />
+      <span class="cal-p" style={{ height: `${Math.max(1.5, p * H)}px` }} />
+      {old !== undefined && <span class="cal-old" style={{ bottom: `${old * H}px` }} />}
+    </span>
+  );
+}
+
+/** The three answers with their bars. Before an answer: the model's guess. After: its guess now, over the old one. */
+function Acts({ it, st, past }: { it: P.CalItem; st: Local; past: boolean }) {
+  const mine = past ? it.answer : st.answer;
+  const after = past ? it.after : st.after;
+  const before = past ? it.p : (st.before ?? it.p);
+  const shown = after ?? before;
+  return (
+    <div class={`cal-acts${after ? ' cal-answered' : ''}`} role="group" aria-label="Sound, Show or Inbox">
+      {CAL_ANSWERS.map((a, i) => {
+        const inner = (
+          <>
+            <span class="cal-lab">{CAL_ANSWER_NAME[a]}</span>
+            <Bar p={shown[i]} u={it.u[i]} old={after ? before[i] : undefined} />
+            {it.you === a && <span class="cal-you">▲</span>}
+          </>
+        );
+        const cls = `cal-act${it.did === a ? ' cal-did' : ''}${mine === a ? ' cal-chosen' : ''}`;
+        const title = `${CAL_ANSWER_NAME[a]}: it gave ${Math.round(before[i] * 100)}%${after ? `, now ${Math.round(after[i] * 100)}%` : ''}${it.did === a ? '; what it did' : ''}${it.you === a ? '; what you did' : ''}`;
+        return past ? (
+          <span class={cls} title={title} data-answer={a}>
+            {inner}
+          </span>
+        ) : (
+          <button class={cls} title={title} data-answer={a} data-track={`calibration answer ${a}`} onClick={() => void answerIt(it, a)}>
+            {inner}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Notice({ it, st, past }: { it: P.CalItem; st: Local; past: boolean }) {
+  const when = stamp(it.at);
+  const acts = <Acts it={it} st={st} past={past} />;
+  if (it.look === 'row') {
+    return (
+      <div class="cal-n cal-n-row" data-look="row">
+        <Pic it={it} size={28} />
+        <span class="cal-n-main">
+          <b>{it.who}</b>
+          <span>{it.text}</span>
+        </span>
+        <span class="cal-n-when">{when}</span>
+        <div class="cal-n-acts">{acts}</div>
+      </div>
+    );
+  }
+  return (
+    <div class={`cal-n ${it.look === 'toast' ? 'cal-n-toast' : 'cal-n-shade'}`} data-look={it.look}>
+      <div class="cal-n-head">
+        <Pic it={it} size={16} />
+        <span>
+          dither · {netName(it.network)} · {when}
+          {it.held ? ' · a sound held back' : ''}
+        </span>
+      </div>
+      <div class="cal-n-t">{it.who}</div>
+      <div class="cal-n-b">{it.text}</div>
+      {acts}
+    </div>
+  );
+}
+
+const sign = (n: number) => (n > 0 ? `+${Math.round(n)}` : n < 0 ? `−${Math.round(-n)}` : '0');
+
+const Card = memo(function Card({ it, st, desk }: { it: P.CalItem; st: Local; desk: boolean }) {
+  const ref = useSwipe(it, !desk);
+  const past = it.kind === 'past';
+  return (
+    <article ref={ref} class={`cal-card${past ? ' cal-past' : ''}${desk ? ' cal-card-desk' : ''}`} data-cal-id={it.id} data-kind={it.kind} aria-label={`${it.who}: ${it.text}`}>
+      <button class="cal-x" aria-label="Skip" data-track="calibration skip" onClick={() => skip(it)}>
+        ×
+      </button>
+      {past && <div class="cal-past-say">You said {CAL_ANSWER_NAME[it.answer ?? 'show']}; it had given that {Math.round(it.p[idx(it.answer ?? 'show')] * 100)}%. Its guess now:</div>}
+      <Notice it={it} st={st} past={past} />
+      {past ? (
+        <div class="cal-keep">
+          <button class="cal-btn" data-settle="keep" data-track="calibration keep" onClick={() => void settle(it, 'keep')}>
+            Keep
+          </button>
+          <button class="cal-btn" data-settle="once" data-track="calibration only once" onClick={() => void settle(it, 'once')}>
+            Only that once
+          </button>
+          <button class="cal-btn" data-settle="undo" data-track="calibration undo answer" onClick={() => void settle(it, 'undo')}>
+            Undo
+          </button>
+        </div>
+      ) : (
+        st.answer && (
+          <details class="cal-drill" open={st.drill} onToggle={(e) => setDrill(it, (e.currentTarget as HTMLDetailsElement).open)}>
+            <summary data-track="calibration wrong about">What was it wrong about?</summary>
+            <div class="cal-parts">
+              {it.parts.map((x) => (
+                <button class={`cal-part${st.parts.includes(x.part) ? ' cal-on' : ''}`} data-part={x.part} aria-pressed={st.parts.includes(x.part)} data-track={`calibration part ${x.part}`} onClick={() => void togglePart(it, x.part)}>
+                  {CAL_PART_NAME[x.part]}
+                  <small>{x.label}</small>
+                  <span class="cal-push" title={x.push > 0 ? 'Pushed it louder' : x.push < 0 ? 'Pushed it quieter' : 'Did not move it'}>
+                    <i style={{ left: `${x.push < 0 ? 50 + x.push * 50 : 50}%`, right: `${x.push > 0 ? 50 - x.push * 50 : 50}%` }} />
+                  </span>
+                </button>
               ))}
             </div>
-            <Pic id={c.conversationId ?? c.messageId} name={w.title} url={s.icon} size={36} />
-          </div>
-          {c.side !== 'foryou' && (
-            <div class="am-actions">
-              <span>Reply</span>
-              <span>{s.sounded ? 'Could have waited' : 'Louder'}</span>
-            </div>
-          )}
-        </div>
-        {surface !== 'heads_up' &&
-          (d?.beside ?? []).slice(0, 4).map((b) => (
-            <div class="am-card am-other">
-              <div class="am-head">
-                <span class="am-app">
-                  <Icon name="chat" size={11} />
-                </span>
-                <span>dither-chat · {clock(b.at)}</span>
-              </div>
-              <div class="am-text">
-                <b class="am-title">{b.title}</b>
-                <span class="am-line">{b.body.split('\n').at(-1)}</span>
-              </div>
+          </details>
+        )
+      )}
+      <details class="cal-det">
+        <summary data-track="calibration details">{it.youWhat}</summary>
+        <div class="cal-det-body">
+          <div class="cal-ctx">{it.context}</div>
+          {it.reasons.map((r) => (
+            <div class="cal-contrib">
+              <span>{r.text}</span>
+              <span>{sign(r.by)}</span>
             </div>
           ))}
-      </div>
-      <figcaption>
-        {d?.label ?? 'Phone'}
-        {d?.surface ? `, ${SURFACE[d.surface]}` : ', where on the phone is not known'}
-        {!d || d.beside === null ? '; what else showed is not known' : ''}
-      </figcaption>
-    </figure>
-  );
-}
-
-/** A browser's notification on a computer: the system's card in a corner of the screen. */
-function DesktopMock({ c, s, d }: { c: P.CheckinView; s: P.SeenSent; d: P.SeenDevice }) {
-  const w = words(c, s);
-  return (
-    <figure class="calib-mock desktop" data-mock="desktop">
-      <div class="dm-screen">
-        <div class="dm-card" data-mock-card>
-          <Pic id={c.conversationId ?? c.messageId} name={w.title} url={s.icon} size={40} />
-          <div class="dm-text">
-            <b>{w.title}</b>
-            {w.lines.slice(-3).map((l) => (
-              <span>
-                {l.author ? `${l.author}: ` : ''}
-                {l.body}
-              </span>
-            ))}
-            <small>dither-chat · {clock(d.shown ?? s.at)}</small>
-          </div>
+          {it.conversationId && (
+            <button class="link-btn" data-track="calibration open chat" onClick={() => go({ view: 'inbox', conv: it.conversationId!, msg: it.messageId })}>
+              Open the chat
+            </button>
+          )}
         </div>
-        {(d.beside ?? []).slice(0, 2).map((b) => (
-          <div class="dm-card dm-other">
-            <div class="dm-text">
-              <b>{b.title}</b>
-              <span>{b.body.split('\n').at(-1)}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-      <figcaption>
-        {d.label}, {d.sound === 'sound' ? 'with sound' : d.sound === 'silent' ? 'silently' : s.sounded ? 'meant to sound' : 'silently'}
-      </figcaption>
-    </figure>
+      </details>
+    </article>
   );
-}
-
-/** The notification the open app drew itself, at the top of its window. */
-function ToastMock({ c, s }: { c: P.CheckinView; s: P.SeenSent }) {
-  const w = words(c, s);
-  return (
-    <figure class="calib-mock toastm" data-mock="toast">
-      <div class="tm-card" data-mock-card>
-        <Pic id={c.conversationId ?? c.messageId} name={w.title} url={s.icon} size={28} />
-        <div>
-          <b>{w.title}</b>
-          <span>{w.lines.at(-1)?.body}</span>
-        </div>
-      </div>
-      <figcaption>In the open app</figcaption>
-    </figure>
-  );
-}
-
-/** Its row in the inbox (or its card on For you), drawn from the message: where a quiet one waited. */
-function InAppMock({ c }: { c: P.CheckinView }) {
-  const r = c.context.row;
-  const net = asNet(r.network);
-  const where = c.context.forYou ? 'For you' : c.context.opened ? `Opened from ${SOURCE[c.context.opened.source] ?? 'the app'}` : 'The inbox';
-  return (
-    <figure class="calib-mock inapp" data-mock="row">
-      <div class="im-row" data-mock-card>
-        <span class="im-av">
-          <Pic id={c.conversationId ?? c.messageId} name={r.title} url={null} size={34} />
-          {net && <NetBadge network={net} size={14} class="im-net" />}
-        </span>
-        <span class="im-main">
-          <span class="im-top">
-            <b>{r.title}</b>
-            <span>{clock(r.at)}</span>
-          </span>
-          <span class="im-preview">{r.preview}</span>
-        </span>
-        <span class="im-dot" aria-hidden="true" />
-      </div>
-      <figcaption>{where}: its row, drawn from the message</figcaption>
-    </figure>
-  );
-}
+});
