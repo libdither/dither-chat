@@ -16,7 +16,7 @@
 | `back` | back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back") | `bun run web:build && bun scripts/verify-back.ts` |
 | `response` | every control on each kind of page clicked, in four parts side by side: a click that draws most of a list again (every message, every row) fails unless scripts/response-known.json has it (scripts/verify-response.ts, docs/perf.md "Every click") | `bun scripts/verify-response.ts` (`--shard 1/4` for a part) |
 | `memory` | the same round of pages again and again on a tenth-size world, a computer's and a phone's side by side: DOM nodes, listeners, intervals, object URLs, sockets, observers, marks and the app's caches may not keep growing; the heap and the hub's memory printed (scripts/verify-memory.ts, docs/perf.md "Memory") | `bun scripts/verify-memory.ts` |
-| `perf` | load and chat switching on a tenth-size world, a warm-up and one run, then a cold start and a relaunch over a slow phone link, its counts against a baseline (docs/perf.md) | `bun scripts/verify-perf.ts --ci` |
+| `perf` | load and chat switching on a tenth-size world, a warm-up and one run, then a cold start and a relaunch over a slow phone link, its counts against a baseline; then upward scroll smoothness and render counts on desktop and phone (docs/perf.md) | `bun scripts/verify-perf.ts --ci`, `bun scripts/verify-scroll-up.ts --ci` |
 | `check` | passes only when each job above passed, or was skipped because `changes` said so | |
 
 - `check` is the one check branch protection requires, and what auto-merge waits on. A new job goes into its `needs`.

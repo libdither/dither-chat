@@ -316,6 +316,60 @@ export function upsertInto(list: P.MessageView[], m: P.MessageView) {
 }
 
 /**
+ * Merge a page of messages into a time-ordered list in one pass (O(N + K) instead of K splices).
+ * Keeps existing order on equal timestamps and replaces any existing message with the same id.
+ */
+export function mergeMessages(list: P.MessageView[], incoming: readonly P.MessageView[]) {
+  if (!incoming.length) return;
+  if (incoming.length === 1) return upsertInto(list, incoming[0]);
+  if (!list.length) {
+    list.push(...incoming);
+    return;
+  }
+  const byId = new Map<string, number>();
+  for (let i = 0; i < list.length; i++) byId.set(list[i].id, i);
+  const fresh: P.MessageView[] = [];
+  for (const m of incoming) {
+    const idx = byId.get(m.id);
+    if (idx !== undefined) list[idx] = m;
+    else {
+      byId.set(m.id, -1);
+      fresh.push(m);
+    }
+  }
+  if (!fresh.length) return;
+  // Common case for scrolling up: every fresh message is strictly older than list[0] and already sorted.
+  let sorted = true;
+  for (let i = 1; i < fresh.length; i++) {
+    if (fresh[i].ts < fresh[i - 1].ts) {
+      sorted = false;
+      break;
+    }
+  }
+  if (!sorted) fresh.sort((a, b) => a.ts - b.ts);
+  if (fresh[fresh.length - 1].ts <= list[0].ts) {
+    list.unshift(...fresh);
+    return;
+  }
+  if (fresh[0].ts >= list[list.length - 1].ts) {
+    list.push(...fresh);
+    return;
+  }
+  // General sorted merge in one pass.
+  const merged: P.MessageView[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < list.length && j < fresh.length) {
+    if (list[i].ts <= fresh[j].ts) merged.push(list[i++]);
+    else merged.push(fresh[j++]);
+  }
+  while (i < list.length) merged.push(list[i++]);
+  while (j < fresh.length) merged.push(fresh[j++]);
+  list.length = 0;
+  list.push(...merged);
+}
+
+/**
  * The channel whose stream (`k:<channel>`) holds a conversation's messages: a thread's channel, else the conversation
  * itself (a Matrix room's own messages are in its stream). Undefined where the conversation is not known.
  */

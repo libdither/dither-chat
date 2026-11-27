@@ -7217,22 +7217,10 @@ textarea.chip-box {
     min-height: 40px;
   }
 
-  /* Messages. Off screen they skip layout and paint, which keeps a long timeline smooth. The timeline is
-     anchored at its bottom (column-reverse), so sizes settling above the view never move what is in it.
-     Only here: on a desktop the hover bar and menus reach outside a message, and this would clip them. */
+  /* Messages. Slices + ScrollStream mount them in small frames, so offscreen messages do not use
+     content-visibility: auto (unlocking it as you scroll up forced a layout every frame on phones). */
   .timeline-scroll {
     overscroll-behavior-y: contain;
-  }
-  .msg {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 64px;
-  }
-  /* A narrow window with a mouse is a phone layout too, and draws the hover bar above its message: the message under
-     the pointer is drawn whole, or the bar is cut to its box and only its bottom edge shows, over the message's line. */
-  .msg:hover,
-  .msg:focus-within,
-  .msg:has(.pchip.busy, .pchip.on) {
-    content-visibility: visible;
   }
   /* Its buttons are bigger here, so it is placed by its bottom edge: 2px into its message, as on a computer. */
   .msg:not(.head) > .msg-actions {

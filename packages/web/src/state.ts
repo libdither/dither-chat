@@ -5,7 +5,7 @@ import { leaveLayerEntry, takeOverLayers } from './phone.ts';
 import { cachedTimeline, copyAt, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
 import { waitDone, waitOn } from './waits.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, mergeMessages, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { afterFailure, openOutbox, restoredState, type OutboxEntry, type OutboxFile, type SendMedia } from './outbox.ts';
@@ -579,8 +579,10 @@ const servedFrom = (key: string, from: OpenedFrom) => {
 /**
  * `glance`: for a look at the newest messages without opening it (Catch up's cards): what the hub stored, not asking
  * the network for more, and not a timeline this device keeps for its next start. Opening it later does both.
+ * `prefetch`: silent background fetch of an older page ahead of upward scroll; emits no loading redraw until the page
+ * lands (unless promoted to a visible load by a non-prefetch call).
  */
-export function loadTimeline(key: string, older = false, o: { glance?: boolean } = {}): Promise<void> {
+export function loadTimeline(key: string, older = false, o: { glance?: boolean; prefetch?: boolean } = {}): Promise<void> {
   const t = timelines.get(key);
   if (t?.loading && t.glance && !o.glance && !older) return (glancing.get(key) ?? Promise.resolve()).then(() => loadTimeline(key));
   const p = fillTimeline(key, older, o);
@@ -591,9 +593,16 @@ export function loadTimeline(key: string, older = false, o: { glance?: boolean }
   return p;
 }
 
-async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }): Promise<void> {
+async function fillTimeline(key: string, older: boolean, o: { glance?: boolean; prefetch?: boolean }): Promise<void> {
   let t = timelines.get(key);
-  if (t?.loading) return;
+  if (t?.loading) {
+    // User reached the top edge while a silent prefetch was already in flight: surface the loading indicator now.
+    if (older && t.prefetch && !o.prefetch) {
+      t.prefetch = false;
+      timelineChanged(key);
+    }
+    return;
+  }
   if (t && !older) {
     if (!o.glance) servedFrom(key, t.glance ? 'glance' : 'memory');
     if (t.glance && !o.glance) {
@@ -627,8 +636,10 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     else touchTimeline(key);
   }
   if (older && !t.hasMore) return;
+  const silentPrefetch = older && !!o.prefetch;
   t.loading = true;
   t.older = older;
+  t.prefetch = silentPrefetch;
   const [kind, id] = key.split(':') as ['c' | 'p' | 'k', string];
   // Opening it, step by step, for the bar over the message box (waits.ts): the hub, then the network's latest where
   // the hub asks it. A look ahead (a glance) or older messages are not an open.
@@ -641,7 +652,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     const linked = ws?.readyState === WebSocket.OPEN;
     waitOn(key, linked ? 'hub' : 'link', { network, steps: [...(linked ? [] : ['link' as const]), 'hub', ...(network ? ['network' as const] : [])] });
   }
-  timelineChanged(key);
+  if (!silentPrefetch) timelineChanged(key);
   // A person's timeline and a channel's stream span conversations, where two messages can share a time: their cursor
   // names the message too.
   const oldest = older ? t.messages[0] : undefined;
@@ -667,12 +678,17 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     let got = t.messages.length;
     if (caught === 'refused') {
       const page = await api<P.MessagePage & { quoted?: P.MessageView[]; conversationIds?: string[] }>(`${url}?limit=60${before ? `&before=${before}` : ''}`);
-      // A glance (Catch up's, or fetched ahead) is shown nowhere else: people the client did not know yet go in without
-      // moving `metaRev`, which would draw every row of the lists again. One it knew and that changed still does.
-      page.identities.forEach(t.glance ? (i) => (db.identities.has(i.id) ? putIdentity(i) : void put(db, i)) : putIdentity);
+      // A glance or an older page: people the client did not know yet go in without moving `metaRev`, which would
+      // otherwise re-render every mounted message and sidebar row mid-scroll. One it knew and that changed still does.
+      const quietIds = t.glance || older;
+      page.identities.forEach(quietIds ? (i) => (db.identities.has(i.id) ? putIdentity(i) : void put(db, i)) : putIdentity);
       if (page.quoted?.length) {
-        page.quoted.forEach((m) => quoted.set(m.id, m));
-        timelineChanged();
+        let updated = false;
+        for (const m of page.quoted) {
+          if (quoted.has(m.id)) updated = true;
+          quoted.set(m.id, m);
+        }
+        if (updated) timelineChanged();
       }
       if (stale) {
         // Kept messages the hub no longer has in this range were deleted meanwhile.
@@ -680,7 +696,7 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
         const from = page.hasMore ? (page.messages[0]?.ts ?? Infinity) : -Infinity;
         t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
       }
-      for (const m of page.messages) upsertInto(t.messages, m);
+      mergeMessages(t.messages, page.messages);
       if (page.elsewhere) t.elsewhere = mergeElsewhere(t.elsewhere, page.elsewhere);
       t.hasMore = page.hasMore;
       got = page.messages.length;
@@ -722,8 +738,10 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   } finally {
     if (opening && !behind) waitDone(key, finished);
     t.loading = false;
-      timelineChanged(key);
-    persistSoon();
+    t.prefetch = false;
+    timelineChanged(key);
+    // Kept pages store only the newest messages, so paging older history needs no snapshot write mid-scroll.
+    if (!older) persistSoon();
   }
 }
 
@@ -738,8 +756,8 @@ async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: numbe
   const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${conversationId}/history`, { body: { beforeTs, limit: 50 } }).catch(() => null);
   if (!r?.count) return false;
   const page = await api<P.MessagePage>(`/api/conversations/${conversationId}/messages?limit=60${beforeTs ? `&before=${beforeTs}` : ''}`).catch(() => null);
-  page?.identities.forEach(putIdentity);
-  for (const m of page?.messages ?? []) upsertInto(t.messages, m);
+  page?.identities.forEach(beforeTs !== undefined ? (i) => (db.identities.has(i.id) ? putIdentity(i) : void put(db, i)) : putIdentity);
+  if (page?.messages.length) mergeMessages(t.messages, page.messages);
   return !r.done;
 }
 
@@ -752,8 +770,8 @@ async function streamFromNetwork(t: Timeline, channelId: string, before?: P.Mess
   if (!r?.count) return false;
   const cursor = before ? `&before=${before.ts}:${encodeURIComponent(before.id)}` : '';
   const page = await api<P.MessagePage>(`/api/conversations/${channelId}/stream?limit=60${cursor}`).catch(() => null);
-  page?.identities.forEach(putIdentity);
-  for (const m of page?.messages ?? []) upsertInto(t.messages, m);
+  page?.identities.forEach(before ? (i) => (db.identities.has(i.id) ? putIdentity(i) : void put(db, i)) : putIdentity);
+  if (page?.messages.length) mergeMessages(t.messages, page.messages);
   return !r.done || !!page?.hasMore;
 }
 

@@ -136,6 +136,7 @@ import { countKey } from '../clicklog.ts';
 import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, SendAsLead, SendLine, setView, viewOf } from './Pairs.tsx';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
+import { ANCHOR_EDGE_PX, ScrollStream, STREAM_SLICE } from '../scrollStream.ts';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
@@ -1049,6 +1050,50 @@ const SPOT_KEPT = 30 * 60_000;
 let lastShown = '';
 
 /**
+ * Binary-search live `.msg` children of `.timeline-inner` for a visible message inside `scroller`,
+ * preferring one other than `avoidId` (the previous top edge can lose its header when grouped).
+ * Anchors on `bottom` so a collapsing header leaves the message body and everything below it still.
+ */
+function findAnchorMsg(scroller: HTMLElement, avoidId: string | null): { id: string; bottom: number } | null {
+  const inner = scroller.firstElementChild;
+  if (!inner) return null;
+  const msgs = inner.getElementsByClassName('msg');
+  const n = msgs.length;
+  if (!n) return null;
+  const box = scroller.getBoundingClientRect();
+  let lo = 0;
+  let hi = n - 1;
+  let firstVis = n;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (msgs[mid].getBoundingClientRect().bottom > box.top) {
+      firstVis = mid;
+      hi = mid - 1;
+    } else lo = mid + 1;
+  }
+  if (firstVis >= n) return null;
+  const avoid = avoidId ? `m-${avoidId}` : '';
+  let fallback: { id: string; bottom: number } | null = null;
+  for (let i = firstVis; i < Math.min(n, firstVis + 4); i++) {
+    const el = msgs[i];
+    if (!el.id) continue;
+    const r = el.getBoundingClientRect();
+    if (r.top >= box.bottom) break;
+    if (el.id !== avoid) return { id: el.id, bottom: r.bottom };
+    fallback ??= { id: el.id, bottom: r.bottom };
+  }
+  return fallback;
+}
+
+/** Local-day midnight bounds and stable key for a timestamp: avoids per-message Date allocations in the render loop. */
+function localDaySpan(ts: number): { start: number; end: number; key: string } {
+  const d = new Date(ts);
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+  return { start, end, key: `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` };
+}
+
+/**
  * `chat`: a person's chat over several routes (PersonChat): messages name each account by its own name and picture
  * (Pairs.tsx headNames, over the routes shown); `badge`, whether pictures
  * carry the network's badge; `onFocus`, a route tag's click; `onMissing`, a message linked to (`focus`) that paging
@@ -1056,7 +1101,7 @@ let lastShown = '';
  */
 export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, stream }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts }) {
   if (counting) rendered('Timeline');
-  timelineRev(tkey).value;
+  const tRev = timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
   const t = timelines.get(tkey);
   const [flash, setFlash] = useState<string | null>(null);
@@ -1082,8 +1127,9 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       flashIt(id);
     });
   };
-  /** The content's height when last looked at (onScroll, and the ResizeObserver below). */
+  /** Cached scrollHeight and clientHeight (updated by ResizeObserver and layout effects) so onScroll avoids forced layouts. */
   const heightSeen = useRef(0);
+  const clientHeightSeen = useRef(0);
   /** A quoted message on its way to the screen (onQuote below). */
   const revealing = useRef<string | null>(null);
   useEffect(() => {
@@ -1113,9 +1159,13 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   const off = offline.value;
   // Settings → Adversarial features, or the chat's own say: kept deleted and disappeared messages not shown at all.
   const r = retention.value;
-  const all = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
-  const at = new Map<string, number>();
-  all.forEach((m, i) => at.set(m.id, i));
+  // Memoize filtered list and id→index map across streaming slice redraws (tRev stays constant while peeling slices from RAM).
+  const { all, at } = useMemo(() => {
+    const list = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
+    const map = new Map<string, number>();
+    for (let i = 0; i < list.length; i++) map.set(list[i].id, i);
+    return { all: list, at: map };
+  }, [tkey, tRev, msgs, msgs.length, msgs[0]?.id, msgs[msgs.length - 1]?.id, r.adversarial, r.showIn]);
 
   // A long timeline is drawn in part (docs/perf.md): a switch back to it draws the newest WINDOW, not all it holds.
   const [, redraw] = useState(0);
@@ -1140,6 +1190,16 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   // And of that, the newest FIRST when it shows, then a slice more each time the page is idle (slices.ts).
   const [slices] = useState(() => new Slices());
   slices.begin(tkey);
+  const [scrollStream] = useState(() => new ScrollStream());
+  scrollStream.begin(tkey);
+  const streamRaf = useRef(0);
+  useEffect(
+    () => () => {
+      if (streamRaf.current) cancelAnimationFrame(streamRaf.current);
+      streamRaf.current = 0;
+    },
+    [tkey],
+  );
   const draw = (from: string | null, to: string | null) => {
     drawn.current = { key: tkey, from, to };
     slices.whole();
@@ -1181,27 +1241,51 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   const more = start > want.start;
   const first = all[start];
   const last = all[end - 1];
+  const showOlderLoading = !!(t?.loading && t.older && !t.prefetch && msgs.length > 0);
 
-  // At the very top the browser keeps the view at the top while older messages come in above it: that shows
-  // them, and asks for the next page, and the next, to the start. So the message that was first stays where it was;
-  // drawing more below keeps the one that was last where it was.
-  const anchor = useRef<{ id: string; y: number; edge: 'first' | 'last' } | null>(null);
-  const hold = (m: P.MessageView | undefined, edge: 'first' | 'last') => {
-    const node = m && document.getElementById(`m-${m.id}`);
-    if (node) anchor.current = { id: m.id, y: node.getBoundingClientRect().top, edge };
-  };
-  // A slice drawn above holds the first message in view, not the first drawn: that one loses its name line when the
-  // message before it is drawn (grouped with it), which would move everything below it by a line.
-  const firstInView = () => {
-    const el = scroller.current;
-    if (!el) return first;
-    const top = el.getBoundingClientRect().top;
-    for (let i = start; i < end; i++) {
-      const node = document.getElementById(`m-${all[i].id}`);
-      if (node && node.getBoundingClientRect().bottom > top) return all[i];
+  // Synchronous pre-commit scroll anchoring: captured right here while the old DOM is still live on screen,
+  // 0 ms before Preact commits a prepend/append or loading-indicator toggle (never across an async fetch,
+  // which snapped users back to where they were before they kept scrolling).
+  // When prepending far above the viewport (topRemaining > ANCHOR_EDGE_PX), column-reverse already keeps
+  // everything in view at the exact same pixel, so we skip DOM measurements entirely (zero forced layouts).
+  const pendingAnchor = useRef<{ id: string; bottom: number } | null>(null);
+  const prevBounds = useRef<{ key: string; firstId: string | null; lastId: string | null; loading: boolean }>({ key: tkey, firstId: null, lastId: null, loading: false });
+  {
+    const elNow = scroller.current;
+    const pb = prevBounds.current;
+    if (!pendingAnchor.current && elNow && pb.key === tkey && Math.abs(elNow.scrollTop) > 1) {
+      const topChanged = (pb.firstId !== null && first && first.id !== pb.firstId) || pb.loading !== showOlderLoading;
+      const botChanged = pb.lastId !== null && last && last.id !== pb.lastId && drawn.current.to !== null;
+      if (topChanged) {
+        const topRemaining = heightSeen.current && clientHeightSeen.current ? heightSeen.current + elNow.scrollTop - clientHeightSeen.current : 0;
+        if (topRemaining <= ANCHOR_EDGE_PX) pendingAnchor.current = findAnchorMsg(elNow, pb.firstId);
+      } else if (botChanged) {
+        pendingAnchor.current = findAnchorMsg(elNow, pb.lastId);
+      }
     }
-    return first;
+    prevBounds.current = { key: tkey, firstId: first?.id ?? null, lastId: last?.id ?? null, loading: showOlderLoading };
+  }
+
+  /** Step the drawn top edge back by one small streaming slice (or finish the next `Slices` step). */
+  const stepOlderRef = useRef<() => void>(() => {});
+  stepOlderRef.current = () => {
+    if (more) {
+      slices.next(want.start, end);
+      redraw((n) => n + 1);
+    } else if (start > 0) {
+      drawn.current = { key: tkey, from: all[Math.max(0, start - STREAM_SLICE)].id, to: drawn.current.to };
+      slices.whole();
+      redraw((n) => n + 1);
+    }
   };
+  const scheduleStream = () => {
+    if (streamRaf.current) return;
+    streamRaf.current = requestAnimationFrame(() => {
+      streamRaf.current = 0;
+      stepOlderRef.current();
+    });
+  };
+
   const watchKey = useRef({}).current;
   useEffect(() => () => noteNewest(watchKey, null), []);
   const onScroll = () => {
@@ -1209,45 +1293,71 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     // Shown at the newest message (read as it comes): the hub sends the phones no push about it (activity.ts).
     noteNewest(watchKey, el && drawn.current.to === null && !t?.detached && Math.abs(el.scrollTop) < 40 ? convIds : null);
     if (!el) return;
-    // A scroll that comes with the content's height changed, while following, is the browser's anchoring and not you:
-    // when a layout is forced before the ResizeObserver's turn (a measure in an effect), its scroll event comes first.
-    const grew = el.scrollHeight !== heightSeen.current;
-    heightSeen.current = el.scrollHeight;
-    if (heldByPictures(el)) following.current = false;
-    else if (following.current && grew && el.scrollTop !== 0) el.scrollTop = 0;
-    else following.current = !jumping.current && Math.abs(el.scrollTop) < FOLLOW && drawn.current.to === null && !t?.detached;
-    // column-reverse: scrollTop is 0 at the bottom and negative going up.
-    if (el.scrollHeight + el.scrollTop - el.clientHeight < 400) {
-      if (more) {
-        // Nearer the top of what is drawn than its slices have come: the next one now.
-        hold(firstInView(), 'first');
-        slices.next(want.start, end);
-        redraw((n) => n + 1);
-      } else if (start > 0) {
-        hold(first, 'first');
-        drawn.current = { key: tkey, from: all[Math.max(0, start - STEP)].id, to: drawn.current.to };
-        slices.extend(end - start);
-        redraw((n) => n + 1);
-      } else if (!off) {
-        // (Without the hub a page cannot come: it is asked for once the hub is back, as this runs after every draw.)
+    const scrollTop = el.scrollTop;
+    // Only read live scrollHeight when following the bottom (or before ResizeObserver's first measure): reading
+    // scrollHeight while scrolled up on a phone forces a synchronous layout on every scroll frame.
+    let scrollHeight = heightSeen.current;
+    let clientHeight = clientHeightSeen.current;
+    if (following.current || !scrollHeight || !clientHeight) {
+      const liveH = el.scrollHeight;
+      const grew = liveH !== scrollHeight;
+      scrollHeight = heightSeen.current = liveH;
+      clientHeight = clientHeightSeen.current = el.clientHeight;
+      if (heldByPictures(el)) following.current = false;
+      else if (following.current && grew && scrollTop !== 0) el.scrollTop = 0;
+      else following.current = !jumping.current && Math.abs(scrollTop) < FOLLOW && drawn.current.to === null && !t?.detached;
+    } else if (heldByPictures(el)) {
+      following.current = false;
+    } else {
+      following.current = !jumping.current && Math.abs(scrollTop) < FOLLOW && drawn.current.to === null && !t?.detached;
+    }
+
+    // Stream buffered older messages smoothly and proactively prefetch the next page before hitting the top wall.
+    // Skip while a programmatic jump (bringToCenter) is gliding so prepends never interrupt scrollIntoView smooth scroll.
+    if (!jumping.current) {
+      const plan = scrollStream.plan({
+        scrollTop,
+        scrollHeight,
+        clientHeight,
+        now: performance.now(),
+        more,
+        start,
+        hasMore: !!t?.hasMore,
+        loading: !!t?.loading,
+        prefetching: !!t?.prefetch,
+        offline: off,
+      });
+      if (plan.draw === 'immediate') {
+        if (streamRaf.current) (cancelAnimationFrame(streamRaf.current), (streamRaf.current = 0));
+        stepOlderRef.current();
+      } else if (plan.draw === 'frame') {
+        scheduleStream();
+      }
+      if (plan.fetch === 'urgent') {
         if (t && !t.loading && t.hasMore) {
-          hold(first, 'first');
-          // The page coming is drawn, as is everything above it: a slice at once, the rest in slices.
           if (drawn.current.from !== '^') drawn.current = { ...drawn.current, from: '^' };
           slices.extend(end - start);
         }
-        loadTimeline(tkey, true);
+        void loadTimeline(tkey, true);
+      } else if (plan.fetch === 'prefetch') {
+        // Pin the drawn top edge to `first` so the prefetched page lands in memory without a sudden DOM dump;
+        // rAF streaming then feeds those buffered messages into the DOM smoothly as scroll continues.
+        if (drawn.current.from === null && first) {
+          drawn.current = { key: tkey, from: first.id, to: drawn.current.to };
+          slices.whole();
+        }
+        void loadTimeline(tkey, true, { prefetch: true });
       }
     }
+
     const d = drawn.current;
     if (d.to !== null) {
-      if (Math.abs(el.scrollTop) < 400) {
-        hold(last, 'last');
+      if (Math.abs(scrollTop) < 400) {
         draw(d.from ?? first?.id ?? null, end - 1 + STEP >= all.length - 1 ? null : all[end - 1 + STEP].id);
       }
     } else if (t?.detached) {
-      if (Math.abs(el.scrollTop) < 400) void loadNewer(tkey);
-    } else if (Math.abs(el.scrollTop) < 40 && document.visibilityState === 'visible') {
+      if (Math.abs(scrollTop) < 400) void loadNewer(tkey);
+    } else if (Math.abs(scrollTop) < 40 && document.visibilityState === 'visible') {
       // A stream marks read the threads whose messages are drawn: what you saw, not every topic of the channel.
       const seen = stream ? [...new Set(all.slice(start, end).map((m) => m.conversationId))] : convIds;
       seen.forEach(markRead);
@@ -1258,16 +1368,26 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       if (d.from !== null && end - start > WINDOW + STEP) draw(null, null);
     }
   };
+  const onScrollRef = useRef(onScroll);
+  onScrollRef.current = onScroll;
+  // Post-settle check (mark read at the newest end, or load older once back online): scoped to data/network changes
+  // rather than re-arming a timer on every scroll-stream frame.
   useEffect(() => {
-    const id = setTimeout(() => onScroll(), 300);
+    const id = setTimeout(() => onScrollRef.current(), 300);
     return () => clearTimeout(id);
-  });
-  // The next slice once the page is idle. Above the view it would move what is in it, so the first message in view is
-  // held where it is; at the newest end (column-reverse) nothing moves.
+  }, [tkey, msgs.length, end, off, !!t?.loading]);
+  // If a background prefetch just landed while the user is already near the top runway, start streaming immediately.
+  useEffect(() => {
+    if (!start || !scroller.current || jumping.current) return;
+    const scrollHeight = heightSeen.current || scroller.current.scrollHeight;
+    const clientHeight = clientHeightSeen.current || scroller.current.clientHeight;
+    const topRemaining = Math.max(0, scrollHeight + scroller.current.scrollTop - clientHeight);
+    if (topRemaining < Math.max(1200, clientHeight * 1.5) && Math.abs(scroller.current.scrollTop) > 80) scheduleStream();
+  }, [tkey, msgs.length]);
+  // The next slice once the page is idle (initial open fill or urgent load).
   useEffect(() => {
     if (!more) return;
     return whenIdle(() => {
-      if (Math.abs(scroller.current?.scrollTop ?? 0) > 1) hold(firstInView(), 'first');
       slices.next(want.start, end);
       redraw((n) => n + 1);
     });
@@ -1299,14 +1419,18 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     const t = setTimeout(() => redraw((n) => n + 1), Math.max(0, goneAt - (Date.now() + hubSends.value.offset)) + 50);
     return () => clearTimeout(t);
   }, [goneAt]);
+  // Keep the visible message at the exact pixel across near-edge prepends/appends; off-edge prepends are already
+  // held still by column-reverse without touching scrollTop.
   useLayoutEffect(() => {
-    const a = anchor.current;
-    if (!a || t?.loading || (a.edge === 'first' ? first?.id : last?.id) === a.id) return;
-    anchor.current = null;
-    const node = document.getElementById(`m-${a.id}`);
+    const a = pendingAnchor.current;
+    if (!a) return;
+    pendingAnchor.current = null;
     const el = scroller.current;
-    const moved = node ? node.getBoundingClientRect().top - a.y : 0;
-    if (el && Math.abs(moved) >= 1) el.scrollTop += moved;
+    const node = document.getElementById(a.id);
+    if (!el || !node) return;
+    const moved = node.getBoundingClientRect().bottom - a.bottom;
+    if (Math.abs(moved) >= 1) el.scrollTop += moved;
+    heightSeen.current = el.scrollHeight;
   });
 
   useLayoutEffect(() => {
@@ -1380,6 +1504,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     if (!el || !box || typeof ResizeObserver !== 'function') return;
     const stick = () => {
       heightSeen.current = el.scrollHeight;
+      clientHeightSeen.current = el.clientHeight;
       // A run of pictures changing its way holds itself under the finger (PictureSwitch.tsx keepStill).
       if (following.current && el.scrollTop !== 0 && !heldByPictures(el)) el.scrollTop = 0;
     };
@@ -1413,7 +1538,13 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   });
   const items: any[] = [];
   let prev: P.MessageView | null = null;
-  const byId = new Map(msgs.map((x) => [x.id, x]));
+  // Reuse `at` when `all === msgs` (the common case) to avoid allocating a second full Map every render.
+  const hiddenById = all === msgs ? null : new Map(msgs.map((x) => [x.id, x]));
+  const msgById = (id: string) => {
+    if (hiddenById) return hiddenById.get(id);
+    const idx = at.get(id);
+    return idx === undefined ? undefined : all[idx];
+  };
   // What came in after what you saw, for a send held by it: marked where it is.
   const cameSince = new Set(mine.flatMap((x) => x.hold?.ids ?? []));
   // A person's chat: how each account in it is named (the routes shown; a bot in a DM is not among them).
@@ -1423,13 +1554,15 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     : firstUnreadTs === null
       ? -1
       : all.findIndex((m) => m.ts > firstUnreadTs && !isSelfIdentity(m.authorId));
+  // Cached local-day span: avoids allocating two Date objects per message on every render.
+  let daySpan: { start: number; end: number; key: string } | null = null;
+  const inDaySpan = (ts: number) => daySpan !== null && ts >= daySpan.start && ts < daySpan.end;
+  const setDaySpan = (ts: number) => (daySpan = localDaySpan(ts));
   const groups = (prev: P.MessageView | null, m: P.MessageView) =>
-    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && sameDay(prev.ts, m.ts) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms && prev.mail?.threadId === m.mail?.threadId && !m.mail?.only;
+    !!prev && prev.authorId === m.authorId && prev.conversationId === m.conversationId && m.ts - prev.ts < 7 * 60_000 && (inDaySpan(prev.ts) && inDaySpan(m.ts) ? true : sameDay(prev.ts, m.ts)) && prev.kind !== 'system' && !m.replyToId && prev.sms === m.sms && prev.mail?.threadId === m.mail?.threadId && !m.mail?.only;
   // Mail (mail/chats.ts): the subject where the thread changes, except in the thread's own chat, which it names.
   const ownThread = tkey.startsWith('c:mth_');
   let lastThread: string | null = null;
-  // The day of the last thing drawn, for day lines: a message, or a row of what they wrote elsewhere.
-  let drawnDay: number | null = null;
   // What a person wrote in threads with others (MailChat.tsx ElsewhereRows), a row per thread at its own time among the
   // chat's own messages, under its own day.
   const elsewherePerson = tkey.startsWith('p:') ? db.persons.get(tkey.slice(2)) : undefined;
@@ -1440,8 +1573,10 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
       const from = ew;
       const day = elsewhere[ew].ts;
       while (ew < elsewhere.length && elsewhere[ew].ts <= ts && sameDay(elsewhere[ew].ts, day)) ew++;
-      if (drawnDay === null || !sameDay(drawnDay, day)) items.push(<div class="day-sep"><span>{dayLabel(day)}</span></div>);
-      drawnDay = elsewhere[ew - 1].ts;
+      if (!inDaySpan(day)) {
+        const span = setDaySpan(day);
+        items.push(<div key={`day-${span.key}`} class="day-sep"><span>{dayLabel(day)}</span></div>);
+      }
       items.push(<ElsewhereRows key={`ew-${elsewhere[from].place}`} view={`person:${elsewherePerson!.id}`} person={elsewherePerson!} rows={elsewhere.slice(from, ew)} />);
       above = null;
     }
@@ -1460,11 +1595,14 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   let above: P.MessageView | null = null;
   for (let i = start; i < end; i++) {
     const m = all[i];
-    const newDay = !prev || !sameDay(prev.ts, m.ts);
     if (elsewhere.length) elsewhereUpTo(m.ts - 1);
-    if (drawnDay === null || !sameDay(drawnDay, m.ts)) items.push(<div class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
-    drawnDay = m.ts;
-    if (i === unreadFrom) items.push(<div class="new-sep"><span>New</span></div>);
+    const sameAsSpan = inDaySpan(m.ts);
+    const newDay = !prev || !sameAsSpan || !inDaySpan(prev.ts);
+    if (!sameAsSpan) {
+      const span = setDaySpan(m.ts);
+      items.push(<div key={`day-${span.key}`} class="day-sep"><span>{dayLabel(m.ts)}</span></div>);
+    }
+    if (i === unreadFrom) items.push(<div key="new-sep" class="new-sep"><span>New</span></div>);
     // A stream: the thread's name where it changes (stream.ts headBefore), and its messages grouped under it.
     if (stream && headBefore(prev, m, newDay)) {
       items.push(<ThreadHead key={`h-${m.id}`} conv={db.conversations.get(m.conversationId)} onOpen={onHead} />);
@@ -1473,7 +1611,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     // A push's copy, before the hub has answered (arrived.ts): what came before it may not be here yet.
     if (isArrivedCopy(m) && !(prev && isArrivedCopy(prev)))
       items.push(
-        <div class="day-sep arrived-sep" role="note">
+        <div key={`arr-${m.id}`} class="day-sep arrived-sep" role="note">
           <span>From notifications · earlier messages may be missing until the hub is back</span>
         </div>,
       );
@@ -1486,7 +1624,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     const grouped = groups(above, m);
     const subject = !!m.mail && !ownThread && m.mail.threadId !== lastThread;
     if (m.mail) lastThread = m.mail.threadId;
-    const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
+    const target = m.replyToId ? (msgById(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
     const thread = m.threadId ? (db.conversations.get(m.threadId) ?? null) : null;
     // All chats together: where the route changes, grouping breaks (above) and the head line says which route.
     const tag = !!chat && convIds.length > 1 && !grouped && (!prev || prev.conversationId !== m.conversationId);
@@ -1524,7 +1662,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
 
   return (
     <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
-      <div class="timeline-inner" ref={inner} onClick={stream ? (e) => pickFrom(e, byId, stream) : undefined}>
+      <div class="timeline-inner" ref={inner} onClick={stream ? (e) => pickFrom(e, msgById, stream) : undefined}>
         {t && !t.hasMore && msgs.length > 0 && start === 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (
           <button
@@ -1549,7 +1687,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         ) : (
           // Older messages spin where they will come; an open says so in the line over the message box (OpenBar.tsx),
           // over what this device kept or an empty pane, nothing spinning in the middle.
-          t?.loading && t.older && msgs.length > 0 && <Loading inline label="Loading older messages" />
+          showOlderLoading && <Loading inline label="Loading older messages" />
         )}
         {t && !t.loading && msgs.length === 0 && <Empty icon="groups" title="No messages yet" />}
         {items}
@@ -1574,11 +1712,11 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
 }
 
 /** A click on a stream's message picks its thread for the box (StreamPane), unless it was on a link or a button. */
-function pickFrom(e: MouseEvent, byId: Map<string, P.MessageView>, stream: StreamOpts) {
+function pickFrom(e: MouseEvent, byId: (id: string) => P.MessageView | undefined, stream: StreamOpts) {
   const target = e.target as Element;
   if (target.closest('a, button, input, textarea, .stream-head')) return;
   const row = target.closest('.msg[id^="m-"]');
-  const m = row && byId.get(row.id.slice(2));
+  const m = row && byId(row.id.slice(2));
   if (m) stream.onPick(m.conversationId);
 }
 
