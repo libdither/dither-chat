@@ -78,8 +78,10 @@ channels added since the last run.
   minutes) records nothing, and is asked again 30 s later, three times; then the task fails, saying so. A crash, or an
   answer that comes early, can no longer leave a stretch marked whole that the hub does not hold. (Spans recorded the
   old way that hold no message at all were forgotten once, by a migration: a walk reads them again.)
-- An empty page with no `oldest` that does not say `done` ends the walk with nothing recorded, and so does a `done` page with nothing
-  in it below messages the hub holds (a network that could not read the chat).
+- An empty page with no `oldest` that does not say `done` ends the walk with nothing recorded.
+- A `done` page is taken for the chat's start only when the hub holds no message older than all the page brought.
+  Otherwise the network could not read that far back (a WhatsApp phone that no longer has them answers empty), so
+  only the page's own stretch is recorded whole, and the walk ends there.
 - Before each request, the walk jumps over any span the cursor is in. A span that reaches the start ends the walk.
 - So a channel already walked costs one page on the next run: its newest page meets the old span, and the walk stops.
 

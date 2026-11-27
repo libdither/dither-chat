@@ -85,6 +85,31 @@ describe('index jobs', () => {
     }
   });
 
+  test("a page that says it reached the start is not taken for it while the hub holds older messages", async () => {
+    const { store, acc } = world();
+    const net = guild(store, acc, 'g1', 'Guild', ['c1'], 150);
+    // The hub holds the whole channel already; the network can give back only its newest 50, and calls that the start.
+    for (const m of net.c1) store.ingest(acc, { t: 'message', message: m, live: false });
+    const clock = new FakeClock(T0 + 1000 * minute);
+    const jobs = new Jobs(store, {
+      online: () => true,
+      clock,
+      pace: brisk(store, clock),
+      command: async (_a, cmd) => {
+        const page = net.c1.slice(100).filter((m) => m.ts < cmd.beforeTs).slice(-cmd.limit);
+        for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+        return { count: page.length, done: true, oldest: page[0]?.ts };
+      },
+    });
+    const v = jobs.create({ target: { kind: 'conversation', id: hub(store, 'discord', 'conversation', 'c1') }, history: true, members: false });
+    jobs.start();
+    await clock.until(() => ['done', 'failed'].includes(jobs.get(v.id)!.state), 600 * minute, 'the job');
+    jobs.stop();
+    expect(jobs.get(v.id)).toMatchObject({ state: 'done', failed: 0 });
+    // Only what the page brought is whole; the start is not claimed.
+    expect(store.db.query('SELECT from_ts FROM history_span').all()).toEqual([{ from_ts: net.c1[100].ts }]);
+  });
+
   test('a page that read only reactions says where it reached, and the walk goes on below it to the start', async () => {
     const { store, acc } = world();
     const net = guild(store, acc, 'g1', 'Guild', ['c1'], 150);
