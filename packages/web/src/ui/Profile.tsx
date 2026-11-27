@@ -22,7 +22,7 @@ import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
 import { copy, groups, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
-import { nicknamable, nicknameEntries, NicknameInput, ownName, saveNickname } from './Nickname.tsx';
+import { nicknameEntries, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
@@ -533,8 +533,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const S = selfParts.value;
   useEffect(() => void loadSelf(), []);
   const [merging, setMerging] = useState(false);
-  // The hero's nickname editor, in place of the name: the account it names (Nickname.tsx), from the name's menu or More.
-  const [naming, setNaming] = useState<string | null>(null);
+  // The hero's name field (HeroName.tsx), open from its pencil or More's Set Nickname…
+  const [naming, setNaming] = useState<'person' | null>(null);
   // How this page changed where an account stands with them (`account|identity` → the newest word), until the profile
   // is fetched again: ended (stranger), or made (Add friend, Accept). connections.ts withChanges.
   const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
@@ -738,8 +738,13 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const moreMenu = (): MenuSpec | null => {
     const base = person ? personMenu(person) : identityMenu(first?.id);
     const extra: MenuEntry[] = groups(
-      // One account's nickname is theirs (with several, each tile has its own).
-      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(first!.id)) : [],
+      // Your nickname for the person, no account's (each account's own is on its row in Accounts).
+      !isSelf && person
+        ? [
+            { label: person.nickname ? 'Change Nickname…' : 'Set Nickname…', icon: 'pencil', run: () => setNaming('person') },
+            !!person.nickname && { label: 'Remove Nickname', icon: 'x', run: () => void sources({ nickname: null }) },
+          ].filter(Boolean) as MenuEntry[]
+        : [],
       [{ label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
       // Ignore on their networks (ProfileSelf.tsx).
       isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
@@ -764,7 +769,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   // Their name chosen from another account than the main one (the hero's pencil), for the Accounts card's note.
   const nameAcct = (person?.nameFrom && person.nameFrom.identityId !== speaker?.id && ids.find((i) => i.id === person.nameFrom!.identityId)) || null;
   /** Saved, or false where it could not be (said in a toast). */
-  const sources = async (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null }) =>
+  const sources = async (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null; nickname?: string | null }) =>
     !!person &&
     api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).then(
       () => true,
@@ -827,12 +832,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const mainAcct = speaker ?? first;
   const entries = isSelf ? [] : nameEntries(tiles, mainAcct?.id);
   const nameRowsOf = !isSelf && person ? nameRows(entries, person, identityName(mainAcct?.id), several) : [];
-  // A name typed in the hero is your nickname for their mainAcct account, and the name shown (a choice made goes back to it).
-  const mayNickname = !isSelf && nicknamable(mainAcct) && !mainAcct.isBot;
-  const nicknameMain = async (text: string) => {
-    if (!mainAcct || !(await saveNickname(mainAcct.id, text))) return;
-    if (person?.nameFrom) void sources({ nameFrom: null });
-  };
+  // A name typed in the hero is your nickname for the person, no account's, and the name shown over all of theirs.
+  const mayNickname = !isSelf && !!person;
   const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
   // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
   const viewPictures = () => {
@@ -865,9 +866,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
             rows={nameRowsOf}
             nickname={mayNickname}
             editing={naming !== null}
-            setEditing={(on) => setNaming(on ? (mainAcct?.id ?? '') : null)}
+            setEditing={(on) => setNaming(on ? 'person' : null)}
             onPick={(r) => void sources({ nameFrom: r.from })}
-            onNickname={(t) => void nicknameMain(t)}
+            onNickname={(t) => void sources({ nickname: t })}
           />
         )
       }

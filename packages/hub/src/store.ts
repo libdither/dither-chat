@@ -392,7 +392,7 @@ export class Store {
       this.addColumns('checkin', { expired_at: 'INTEGER' });
       this.addColumns('attn_answer', { parts: 'TEXT', chance: 'REAL' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
-      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT' });
+      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT', nickname: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
@@ -1423,13 +1423,14 @@ export class Store {
 
   /**
    * A person's name and picture, made again from their face (docs/chats.md, Names): the one account they are shown
-   * by, its name as you see it (the name you chose, while that account has it) and its picture (the picture account's
+   * by, its name as you see it (your nickname for the person, else the name you chose while that account has it) and
+   * its picture (the picture account's
    * when you chose one), else the picture of another of theirs you talked with last. The face
    * stays until you pin another, it leaves them, or (`rechoose`) you ask the hub to choose again; a new one is chosen by
    * chooseFace. Your own person is named by your accounts' networks, not here.
    */
   private refreshFace(pid: string, rechoose = false) {
-    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, name_identity_id, name_field, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
+    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, name_identity_id, name_field, nickname, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.is_self) return;
     const ids = this.db.query('SELECT id, nickname, display_name, handle, native_id, avatar_url, updated_at FROM identity WHERE person_id = ?').all(pid) as Row[];
     if (!ids.length) return;
@@ -1445,7 +1446,7 @@ export class Store {
     }
     const several = ids.length > 1;
     const chosen = ids.find((i) => i.id === p.name_identity_id);
-    const next = { name: (chosen && nameIn(chosen, p.name_field)) || shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
+    const next = { name: (p.nickname as string | null) || (chosen && nameIn(chosen, p.name_field)) || shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
     if ((Object.keys(next) as (keyof typeof next)[]).every((k) => p[k] === next[k])) return;
     this.db
       .query('UPDATE person SET name = ?, avatar_url = ?, face_id = ?, face_pinned = ?, manual = ?, name_source = ? WHERE id = ?')
@@ -1485,15 +1486,31 @@ export class Store {
   /**
    * Shows a person by one name of one of their accounts (docs/profile.md, "Which account speaks for them"): your
    * nickname for it, its display name or its handle, whatever their face; or (null) their face's name again. It
-   * follows that account as it changes, and while it lacks that name the face's shows. False for an account that is
-   * not theirs or a name it does not have.
+   * follows that account as it changes, and while it lacks that name the face's shows. It takes the place of your
+   * nickname for the person, if they had one. False for an account that is not theirs or a name it does not have.
    */
   setPersonName(pid: string, from: P.NameFrom | null): boolean {
     if (from) {
       const i = this.db.query('SELECT * FROM identity WHERE id = ? AND person_id = ?').get(from.identityId, pid) as Row | null;
       if (!i || !nameIn(i, from.field)) return false;
     }
-    this.db.query('UPDATE person SET name_identity_id = ?, name_field = ? WHERE id = ?').run(from?.identityId ?? null, from?.field ?? null, pid);
+    this.db.query('UPDATE person SET name_identity_id = ?, name_field = ?, nickname = NULL WHERE id = ?').run(from?.identityId ?? null, from?.field ?? null, pid);
+    this.refreshFace(pid);
+    this.dirty.persons.add(pid);
+    this.personsChanged?.([pid]);
+    return true;
+  }
+
+  /**
+   * Your nickname for a person (docs/chats.md, Names), or none (null or empty): no account's, only you see it, it is
+   * never sent to a network, and it shows over every name of their accounts, taking the place of a name you chose
+   * from one. False for no such person, or your own.
+   */
+  setPersonNickname(pid: string, nickname: string | null): boolean {
+    if (!this.db.query('SELECT 1 FROM person WHERE id = ? AND is_self = 0').get(pid)) return false;
+    const text = nickname?.trim().slice(0, 200) || null;
+    if (text) this.db.query('UPDATE person SET nickname = ?, name_identity_id = NULL, name_field = NULL WHERE id = ?').run(text, pid);
+    else this.db.query('UPDATE person SET nickname = NULL WHERE id = ?').run(pid);
     this.refreshFace(pid);
     this.dirty.persons.add(pid);
     this.personsChanged?.([pid]);
@@ -2062,8 +2079,9 @@ export class Store {
     if (intoId === fromId) return;
     const tx = this.db.transaction(() => {
       this.db.query('UPDATE identity SET person_id = ? WHERE person_id = ?').run(intoId, fromId);
-      // The one kept keeps its name, an account's as you see it. Nicknames are the accounts' and go along with them.
-      this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(intoId);
+      // The one kept keeps its name, an account's as you see it. Account nicknames go along with their accounts; your
+      // nickname for the person is the kept one's, else the other's.
+      this.db.query(`UPDATE person SET manual = 1, name_source = 'merge', nickname = COALESCE(nickname, (SELECT nickname FROM person WHERE id = ?)) WHERE id = ?`).run(fromId, intoId);
       // The route chosen for them goes along, unless the one kept had its own.
       this.db.query(`UPDATE OR IGNORE chat_route SET chat_id = ? WHERE chat_id = ?`).run(`person:${intoId}`, `person:${fromId}`);
       this.db.query(`DELETE FROM chat_route WHERE chat_id = ?`).run(`person:${fromId}`);
@@ -2927,7 +2945,7 @@ export class Store {
   personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
     const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
-    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}), ...(r.name_identity_id && r.name_field ? { nameFrom: { identityId: r.name_identity_id, field: r.name_field } } : {}) };
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}), ...(r.name_identity_id && r.name_field ? { nameFrom: { identityId: r.name_identity_id, field: r.name_field } } : {}), ...(r.nickname ? { nickname: r.nickname } : {}) };
   }
 
   /**

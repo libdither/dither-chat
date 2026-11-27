@@ -4,7 +4,7 @@
  * mark after it; their other names on a line under it, each once with "×2" where two accounts have it, a click copying it;
  * the pencil turns the name into a field with their names under it, the main account's first and once, each with its
  * accounts' marks; a pick names them, ticked when it opens again, and the first row puts it back; a name typed is
- * your nickname for their main account and the name shown. Their picture opens their accounts' pictures full screen,
+ * your nickname for the person, no account's, the name shown and first in the list, until a name of theirs is picked. Their picture opens their accounts' pictures full screen,
  * on the one shown, with a row of them to page through and a button that shows the one in view. One account's names
  * on a page of their own. On a phone: the list inside the screen, the pictures swiped through.
  *
@@ -91,7 +91,6 @@ const key = async (k: string, code: number) => {
 };
 const editing = () => p.until(`document.activeElement?.matches('.pf-name-field') && !!document.querySelector('.pf-name-row')`, 3000);
 const shown = (name: string) => p.until(`document.querySelector('.pf-name-copy')?.innerText.trim() === ${JSON.stringify(name)}`, 5000).catch(() => {});
-const api = (path: string, body: unknown) => fetch(`${hub}${path}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const person = async (id: string) => (await fetch(`${hub}/api/bootstrap`).then((r) => r.json())).persons.find((x: any) => x.id === id);
 /** What the page last put on the clipboard (headless Chromium has none to read back). */
 const stubClipboard = () => p.eval(`(navigator.clipboard.writeText = (t) => ((window.__copied = t), Promise.resolve()), true)`);
@@ -162,7 +161,7 @@ try {
   await shown(first);
   check((await heroName()) === first && !(await person(kit.id))?.nameFrom, 'the first row puts the main account’s back', await heroName());
 
-  // Typed: a name none of theirs is your nickname for their main account, and the name shown.
+  // Typed: a name none of theirs is your nickname for the person, no account's, and the name shown.
   await click(PEN);
   await editing();
   await p.send('Input.insertText', { text: 'Kit the Tester' });
@@ -173,7 +172,9 @@ try {
   await shown('Kit the Tester');
   check((await heroName()) === 'Kit the Tester', 'Enter calls them that', await heroName());
   const nicked = await fetch(`${hub}/api/bootstrap`).then((r) => r.json());
-  check(nicked.identities.find((i: any) => i.id === mainId)?.nickname === 'Kit the Tester' && !nicked.persons.find((x: any) => x.id === kit.id)?.nameFrom, 'as your nickname for their main account', nicked.persons.find((x: any) => x.id === kit.id)?.name);
+  const nickedKit = nicked.persons.find((x: any) => x.id === kit.id);
+  check(nickedKit?.nickname === 'Kit the Tester' && !nickedKit.nameFrom, 'as your nickname for the person', nickedKit);
+  check(!nicked.identities.some((i: any) => kit.identityIds.includes(i.id) && i.nickname === 'Kit the Tester'), 'and no account’s', mainId);
   also = await alsoLine();
   check(also.filter((a) => a.text === first).length === 1, 'their own name once on the line', also);
   // Typing filters; Escape leaves the name as it was.
@@ -187,8 +188,15 @@ try {
   await key('Escape', 27);
   await p.until(`!document.querySelector('.pf-name-field')`, 3000).catch(() => {});
   check((await heroName()) === 'Kit the Tester', 'Escape leaves it as it was', await heroName());
-  await api(`/api/identities/${mainId}`, { nickname: null });
+  // Opened again: your nickname first and ticked; the main account's row puts theirs back and drops it.
+  await click(PEN);
+  await editing();
+  const withNick = await rows();
+  check(withNick[0]?.text === 'Kit the Tester' && withNick[0].on && withNick[0].from.startsWith('Your nickname') && withNick.filter((r) => r.on).length === 1, 'your nickname first, ticked', withNick.slice(0, 2));
+  await shoot('name-nickname.png');
+  await pickRow(first);
   await shown(first);
+  check(!(await person(kit.id))?.nickname, 'the main account’s row puts their name back', await heroName());
 
   // The picture: their pictures in the viewer, to choose from.
   check(await p.eval(`!!document.querySelector('.pf-avatar-view .pf-avatar-badge')`), 'a badge on their picture says there are more to choose from');

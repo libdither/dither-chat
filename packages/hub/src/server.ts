@@ -237,7 +237,7 @@ interface ServerOpts {
 /** A category's threshold from a request: a probability, or null for the provider's default. */
 const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0 && t <= 1 ? t : null);
 /** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
-const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
+const NICKNAME_MOVED = 'A nickname is { nickname }: PATCH /api/persons/:id for the person, /api/identities/:id for one account of theirs';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
 function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
@@ -2432,8 +2432,10 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown; nameFrom?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown; nameFrom?: unknown; nickname?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // `nickname`: your name for them, no account's (docs/chats.md, Names); null or '' takes it away.
+      if (b.nickname !== undefined && b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
       // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
       // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
       const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
@@ -2442,7 +2444,7 @@ export class HubServer {
       const nf = b.nameFrom as P.NameFrom | null | undefined;
       if (nf !== undefined && nf !== null && !(typeof nf === 'object' && typeof nf.identityId === 'string' && ['nickname', 'display', 'handle'].includes(nf.field as string)))
         return bad('nameFrom is { identityId, field: nickname | display | handle } or null');
-      if (b.face !== undefined || b.picture !== undefined || nf !== undefined) {
+      if (b.face !== undefined || b.picture !== undefined || nf !== undefined || b.nickname !== undefined) {
         if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
         // All checked before any is saved, so a refused request changes nothing.
         for (const id of [b.face, b.picture, nf?.identityId]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
@@ -2453,6 +2455,7 @@ export class HubServer {
         if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
         if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
         if (nf !== undefined) s.setPersonName(m[1], nf);
+        if (b.nickname !== undefined) s.setPersonNickname(m[1], b.nickname as string | null);
       }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').

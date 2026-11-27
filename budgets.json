@@ -36,7 +36,7 @@
     "sync.missed.events": { "measured": 3, "budget": 3, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" }
   },
   "web": {
-    "startup.bytes": { "measured": 981445, "budget": 1001074, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
+    "startup.bytes": { "measured": 982206, "budget": 1001074, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
     "startup.gzip": { "measured": 294138, "budget": 300021, "reason": "Choosing a person's name from their profile (docs/profile.md \"Choosing from the hero\", #366): the hero name's copy button, also line, pencil field and its list of names are styled in styles.css, which the first screen loads" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 8020, "budget": 8181, "reason": "index.html's socket asks from the snapshot's journal position (read from localStorage), so the hub's catch-up comes as the socket's first frame (docs/sync.md, On the socket)" },
@@ -145,8 +145,8 @@
     "js/shared/scorecard.gzip": { "measured": 2981, "budget": 3041, "reason": "The loudness scale (docs/notifications.md): six scorecard charts for its check-ins and its comparison with the tiers; and its own chunk (ui/Loudness.tsx) for the Why sheet, the follow-up, the check-in card and its settings" },
     "js/shared/selfparts.bytes": { "measured": 602, "budget": 615 },
     "js/shared/selfparts.gzip": { "measured": 416, "budget": 425 },
-    "js/shared/startup.bytes": { "measured": 695859, "budget": 709777, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
-    "js/shared/startup.gzip": { "measured": 239607, "budget": 244400, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
+    "js/shared/startup.bytes": { "measured": 696434, "budget": 709777, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
+    "js/shared/startup.gzip": { "measured": 239816, "budget": 244400, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
     "js/shared/text.bytes": { "measured": 3146, "budget": 3209, "reason": "A link out of a mail (ui/mail/linkOut.tsx: open as chat's links do, ask first when its words name another site) shared by the framed mail and a mail's formatted words in a chat" },
     "js/shared/text.gzip": { "measured": 1472, "budget": 1502, "reason": "A link out of a mail (ui/mail/linkOut.tsx: open as chat's links do, ask first when its words name another site) shared by the framed mail and a mail's formatted words in a chat" },
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
