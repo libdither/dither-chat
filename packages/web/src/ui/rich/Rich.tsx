@@ -8,7 +8,8 @@
  */
 // Classic JSX (the pragmas above), and the app's own helpers handed in as `kit` (parts.tsx) rather than imported:
 // either would split shared chunks off the app's start.
-import { Fragment, h } from 'preact';
+import { useComputed } from '@preact/signals';
+import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kit } from './parts.tsx';
@@ -166,14 +167,17 @@ export function RichFoot({ m, rich, kit }: { m: P.MessageView; rich: P.RichView;
 
 const time = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-/** A voice message: play and pause, its waveform filling as it plays (a click on it seeks), and its length. */
 /**
  * Where the app's player is in this message's file, when it holds that file (nowplaying.ts playback). Read only by
- * the parts that move as it plays: the buttons go by `playingKey`, so they are not drawn again with each step.
+ * the parts that move as it plays: the buttons go by `playingKey`, so they are not drawn again with each step. Through
+ * a computed of its own, so the rows of other files, which stay null, are not drawn again either.
  */
 function usePlace(m: P.MessageView, index: number, kit: Kit) {
-  const p = kit.playback.value;
-  return p && p.key === kit.fileKey(m.id, index) ? p : null;
+  const key = kit.fileKey(m.id, index);
+  return useComputed(() => {
+    const p = kit.playback.value;
+    return p && p.key === key ? p : null;
+  }).value;
 }
 
 /** A tap on a position bar: play from there. */
@@ -182,9 +186,39 @@ function seekTo(e: MouseEvent, go: (fraction: number) => void) {
   if (box.width) go(Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)));
 }
 
-function PlayButton({ playing, label, onClick, kit }: { playing: boolean; label: string; onClick: () => void; kit: Kit }) {
+/** A position bar's keys: the arrows step 5 seconds, Home and End go to either end. */
+function seekKey(e: KeyboardEvent, at: number, length: number, go: (fraction: number) => void) {
+  if (!length) return;
+  const to = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? at - 5 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? at + 5 : e.key === 'Home' ? 0 : e.key === 'End' ? length : null;
+  if (to === null) return;
+  e.preventDefault();
+  go(Math.max(0, Math.min(1, to / length)));
+}
+
+/** A position bar, for the mouse, a tap and the keys. */
+function Position({ at, length, go, class: cls, children }: { at: number; length: number; go: (fraction: number) => void; class: string; children: ComponentChildren }) {
   return (
-    <button class="icon-btn voice-play" onClick={onClick} aria-label={playing ? 'Pause' : label}>
+    <div
+      class={cls}
+      onClick={(e) => seekTo(e, go)}
+      onKeyDown={(e) => seekKey(e, at, length, go)}
+      tabIndex={length ? 0 : -1}
+      role="slider"
+      aria-label="Position"
+      aria-valuemin={0}
+      aria-valuemax={length ? Math.round(length) : undefined}
+      aria-valuenow={Math.round(at)}
+      aria-valuetext={length ? `${time(at)} of ${time(length)}` : time(at)}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Play or pause, saying what: "Play voice message", "Pause voice message". */
+function PlayButton({ playing, what, onClick, kit }: { playing: boolean; what: string; onClick: () => void; kit: Kit }) {
+  return (
+    <button class="icon-btn voice-play" onClick={onClick} aria-label={`${playing ? 'Pause' : 'Play'} ${what}`}>
       {kit.icon(playing ? 'pause' : 'play', 16)}
     </button>
   );
@@ -198,7 +232,7 @@ export function VoicePlayer({ m, a, index, kit }: { m: P.MessageView; a: P.Attac
   const playing = kit.playingKey.value === kit.fileKey(m.id, index);
   return (
     <div class="voice-msg" data-att={index}>
-      <PlayButton playing={playing} label="Play voice message" onClick={() => kit.playFile(m, index)} kit={kit} />
+      <PlayButton playing={playing} what="voice message" onClick={() => kit.playFile(m, index)} kit={kit} />
       <VoicePlace m={m} a={a} index={index} kit={kit} />
     </div>
   );
@@ -217,9 +251,9 @@ function VoicePlace({ m, a, index, kit }: { m: P.MessageView; a: P.AttachmentVie
   const done = length ? at / length : 0;
   return (
     <>
-      <div class="voice-wave" onClick={(e) => seekTo(e, (f) => kit.playFile(m, index, f))} role="slider" aria-label="Position" aria-valuemin={0} aria-valuemax={Math.round(length)} aria-valuenow={Math.round(at)}>
+      <Position class="voice-wave" at={at} length={length} go={(f) => kit.playFile(m, index, f)}>
         {bars.length ? bars.map((b, i) => <span class={i / bars.length < done ? 'on' : ''} style={{ height: `${Math.max(12, Math.round(b * 100))}%` }} />) : <span class="voice-line" style={{ width: `${Math.round(done * 100)}%` }} />}
-      </div>
+      </Position>
       <small class="voice-time">{time(place?.playing || at ? at : length)}</small>
     </>
   );
@@ -234,7 +268,7 @@ export function SoundPlayer({ m, a, index, kit, onPlay }: { m: P.MessageView; a:
   };
   return (
     <div class="voice-msg sound-file" data-att={index}>
-      <PlayButton playing={playing} label={`Play ${a.name ?? 'the sound'}`} onClick={() => play()} kit={kit} />
+      <PlayButton playing={playing} what={a.name ?? 'the sound'} onClick={() => play()} kit={kit} />
       <SoundPlace m={m} a={a} index={index} kit={kit} play={play} />
       <a class="icon-btn" href={a.url} download={a.name ?? true} aria-label="Download" title="Download">
         {kit.icon('download', 16)}
@@ -257,9 +291,9 @@ function SoundPlace({ m, a, index, kit, play }: { m: P.MessageView; a: P.Attachm
       <div class="sound-body">
         <b class="sound-name">{a.name ?? 'Sound'}</b>
         {place ? (
-          <div class="voice-wave sound-line" onClick={(e) => seekTo(e, play)} role="slider" aria-label="Position" aria-valuemin={0} aria-valuemax={Math.round(length)} aria-valuenow={Math.round(at)}>
+          <Position class="voice-wave sound-line" at={at} length={length} go={play}>
             <span class="voice-line" style={{ width: `${Math.round(done * 100)}%` }} />
-          </div>
+          </Position>
         ) : (
           <small class="sound-facts">{kit.facts(a)}</small>
         )}

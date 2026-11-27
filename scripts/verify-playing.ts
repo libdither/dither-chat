@@ -106,8 +106,9 @@ async function send(name: string, bytes: Uint8Array<ArrayBuffer>, voice?: { seco
 }
 // A waveform as Discord gives one: base64 of a byte for each tenth of a second.
 const waveform = Buffer.from(Array.from({ length: 80 }, (_, i) => Math.round(120 + 100 * Math.sin(i / 2.5) * Math.sin(i / 11)))).toString('base64');
-const voiceId = await send('voice.wav', tone(8, 330), { seconds: 8, waveform });
-const soundId = await send('tune.wav', tone(12, 440));
+// Long enough that neither ends on its own while the steps that need it playing run, however slow the machine.
+const voiceId = await send('voice.wav', tone(40, 330), { seconds: 40, waveform });
+const soundId = await send('tune.wav', tone(60, 440));
 
 const b = await launch();
 const p: Page = b.page;
@@ -115,12 +116,13 @@ type Pt = [number, number];
 const VOICE = `document.querySelector('#m-${voiceId} .voice-msg')`;
 const SOUND = `document.querySelector('#m-${soundId} .sound-file')`;
 const BAR = `document.querySelector('.playing-bar')`;
-/** The app's player: whether it plays, where, and the length of what it holds (the voice message is 8 s, the file 12 s). */
+/** The app's player: whether it plays, where, and the length of what it holds (the voice message is 40 s, the file 60 s). */
 const player = () =>
   p.eval<{ paused: boolean; t: number; length: number } | null>(`(() => { const a = document.getElementById('app-player'); return a ? { paused: a.paused, t: a.currentTime, length: Math.round(a.duration) } : null })()`);
 const label = (row: string) => p.eval<string | null>(`${row}?.querySelector('.voice-play')?.getAttribute('aria-label') ?? null`);
 async function mid(sel: string): Promise<Pt> {
-  const r = await p.eval(`(() => { const el = ${sel}; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  const r = await p.eval(`(() => { const el = ${sel}; if (!el) return null; el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  if (!r) throw new Error(`nothing to press: ${sel}`);
   return [r[0], r[1]];
 }
 const mouse = (type: string, [x, y]: Pt) => p.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
@@ -150,13 +152,13 @@ try {
 
   await click(`${VOICE}.querySelector('.voice-play')`);
   await p.until(playing(0.3), 5000).catch(() => {});
-  check((await player())?.length === 8, "the voice message's Play plays it in the app's player", await player());
-  check((await label(VOICE)) === 'Pause', 'and its row says Pause');
+  check((await player())?.length === 40, "the voice message's Play plays it in the app's player", await player());
+  check((await label(VOICE)) === 'Pause voice message', 'and its row says Pause');
 
   await click(`${SOUND}.querySelector('.voice-play')`);
-  await p.until(`${playing(0.3)} && Math.round(document.getElementById('app-player').duration) === 12`, 5000).catch(() => {});
-  check((await player())?.length === 12, "the sound file's Play plays it instead", await player());
-  check((await label(VOICE)) === 'Play voice message' && (await label(SOUND)) === 'Pause', 'one plays at a time: the voice row goes back to Play');
+  await p.until(`${playing(0.3)} && Math.round(document.getElementById('app-player').duration) === 60`, 5000).catch(() => {});
+  check((await player())?.length === 60, "the sound file's Play plays it instead", await player());
+  check((await label(VOICE)) === 'Play voice message' && (await label(SOUND)) === 'Pause tune.wav', 'one plays at a time: the voice row goes back to Play');
   await p.until(playing(1), 5000).catch(() => {});
   await shot('rows-playing');
 
@@ -184,6 +186,19 @@ try {
   await p.until(playing(t1 + 0.3), 3000).catch(() => {});
   check(!(await player())?.paused, "the bar's Play plays it again");
 
+  // Something else with sound plays meanwhile (a video, here a player of its own in the page): it pauses the app's
+  // player, and the bar stays, to go on with it once that is done.
+  const started = await p.eval<boolean>(
+    `(() => { const a = document.createElement('audio'); a.id = 'other-sound'; a.src = 'data:audio/wav;base64,${Buffer.from(tone(30, 550)).toString('base64')}'; document.body.append(a); return a.play().then(() => true, () => false) })()`,
+  );
+  await p.until(`document.getElementById('app-player').paused && !!${BAR}?.querySelector('button[aria-label="Play"]')`, 3000).catch(() => {});
+  check(started && (await player())?.paused && (await p.eval(`!!${BAR}`)), 'another sound pauses it, and the bar stays with Play', { started, player: await player() });
+  await p.eval(`document.getElementById('other-sound').remove()`);
+  await click(`${BAR}.querySelector('button[aria-label="Play"]')`);
+  const t2 = (await player())?.t ?? 0;
+  await p.until(playing(t2 + 0.3), 3000).catch(() => {});
+  check(!(await player())?.paused && (await p.eval(`!!${BAR}?.querySelector('button[aria-label="Pause"]')`)), "once it's gone, the bar's Play goes on with the file", await player());
+
   // Its title goes back to the message: there, no bar, and the row shows where it got to.
   await click(`${BAR}.querySelector('.playing-bar-open')`);
   await p.until(`location.hash.includes(${JSON.stringify(group.id)}) && !!${SOUND}`, 5000).catch(() => {});
@@ -191,7 +206,7 @@ try {
   const back = await p.eval<{ bar: boolean; label: string | null; done: number }>(
     `(() => ({ bar: !!${BAR}, label: ${SOUND}?.querySelector('.voice-play')?.getAttribute('aria-label') ?? null, done: parseFloat(${SOUND}?.querySelector('.voice-line')?.style.width ?? '0') }))()`,
   );
-  check(!back.bar && back.label === 'Pause' && back.done > 10, 'its title goes back to the chat: no bar there, and the row shows it playing, part way', back);
+  check(!back.bar && back.label === 'Pause tune.wav' && back.done > 0, 'its title goes back to the chat: no bar there, and the row shows it playing, part way', back);
 
   // Close.
   await p.goto(`${hub}/#/inbox/c/${other.id}`);

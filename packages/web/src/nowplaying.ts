@@ -31,15 +31,13 @@ interface NowPlaying {
   art: string | null;
   conversationId: string | null;
   messageId: string | null;
-  /** The file, `fileKey`, when the app's player plays it (the playing bar shows only that); null for a video in its row. */
-  key: string | null;
   /** In milliseconds; 0 while not known (a stream, or before its length loaded). */
   duration: number;
   position: number;
   rate: number;
 }
 
-export const nowPlaying = signal<NowPlaying | null>(null);
+const nowPlaying = signal<NowPlaying | null>(null);
 
 /** Where the app's player is in the file it holds, for the row of that file and the playing bar. */
 interface Playback {
@@ -105,7 +103,16 @@ export function describe(m: P.MessageView | null, att: number | null, video: boo
 let current: HTMLMediaElement | null = null;
 /** The app's player, made the first time a file plays, and the file it holds with what the system is told of it. */
 let player: HTMLAudioElement | null = null;
-let track: { key: string; what: ReturnType<typeof describe>; art: string | null } | null = null;
+/**
+ * The file the app's player holds, until Close or its end, whatever else has played since: what the playing bar is
+ * drawn from (a video started meanwhile pauses it, and the bar stays to go on with it).
+ */
+interface Held {
+  key: string;
+  what: ReturnType<typeof describe>;
+  art: string | null;
+}
+export const held = signal<Held | null>(null);
 /** In the Android app (android.ts, which imports this, so not from there). */
 const ANDROID = typeof globalThis !== 'undefined' && 'DitherAndroid' in globalThis;
 let listeners: ((n: NowPlaying | null) => void)[] = [];
@@ -122,10 +129,13 @@ function ms(s: number): number {
 const chatName = (id: string) => db.conversations.get(id)?.name ?? null;
 
 function publish(el: HTMLMediaElement | null) {
+  // Whatever else played is done, and the app's player still holds a file: the system shows that again, paused.
+  if (!el && player && current !== player && held.peek()) el = current = player;
   if (!el) {
     current = null;
     nowPlaying.value = null;
   } else {
+    const track = held.peek();
     let what = track?.what;
     let art = track?.art ?? null;
     if (el !== player || !what) {
@@ -138,7 +148,6 @@ function publish(el: HTMLMediaElement | null) {
       ...what,
       state: el.paused ? 'paused' : 'playing',
       art,
-      key: el === player ? (track?.key ?? null) : null,
       duration: ms(el.duration),
       position: ms(el.currentTime),
       rate: el.playbackRate || 1,
@@ -170,17 +179,20 @@ function thePlayer(): HTMLAudioElement {
   el.id = 'app-player';
   el.preload = 'auto';
   const tell = () => {
+    const track = held.peek();
     if (!track) return;
-    playback.value = { key: track.key, playing: !el.paused && !el.ended && !el.error, at: el.ended ? 0 : el.currentTime, length: Number.isFinite(el.duration) && el.duration > 0 ? el.duration : (playback.value?.length ?? 0) };
+    // Played to the end: it lets go of the file, and the bar goes with it.
+    if (el.ended) return forget();
+    playback.value = { key: track.key, playing: !el.paused && !el.error, at: el.currentTime, length: Number.isFinite(el.duration) && el.duration > 0 ? el.duration : (playback.value?.length ?? 0) };
   };
   for (const type of ['play', 'pause', 'ended', 'error', 'timeupdate', 'durationchange', 'seeked']) el.addEventListener(type, tell);
   document.body.append(el);
   return el;
 }
 
-/** The player lets go of its file: Close, from the system's controls or the playing bar. */
+/** The player lets go of its file: Close, from the system's controls or the playing bar, or its end. */
 function forget() {
-  track = null;
+  held.value = null;
   playback.value = null;
 }
 
@@ -193,9 +205,12 @@ export function playFile(m: P.MessageView, att: number, from?: number) {
   if (!a || typeof document === 'undefined') return;
   const el = thePlayer();
   const key = fileKey(m.id, att);
-  if (track?.key !== key) {
-    track = { key, what: describe(m, att, false, chatName, authorName), art: faceOf(m.authorId).url };
+  if (held.peek()?.key !== key) {
+    held.value = { key, what: describe(m, att, false, chatName, authorName), art: faceOf(m.authorId).url };
     playback.value = { key, playing: false, at: 0, length: a.voice?.seconds || a.info?.duration || 0 };
+    el.src = a.url;
+  } else if (el.error) {
+    // It failed to load before: try it again.
     el.src = a.url;
   } else if (from === undefined && !el.paused) {
     el.pause();
@@ -206,6 +221,22 @@ export function playFile(m: P.MessageView, att: number, from?: number) {
     if (length) el.currentTime = Math.max(0, Math.min(1, from)) * length;
   }
   void el.play().catch(() => {});
+}
+
+/**
+ * The playing bar's buttons: they act on the app's player, not on whatever played last (a video started since, which
+ * paused it). Play makes it what plays again.
+ */
+export function playerControl(action: 'play' | 'pause' | 'stop') {
+  const el = player;
+  if (!el || !held.peek()) return;
+  if (action === 'play') void el.play().catch(() => {});
+  else if (action === 'pause') el.pause();
+  else {
+    el.pause();
+    forget();
+    if (current === el) publish(null);
+  }
 }
 
 /** A call starting (call.ts startCall) wants the sound to itself. */

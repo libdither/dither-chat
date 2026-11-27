@@ -166,12 +166,20 @@ row draws where it is from the player's `playback` signal, so coming back to the
 Away from that chat the **playing bar** (`ui/PlayingBar.tsx`) shows it, in the row of the layout the call bar uses
 ([calls.md](calls.md#the-call-bar)): under the list on a computer, the top of the screen on a phone, covering nothing.
 It has play or pause, the title with the sender and the chat (a tap goes to the message), a line along its foot for how
-far it has got, and Close. It stays while paused, and goes at Close or the end. A call's bar comes first: the call
-pauses what plays, and the playing bar does not show while you are in one.
+far it has got, and Close. It is drawn from the file the player holds (`held`), not from whatever played last, and its
+buttons act on the player (`playerControl`): so it stays while paused, and while a video or other sound plays in the
+meantime (which paused it), to go on with it after. It goes at Close or the end, where the player lets go of the file
+and its row shows the file's type and size again. A call's bar comes first: the call pauses what plays, and the playing
+bar does not show while you are in one.
 
 The buttons, the row's and the bar's, are drawn from `playingKey` (which file plays), not from the position, which
 changes a few times a second: an icon's paths are new elements each time it is drawn (`Icon` sets them as HTML), and a
-tap landing on one taken away makes no click.
+tap landing on one taken away makes no click. The parts that move read the position through a computed of their own row
+(`usePlace`), so only the row of the file that plays is drawn again as it moves. The position bar takes the arrow keys
+(5 seconds a step), Home and End.
+
+When a video or other sound that played meanwhile is done, the system's controls (the media notification, the media
+keys) show the player's file again, paused.
 
 A video still plays in its row, in the app's video player, and stops when its chat closes. In the Android app it stops
 when the app is hidden too ([android.md](android.md#playing-in-the-background)).
