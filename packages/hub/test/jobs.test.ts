@@ -85,6 +85,36 @@ describe('index jobs', () => {
     }
   });
 
+  test('a page that read only reactions says where it reached, and the walk goes on below it to the start', async () => {
+    const { store, acc } = world();
+    const net = guild(store, acc, 'g1', 'Guild', ['c1'], 150);
+    // Messages 50 to 99 are gone; what is left of that stretch is reactions, which a page reads but does not count.
+    const kept = net.c1.filter((_, i) => i < 50 || i >= 100);
+    const clock = new FakeClock(T0 + 1000 * minute);
+    const asked: { beforeTs: number; cursor?: string }[] = [];
+    const jobs = new Jobs(store, {
+      online: () => true,
+      clock,
+      pace: brisk(store, clock),
+      command: async (_a, cmd) => {
+        asked.push({ beforeTs: cmd.beforeTs, cursor: cmd.cursor });
+        if (cmd.cursor === 'c1-100') return { count: 0, done: false, oldest: net.c1[50].ts, next: 'reactions-50' };
+        const below = kept.filter((m) => m.ts < cmd.beforeTs);
+        const page = below.slice(-cmd.limit);
+        for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+        return { count: page.length, done: page.length === below.length, oldest: page[0]?.ts, next: page[0]?.nativeId };
+      },
+    });
+    const v = jobs.create({ target: { kind: 'conversation', id: hub(store, 'discord', 'conversation', 'c1') }, history: true, members: false });
+    jobs.start();
+    await clock.until(() => ['done', 'failed'].includes(jobs.get(v.id)!.state), 600 * minute, 'the job');
+    jobs.stop();
+    expect(jobs.get(v.id)).toMatchObject({ state: 'done', failed: 0, fetched: 100 });
+    expect(asked.map((a) => a.cursor)).toEqual([undefined, 'c1-100', 'reactions-50']);
+    expect(asked[2].beforeTs).toBe(net.c1[50].ts);
+    expect(store.db.query('SELECT from_ts FROM history_span').all()).toEqual([{ from_ts: 0 }]);
+  });
+
   test('page every channel of a server back to its start, then a repeat run fetches only what is new', async () => {
     const { store, acc } = world();
     const net = guild(store, acc, 'g1', 'Guild', ['c1', 'c2'], 250);
