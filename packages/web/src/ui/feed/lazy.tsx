@@ -18,6 +18,9 @@ import { languageName, needsTranslation } from '@dither-chat/protocol';
 import { Loading } from '../Loader.tsx';
 import { phone } from '../../phone.ts';
 import { uploadFile } from '../../upload.ts';
+import { PlaceHead } from '../PlaceHead.tsx';
+import { detailsShown, showDetails } from '../Pager.ts';
+import { copy } from '../ContextMenu.tsx';
 import { activityVerbs, clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, reactWords, shortCount } from '../../feed.ts';
 
 type Chunk = typeof import('./FeedView.tsx');
@@ -72,6 +75,11 @@ export const kit = {
   uploadFile,
   // Startup already has these (Settings → Translation): handed over, so the chunk does not split them out.
   translate: { needsTranslation, languageName },
+  /** The head every place has (PlaceHead.tsx), the details panel beside the page (Pager.ts), copying a link. */
+  PlaceHead,
+  showDetails,
+  detailsShown,
+  copy,
 };
 export type Kit = typeof kit;
 
@@ -138,4 +146,10 @@ export function FeedPaneLazy({ source, post, onBack }: { source?: string; post?:
   const { m, failed } = useChunk(true);
   if (m) return <m.FeedPane source={source} post={post} kit={kit} onBack={onBack} />;
   return <section class="pane">{failed ? <Empty icon="alert" title="Could not load the Feed">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</section>;
+}
+
+/** A post's details panel (PostDetails.tsx): by its key, or a followed post's conversation. */
+export function PostDetailsLazy({ id }: { id: string }) {
+  const { m } = useChunk(true);
+  return m ? <m.PostDetails id={id} kit={kit} /> : null;
 }

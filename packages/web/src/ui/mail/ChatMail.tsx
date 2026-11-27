@@ -10,7 +10,8 @@ import { archivedInAll } from '../../mail/filing.ts';
 import { canWrite, destination, move, moveKind, star } from '../../mail/ops.ts';
 import { db, mailRev, toast } from '../../state.ts';
 import { bodies, bodyState, details, loadBody, retryBody } from '../../mail/api.ts';
-import type { MenuEntry } from '../ContextMenu.tsx';
+import type { MenuEntry, MenuSpec } from '../ContextMenu.tsx';
+import { threadMenu } from './Filing.tsx';
 import { Icon } from '../icons.tsx';
 import { Loading } from '../Loader.tsx';
 import { MailFiles } from './MailFiles.tsx';
@@ -94,13 +95,29 @@ export function MailThreadActions({ threadId }: { threadId: string }) {
   const account = db.mail.accounts.get(t.accountId);
   return (
     <>
-      {THREAD_ACTIONS.filter((a) => a.place === 'head' && (a.show?.(t, account) ?? true)).map((a) => (
+      {/* ⋯ is the head's own (PlaceHead.tsx), holding threadHeadMenu. */}
+      {THREAD_ACTIONS.filter((a) => a.place === 'head' && a.id !== 'more' && (a.show?.(t, account) ?? true)).map((a) => (
         <button class="hdr-btn" data-track={`mail thread: ${a.id}`} title={a.label} aria-label={a.label} onClick={() => a.run(threadOf(threadId) ?? t)}>
           <Icon name={a.icon} size={16} />
         </button>
       ))}
     </>
   );
+}
+
+/** The thread's menu, as its head's ⋯ and a right-click on the head open it: the reader's (Mark read, Star, Move…). */
+export function threadHeadMenu(threadId: string): MenuSpec | null {
+  const t = threadOf(threadId);
+  return t ? threadMenu([db.mail.threads.get(t.id) ?? t], 'reader') : null;
+}
+
+/** The filing a thread's details panel shows: Archive (or Unarchive), Star, and Move to the trash. */
+export function threadPanelActions(threadId: string): MenuEntry[] {
+  const t = threadOf(threadId);
+  if (!t) return [];
+  const account = db.mail.accounts.get(t.accountId);
+  const trash = THREAD_ACTIONS.find((a) => a.id === 'trash' && (a.show?.(t, account) ?? true));
+  return [...threadFiling(threadId, false), ...(trash ? [{ label: 'Trash', icon: trash.icon, track: 'mail thread: trash', danger: true, run: () => trash.run(threadOf(threadId) ?? t) }] : [])];
 }
 
 /** The account files the thread that way: the mailbox is there, and it makes that kind of move. */

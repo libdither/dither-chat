@@ -50,14 +50,14 @@ import { counting, rendered } from '../perf.ts';
 import { MailComposerLazy } from './mail/lazy.tsx';
 import { WhyFollowUpLazy } from './LoudnessLazy.tsx';
 import { toInboxChip } from './MailLists.tsx';
-import { convById, isMailPlace } from '../mail/chats.ts';
+import { convById, isMailPlace, isMailThread } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
 import { CalibrationPaneLazy } from './Calibration.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
-import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
+import { FeedPaneLazy, FeedSidebarLazy, PostDetailsLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
 
 // Panes not on the first screen, each a chunk of its own (LazyPane.tsx). A conversation's loads as soon as the data is in.
@@ -68,6 +68,7 @@ const PlaceProfile = lazyPane(() => import('./PlaceProfile.tsx').then((m) => m.P
 const SettingsPane = lazyPane(() => import('./Settings.tsx').then((m) => m.SettingsPane), 'Settings');
 const DirectoryPane = lazyPane(() => import('./Directory.tsx').then((m) => m.DirectoryPane), 'the directory');
 const HowItSorts = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.HowItSorts), 'How it sorts');
+const MailThreadDetails = lazyPane(() => import('./MailDetails.tsx').then((m) => m.MailThreadDetails), 'the details');
 const AttentionPaneLazy = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.AttentionPaneLazy), 'Your attention');
 // Layers over the app that draw nothing until they are opened: the picture and file viewer, the index dialog.
 const Viewer = lazyPane(() => import('./Viewer.tsx').then((m) => m.Viewer), 'the viewer', { layer: true });
@@ -85,17 +86,40 @@ function ReactionLayer() {
   return pickerFor.value || reactorsFor.value ? <Reactions /> : null;
 }
 
+/** What the details panel shows: a conversation's, a person's, a mail thread's or a post's. */
+type Detail = { kind: 'conv' | 'person' | 'mail' | 'post'; id: string };
+
+/** The panel for it. */
+function DetailPanel({ d }: { d: Detail }) {
+  if (d.kind === 'person') return <PersonDetails personId={d.id} />;
+  if (d.kind === 'mail') return <MailThreadDetails threadId={d.id} />;
+  if (d.kind === 'post') return <PostDetailsLazy id={d.id} />;
+  return <ConversationDetails convId={d.id} />;
+}
+
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
-function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
+function convDetail(id: string): Detail | undefined {
   const c = convById(id);
   const p = chatPersonOf(c);
   if (p) return { kind: 'person', id: p.id };
-  // A mail thread as a chat of its own has no details pane yet: its people are in its header.
+  // A mail thread's own panel (MailDetails.tsx); an email route is a person's, above.
+  if (isMailThread(id)) return { kind: 'mail', id };
+  // A post you follow: the post's panel (feed/PostDetails.tsx), which says what the follow does.
+  if (c?.variant === 'follow') return { kind: 'post', id };
   return isMailPlace(id) ? undefined : { kind: 'conv', id };
 }
 
+/**
+ * A place opened by its id, under any list (the inbox, a space, a folder, search): a post's thread (docs/feed.md
+ * "Threads") by its key, else a conversation, with the details panel it has.
+ */
+function placePane(id: string, focus: string | undefined, back: () => void): { pane: any; detail?: Detail } {
+  if (isPostKey(id)) return { pane: <ThreadLazy key={id} postKey={id} onBack={back} />, detail: { kind: 'post', id } };
+  return { pane: <ConversationPane convId={id} focus={focus} onBack={back} />, detail: convDetail(id) };
+}
+
 /** What the center pane shows, and whether a details pane is available. */
-function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'conv' | 'person'; id: string } } {
+function centerFor(r: Route, back: () => void): { pane: any; detail?: Detail } {
   switch (r.view) {
     case 'foryou':
       return { pane: <ForYou /> };
@@ -104,11 +128,9 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'attention':
       return { pane: <AttentionPaneLazy onBack={back} /> };
     case 'inbox':
-      // A post's thread (docs/feed.md "Threads"), beside the inbox as a conversation is.
-      if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
       // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
       if (r.conv?.startsWith('ntg_')) return { pane: <NoticesPaneLazy onBack={back} /> };
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <ForYou /> };
+      return r.conv ? placePane(r.conv, r.msg, back) : { pane: <ForYou /> };
     case 'people':
       if (r.graph) return { pane: <GraphPane onBack={back} /> };
       if (r.same) return { pane: <SamePane onBack={back} /> };
@@ -117,10 +139,10 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       if (r.conv || r.space) return { pane: <PlaceProfile kind={r.conv ? 'conversation' : 'space'} id={(r.conv ?? r.space)!} onBack={back} /> };
       return { pane: <ProfilePane personId={r.person} identityId={r.identity} onBack={back} /> };
     case 'space':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: convDetail(r.conv) } : { pane: <WelcomePane view="space" id={r.space} /> };
+      return r.conv ? placePane(r.conv, undefined, back) : { pane: <WelcomePane view="space" id={r.space} /> };
     case 'folder':
       return r.conv
-        ? { pane: <ConversationPane convId={r.conv} onBack={back} />, detail: convDetail(r.conv) }
+        ? placePane(r.conv, undefined, back)
         : r.person
           ? { pane: <PersonPane personId={r.person} onBack={back} />, detail: { kind: 'person', id: r.person } }
           : { pane: <WelcomePane view="folder" id={r.folder} /> };
@@ -133,7 +155,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'directory':
       return { pane: <DirectoryPane onBack={back} /> };
     case 'search':
-      return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
+      return r.conv ? placePane(r.conv, r.msg, back) : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
     case 'requests':
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
     case 'notices':
@@ -143,7 +165,7 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
     case 'feed':
-      return { pane: <FeedPaneLazy source={r.source} post={r.post} onBack={back} /> };
+      return { pane: <FeedPaneLazy source={r.source} post={r.post} onBack={back} />, ...(r.post ? { detail: { kind: 'post', id: r.post } as Detail } : {}) };
   }
 }
 
@@ -479,7 +501,7 @@ export function App() {
           />
         )}
       </main>
-      {(p ? !!detail : details) && <>{detail!.kind === 'conv' ? <ConversationDetails convId={detail!.id} /> : <PersonDetails personId={detail!.id} />}</>}
+      {(p ? !!detail : details) && <DetailPanel d={detail!} />}
       {!p && details && <PaneEdge pane="details" detailsOpen />}
       {p && <TabBar r={r} />}
       {p && (

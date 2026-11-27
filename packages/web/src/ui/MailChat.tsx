@@ -20,8 +20,8 @@ import { details } from '../mail/held.ts';
 import { Icon } from './icons.tsx';
 import './MailChat.css';
 import { MailTile } from './MailLists.tsx';
-import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, mailThreadFiling, openCompose, preloadMail } from './mail/lazy.tsx';
-import { HeadOrb } from './Offline.tsx';
+import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, mailThreadFiling, mailThreadMenu, openCompose, preloadMail } from './mail/lazy.tsx';
+import { PlaceHead } from './PlaceHead.tsx';
 import { identityName } from '../model.ts';
 import { contextMenu, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 
@@ -717,38 +717,34 @@ function ThreadPeople({ c }: { c: P.ConversationView }) {
 }
 
 /**
- * A mail thread's chat header (docs/mail.md "Mail as chats"): the envelope tile and the thread's name (its subject),
- * as its row in the inbox has them, the people on it beneath, and the thread's filing (Archive, Star, ⋯) where a chat
- * has its settings.
+ * A mail thread's head (docs/mail.md "Mail as chats"), the head every place has (PlaceHead.tsx): the envelope tile and
+ * the thread's name (its subject), as its row in the inbox has them, the people on it beneath, then Archive, the bell
+ * for the thread's own rule, Details (MailDetails.tsx) and ⋯ with the rest of its filing.
  */
 export function MailThreadHeader({ c, onBack }: { c: P.ConversationView; onBack?: () => void }) {
   mailRev.value;
   const account = db.mail.accounts.get(c.vantages[0]?.accountId ?? '');
   const several = !!account && db.mail.accounts.size > 1;
   return (
-    <header class="conv-head mail-thread-head" data-track-area="chat header">
-      {onBack && (
-        <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
-          <Icon name="back" />
-        </button>
-      )}
-      <span class="conv-head-icon">
-        <MailTile size={34} />
-      </span>
-      <div class="conv-head-text">
-        <h2>
-          <span class="conv-head-name mail-subject">{c.name}</span>
-        </h2>
-        <div class="conv-head-sub mail-thread-sub">
+    <PlaceHead
+      class="mail-thread-head"
+      back={onBack}
+      tile={<MailTile size={34} />}
+      name={<span class="conv-head-name mail-subject">{c.name}</span>}
+      subClass="mail-thread-sub"
+      sub={
+        <>
           <ThreadPeople c={c} />
           {several && <span class="mail-thread-account">· {account!.address ?? account!.label}</span>}
-        </div>
-      </div>
-      <div class="conv-head-actions">
-        <HeadOrb />
-        <MailThreadActionsLazy threadId={c.id} />
-      </div>
-    </header>
+        </>
+      }
+      extras={<MailThreadActionsLazy threadId={c.id} />}
+      bell={{ c }}
+      details
+      more={() => mailThreadMenu(c.id)?.items ?? []}
+      moreTitle={c.name ?? undefined}
+      menu={() => mailThreadMenu(c.id)}
+    />
   );
 }
 

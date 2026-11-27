@@ -423,7 +423,9 @@ class MailTriage {
     const person = sender?.personId ? d.store.one<Row>('SELECT * FROM person WHERE id = ?', sender.personId) : null;
     const name = person?.name ?? m.from_name ?? from ?? 'Someone';
     const reasons: string[] = [];
-    if (t.muted) {
+    // The thread's own rule, set from its head's bell as a chat's is (a conversation rule on the thread's id).
+    const own = d.store.rules().find((r) => r.scope === 'conversation' && r.target === m.thread_id)?.level ?? null;
+    if (t.muted || own === 'none') {
       reasons.push('Silenced: you muted this thread');
       return { decision: 'silent', level: null, score: null, reasons, decidedBy: 'rules', facts: null, words: [], probs: null, hold: null };
     }
@@ -474,7 +476,8 @@ class MailTriage {
     const starred = personRule?.level === 'all';
     // Where the sender and the address lines put it, which is what a mail client would have notified you about.
     let base: Level;
-    if (starred) (base = 'push'), reasons.push(`From ${name}, who is set to always alert`);
+    if (own === 'all') (base = 'push'), reasons.push('This thread is set to always alert');
+    else if (starred && own !== 'digest') (base = 'push'), reasons.push(`From ${name}, who is set to always alert`);
     else if (known && f.mention) (base = 'quiet'), reasons.push(`${name} wrote to you`);
     else if (known && m.addressed === 'cc') (base = 'quiet'), reasons.push(`${name} copied you in`);
     else {
@@ -489,7 +492,10 @@ class MailTriage {
     const th = d.triage.thresholds();
     // Mail has no Conversation tier, and nothing reads it for urgency: someone set to always alert is an alert (never
     // when the sender looks spoofed), the rest is on the list or below it by its importance.
-    const alert = starred && !body.spoof;
+    // List only on the thread keeps even someone set to always alert to the list.
+    if (starred && own === 'digest') reasons.push('This thread is set to List only');
+    const wants = own === 'all' || (starred && own !== 'digest');
+    const alert = wants && !body.spoof;
     const tierOf = (important: number): Level => (alert ? 'push' : important >= th.important ? 'digest' : 'drop');
     const level = tierOf(p.probs.important);
     let decidedBy: Decided['decidedBy'] = 'rules';
@@ -505,7 +511,7 @@ class MailTriage {
       reasons.unshift(`${TIER_NAME[level]}, ${learnedFrom(level, before)} (was ${TIER_NAME[before]})`, ...words);
       decidedBy = 'learned';
     } else if (level === 'drop') reasons.unshift(`Below the list: importance ${Math.round(p.probs.important * 100)}%`);
-    if (starred && body.spoof) reasons.unshift(`No alert: ${body.spoof}`);
+    if (wants && body.spoof) reasons.unshift(`No alert: ${body.spoof}`);
     let decision: P.TriageDecision = level;
     let hold: string | null = null;
     if (quiet) {

@@ -1,6 +1,6 @@
 import { isArrivedCopy } from '../arrived.ts';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, durationLabel, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { clock, dayLabel, fullTime, gap, sameDay, since } from '../format.ts';
@@ -8,11 +8,6 @@ import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
 import {
-  AUTOMATIC,
-  AUTOMATIC_HELP,
-  OLDER_RULE,
-  OLDER_RULE_HELP,
-  RULE_HELP,
   authorName,
   chatPersonOf,
   plainBody,
@@ -23,16 +18,11 @@ import {
   convTitle,
   crumbs,
   directsOf,
-  effectiveLevel,
-  heldHere,
   identityName,
   netName,
   peerIdentity,
   faceOf,
   personRouteOf,
-  ruleIcon,
-  ruleName,
-  ruleOn,
   visibleAccount,
 } from '../model.ts';
 import {
@@ -50,7 +40,6 @@ import {
   route,
   send,
   setPrefs,
-  setRule,
   canDelete,
   canEdit,
   deleteMessage,
@@ -79,6 +68,7 @@ import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
 import { Avatar, Empty, FromChips, Menu, PlaceTabs, variantIcon } from './bits.tsx';
+import { PlaceHead } from './PlaceHead.tsx';
 import { convPresence } from './PresenceDot.tsx';
 import { HoverReactions, InsertPicker, ReactionBar } from './Reactions.tsx';
 import { useLongPress } from './longpress.ts';
@@ -88,7 +78,7 @@ import { TriageWhy, tierIcon, tierName } from './Marks.tsx';
 import { Ticks } from './Ticks.tsx';
 import { historyOnMenu, openHistory } from '../messageHistory.ts';
 import { markChanged } from '../wordDiff.ts';
-import { detailsShown, showDetails, swipeReply } from './Pager.ts';
+import { swipeReply } from './Pager.ts';
 import { openConv } from '../opening.ts';
 import { JoinCallButton } from './Call.tsx';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
@@ -104,7 +94,7 @@ import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
 import { TypingBar } from './Typing.tsx';
-import { HeadOrb, offline } from './Offline.tsx';
+import { offline } from './Offline.tsx';
 import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
 import { useGrow } from './grow.ts';
 import { CameraView, SendScreen } from './Attach.tsx';
@@ -185,149 +175,12 @@ function Crumbs({ c }: { c: P.ConversationView }) {
 }
 
 /**
- * A conversation's notification rule, from its header: Automatic (no rule), Always alert, List only or Mute. With no
- * rule of its own, the line under Automatic says what holds: a rule above it, or what the network does here.
- */
-function LevelMenu({ c, also }: { c: P.ConversationView; /** A person's other chats, which take the same rule (all chats together). */ also?: P.ConversationView[] }) {
-  const eff = effectiveLevel(c);
-  // The button says the rule that holds; with none, Automatic. A place muted on its network looks kept to the list.
-  const held = eff.rule === 'mentions' ? 'Mentions only' : ruleName(eff.rule);
-  const look = eff.rule ?? (eff.level === 'digest' ? 'digest' : 'auto');
-  return (
-    <Menu
-      align="right"
-      trigger={(toggle) => (
-        // A bell, with a dot where a rule other than Automatic holds; the rule's own icon says which.
-        <button class={`hdr-btn level ${look} phone-hide`} data-track="notification level" onClick={toggle} title={`Notifications: ${ruleName(eff.rule)} (${eff.source})`} aria-label={`Notifications: ${held}`}>
-          <Icon name={eff.rule ? ruleIcon(eff.rule) : 'bell'} size={16} />
-          {eff.rule && <span class="hdr-dot" aria-hidden="true" />}
-        </button>
-      )}
-    >
-      {(close) => <LevelItems c={c} also={also} close={close} />}
-    </Menu>
-  );
-}
-
-/** The notification rules, as the header's bell lists them and a phone's ⋯ menu does. */
-function LevelItems({ c, also, close }: { c: P.ConversationView; also?: P.ConversationView[]; close: () => void }) {
-  const eff = effectiveLevel(c);
-  const own = ruleOn('conversation', c.id);
-  const com = c.spaceIds[0] ?? (c.parentId ? db.conversations.get(c.parentId)?.spaceIds[0] : undefined);
-  const pick = (l: P.RuleLevel | null, close: () => void) => () => {
-    for (const x of [c, ...(also ?? [])]) setRule('conversation', x.id, l);
-    close();
-  };
-  return (
-        <div class="level-menu">
-          <div class="menu-title">Notify me about {convLabel(c)}</div>
-          {own === 'mentions' && (
-            <div class="menu-item on" data-rule="mentions">
-              <Icon name={ruleIcon(own)} size={15} />
-              <span>
-                <b>{OLDER_RULE}</b>
-                <small>{OLDER_RULE_HELP}</small>
-              </span>
-            </div>
-          )}
-          <button data-track="notification level (automatic)" data-rule="" class={`menu-item ${own === null ? 'on' : ''}`} onClick={pick(null, close)}>
-            <Icon name={ruleIcon(null)} size={15} />
-            <span>
-              <b>{AUTOMATIC}</b>
-              <small>
-                {AUTOMATIC_HELP}
-                {own === null && `. Now: ${heldHere(eff)}`}
-              </small>
-            </span>
-          </button>
-          {RULE_LEVELS.map((l) => (
-            <button data-track={`notification level (${l})`} data-rule={l} class={`menu-item ${own === l ? 'on' : ''}`} onClick={pick(l, close)}>
-              <Icon name={ruleIcon(l)} size={15} />
-              <span>
-                <b>{RULE_LABEL[l]}</b>
-                <small>{RULE_HELP[l]}</small>
-              </span>
-            </button>
-          ))}
-          {com && (
-            <div class="menu-foot">
-              Whole {NETWORK_META[c.network].spaceNoun}:
-              {(['digest', 'none'] as const).map((l) => (
-                <button
-                  class="chip-btn"
-                  data-track={`notification level (whole community, ${l})`}
-                  onClick={() => {
-                    const root = db.spaces.get(com);
-                    const top = root?.kind === 'section' ? (db.parents.get(com)?.[0]?.parentId ?? com) : com;
-                    setRule('space', top, l);
-                    close();
-                  }}
-                >
-                  {RULE_LABEL[l]}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-  );
-}
-
-/**
- * A phone's header keeps Call and Search; the rest is in this menu: the profile or the place's about page, the
- * details panel, and the notification rules.
- */
-function HeadMore({ c, also, profile }: { c: P.ConversationView; also?: P.ConversationView[]; profile?: string }) {
-  return (
-    <Menu
-      align="right"
-      trigger={(toggle) => (
-        <button class="hdr-btn phone-only" data-track="header menu" title="More" aria-label="More" onClick={toggle}>
-          <Icon name="more" size={18} />
-        </button>
-      )}
-    >
-      {(close) => (
-        <>
-          <button
-            class="menu-item"
-            data-track={profile ? 'profile' : 'about'}
-            onClick={() => {
-              close();
-              if (profile) go({ view: 'profile', person: profile });
-              else openAbout('conversation', c.id);
-            }}
-          >
-            <Icon name="info" size={15} />
-            <span>
-              <b>{profile ? 'Profile' : 'About and settings'}</b>
-            </span>
-          </button>
-          <button
-            class="menu-item"
-            data-track="details"
-            onClick={() => {
-              close();
-              showDetails(!detailsShown());
-            }}
-          >
-            <Icon name="panel" size={15} />
-            <span>
-              <b>Details</b>
-            </span>
-          </button>
-          <LevelItems c={c} also={also} close={close} />
-        </>
-      )}
-    </Menu>
-  );
-}
-
-/**
- * A conversation's header. Under the name of a direct conversation, one line says where your message goes: the
- * network and, where you have several accounts, yours (`SendLine`); a group, a channel or a server says where it is
- * (the crumbs) and your account. The picture's badge is the network you send on.
+ * A conversation's head, through the one head every place has (PlaceHead.tsx). Under the name of a direct
+ * conversation, one line says where your message goes: the network and, where you have several accounts, yours
+ * (`SendLine`); a group, a channel or a server says where it is (the crumbs) and your account. The picture's badge is
+ * the network you send on.
  *
- * `chat`: someone you reach through several routes (PersonChat), and `c` the route messages go through. The header is
+ * `chat`: someone you reach through several routes (PersonChat), and `c` the route messages go through. The head is
  * the same, saying the same of that route; it adds one control, the pill that opens the list of routes (Pairs.tsx).
  */
 export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
@@ -343,16 +196,34 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
   // their accounts' names, each with its own nickname on their profile, so it has none.
   const peer = isDirect && !chat ? db.identities.get(peerIdentity(c) ?? '') : null;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
-  return (
-    <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => (all ? personMenu(chat!.person) : conversationMenu(c)))}>
-      {onBack && (
-        <button class="icon-btn back" data-track="pager: back button" onClick={onBack} aria-label="Back">
-          <Icon name="back" />
-        </button>
+  const also = all ? chat!.directs.filter((d) => d.id !== c.id) : undefined;
+  const profile = person && isDirect ? person.id : undefined;
+  const searchLabel = all ? 'Search in every chat with them' : 'Search in this conversation';
+  // The line under the name (another place's tab row may take a person's spot here).
+  const sub = (
+    <>
+      {chat ? (
+        <PairDropdown person={chat.person} directs={chat.directs} focus={c} view={all ? 'all' : c.id} onPick={chat.onView} />
+      ) : isDirect ? (
+        <SendLine c={c} accounts={accounts} />
+      ) : (
+        <>
+          <FromChips network={c.network} accounts={accounts} />
+          <Crumbs c={c} />
+          {c.shape === 'group' && c.participantIds.length > 1 && <span class="head-count">{c.participantIds.length} people</span>}
+        </>
       )}
-      {/* The picture and the name open its profile page: theirs for a DM, the place's otherwise. */}
-      <button class="conv-head-icon conv-head-who" tabIndex={-1} data-track="picture" title={whoTitle} onClick={openWho}>
-        {isDirect || c.shape === 'group' || c.shape === 'self' ? (
+      {isDirect && <RequestSentMark convs={chat ? [c, ...chat.directs] : [c]} />}
+    </>
+  );
+  return (
+    <PlaceHead
+      back={onBack}
+      // The picture and the name open its profile page: theirs for a DM, the place's otherwise.
+      onTile={openWho}
+      tileTitle={whoTitle}
+      tile={
+        isDirect || c.shape === 'group' || c.shape === 'self' ? (
           <Avatar
             id={person?.id ?? c.id}
             name={convTitle(c)}
@@ -366,10 +237,10 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
           <span class="conv-head-variant">
             <Icon name={variantIcon(c.variant, c.shape)} size={20} />
           </span>
-        )}
-      </button>
-      <div class="conv-head-text">
-        <h2>
+        )
+      }
+      name={
+        <>
           {chat ? (
             <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
               {chat.person.name}
@@ -386,41 +257,30 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
               <Icon name="lock" size={12} />
             </span>
           )}
-        </h2>
-        <div class="conv-head-sub">
-          {chat ? (
-            <PairDropdown person={chat.person} directs={chat.directs} focus={c} view={all ? 'all' : c.id} onPick={chat.onView} />
-          ) : isDirect ? (
-            <SendLine c={c} accounts={accounts} />
-          ) : (
-            <>
-              <FromChips network={c.network} accounts={accounts} />
-              <Crumbs c={c} />
-              {c.shape === 'group' && c.participantIds.length > 1 && <span class="head-count">{c.participantIds.length} people</span>}
-            </>
+        </>
+      }
+      sub={sub}
+      extras={
+        <>
+          <JoinCallButton c={c} />
+          {/* A DM's profile is its picture and name, and the details panel's Profile. */}
+          {!isDirect && (
+            <button class="hdr-btn phone-hide" data-track="about" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
+              <Icon name="info" size={16} />
+            </button>
           )}
-          {isDirect && <RequestSentMark convs={chat ? [c, ...chat.directs] : [c]} />}
-        </div>
-      </div>
-      <div class="conv-head-actions">
-        <HeadOrb />
-        <JoinCallButton c={c} />
-        {/* A DM's profile is its picture and name, and the details panel's Profile. */}
-        {!isDirect && (
-          <button class="hdr-btn phone-hide" data-track="about" title="About and settings" aria-label="About and settings" onClick={() => openAbout('conversation', c.id)}>
-            <Icon name="info" size={16} />
-          </button>
-        )}
-        <button class="hdr-btn" data-track="search here" title={all ? 'Search in every chat with them' : 'Search in this conversation'} aria-label={all ? 'Search in every chat with them' : 'Search in this conversation'} onClick={() => go({ view: 'search', q: `in:${all ? chat!.person.id : c.id}` })}>
-          <Icon name="search" size={16} />
-        </button>
-        <LevelMenu c={c} also={all ? chat!.directs.filter((d) => d.id !== c.id) : undefined} />
-        <button class={`hdr-btn phone-hide ${detailsShown() ? 'on' : ''}`} data-track="details" onClick={() => showDetails(!detailsShown())} title="Details" aria-label="Details">
-          <Icon name="panel" size={16} />
-        </button>
-        <HeadMore c={c} also={all ? chat!.directs.filter((d) => d.id !== c.id) : undefined} profile={person && isDirect ? person.id : undefined} />
-      </div>
-    </header>
+        </>
+      }
+      search={{ label: searchLabel, run: () => go({ view: 'search', q: `in:${all ? chat!.person.id : c.id}` }) }}
+      bell={{ c, also }}
+      details
+      phoneItems={() => [
+        profile
+          ? { label: 'Profile', icon: 'info', track: 'profile', run: () => go({ view: 'profile', person: profile }) }
+          : { label: 'About and settings', icon: 'info', track: 'about', run: () => openAbout('conversation', c.id) },
+      ]}
+      menu={() => (all ? personMenu(chat!.person) : conversationMenu(c))}
+    />
   );
 }
 

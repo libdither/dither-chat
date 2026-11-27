@@ -22,13 +22,14 @@ import { Fragment, h } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
+import { api, db, loadTimeline, openProfile, rev, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
 import { PostActions, type AnswerCtx } from './Actions.tsx';
 import { Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
 import { PostComposer } from './Composer.tsx';
-import { FollowButton } from './Follow.tsx';
+import { FollowButton, followOf, setFollow } from './Follow.tsx';
+import type { MenuEntry } from '../ContextMenu.tsx';
 import { Counts, Folded, Pics, Place, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { flip, snap } from './Seg.tsx';
 import { heldThread, readThread, seedPost } from './threadcache.ts';
@@ -495,31 +496,34 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   // Every reply X counts under the post is shown: no "Show more replies" unless a page read ahead brought more.
   const counted = (shownFocal?.repostOf ?? shownFocal)?.counts?.replies;
   const allShown = counted !== undefined && nodes.length >= counted;
+  // The head's ⋯ (PlaceHead.tsx): the post on its network, its link, and following its replies.
+  const url = (shownFocal?.repostOf ?? shownFocal)?.url ?? null;
+  rev.value; // a follow's conversation arrives, and its rule changes, without the thread changing
+  const follow = followOf(t);
+  const followed = follow ? (db.conversations.get(follow.conversationId) ?? null) : null;
+  const headMore = (): MenuEntry[] => [
+    ...(url ? [{ label: `Open on ${net}`, icon: 'external', track: 'post: open on the network', run: () => void window.open(url, '_blank', 'noopener') }] : []),
+    ...(url ? [{ label: 'Copy link to the post', icon: 'link', track: 'post: copy link', run: () => void kit.copy(url, 'Link copied') }] : []),
+    ...(t?.focal && follow ? [follow.stopped === null ? { label: 'Stop following', icon: 'bellOff', track: 'post: stop following', run: () => void setFollow(t, true, kit) } : { label: 'Follow again', icon: 'bell', track: 'post: follow again', run: () => void setFollow(t, false, kit) }] : []),
+  ];
   return (
     <section class="pane feed-pane thread-pane" aria-label="Post" onClickCapture={onLink}>
-      <header class="conv-head">
-        {back && (
-          <button class={`icon-btn back ${parent ? 'to-thread' : ''}`} data-track="pager: back button" onClick={back} aria-label={parent ? `Back to ${parent.label}` : 'Back'}>
-            <kit.Icon name="back" />
-          </button>
-        )}
-        <span class="conv-head-icon">
-          <kit.Icon name="quote" size={18} />
-        </span>
-        <div class="conv-head-text">
-          <h2>{!shownFocal ? 'Post' : kit.isSelf(author) ? 'Your post' : `${kit.name(author)}'s post`}</h2>
-          <div class="conv-head-sub">
-            <span class="muted-label">{t?.stored ? `As the hub logged it · ${net}` : `On ${net}`}</span>
-          </div>
-        </div>
-        <kit.HeadOrb />
-        <FollowButton t={t} kit={kit} />
-        {shownFocal && (shownFocal.repostOf ?? shownFocal).url && (
-          <a class="icon-btn" href={(shownFocal.repostOf ?? shownFocal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
-            <kit.Icon name="external" size={16} />
-          </a>
-        )}
-      </header>
+      <kit.PlaceHead
+        class="post-head"
+        back={back}
+        backLabel={parent ? `Back to ${parent.label}` : 'Back'}
+        backClass={parent ? 'to-thread' : ''}
+        tile={author ? <kit.Avatar id={author} name={kit.name(author)} url={kit.avatarUrl(author)} size={34} network={network} /> : <kit.Icon name="quote" size={18} />}
+        onTile={author ? () => openProfile(author) : undefined}
+        tileTitle={author ? `${kit.name(author)}'s profile` : undefined}
+        name={!shownFocal ? 'Post' : kit.isSelf(author) ? 'Your post' : `${kit.name(author)}'s post`}
+        sub={<span class="muted-label">{t?.stored ? `As the hub logged it · ${net}` : `On ${net}`}</span>}
+        extras={<FollowButton t={t} kit={kit} />}
+        bell={followed ? { c: followed } : undefined}
+        details
+        more={headMore}
+        menu={() => ({ items: headMore(), label: 'Post', track: 'post head menu' })}
+      />
       {parent && (
         <button class="thread-crumb" onClick={back} data-track="thread: back to the thread it came from">
           <kit.Icon name="back" size={14} /> Back to <b>{parent.label}</b>

@@ -6,7 +6,7 @@ import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { db, mailRev } from '../../state.ts';
-import type { MenuEntry } from '../ContextMenu.tsx';
+import type { MenuEntry, MenuSpec } from '../ContextMenu.tsx';
 import { Loading } from '../Loader.tsx';
 
 type Screens = typeof import('./screens.ts');
@@ -53,6 +53,12 @@ export const mailMessageExtras = (msg: P.MessageView): MenuEntry[] => screens?.m
 
 /** A thread's Archive and Star from a chat (ChatMail.tsx threadFiling): none until mail's chunk is here. */
 export const mailThreadFiling = (threadId: string, long: boolean): MenuEntry[] => screens?.threadFiling(threadId, long) ?? [];
+
+/** A thread's menu (ChatMail.tsx threadHeadMenu), for its head's ⋯ and right-click: none until mail's chunk is here. */
+export const mailThreadMenu = (threadId: string): MenuSpec | null => screens?.threadHeadMenu(threadId) ?? null;
+
+/** A thread's filing for its details panel (ChatMail.tsx threadPanelActions). */
+export const mailThreadPanel = (threadId: string): Extract<MenuEntry, { label: string; kind?: 'item' }>[] => (screens?.threadPanelActions(threadId) ?? []) as Extract<MenuEntry, { label: string; kind?: 'item' }>[];
 
 /** A mail message in a chat, opened up (ChatMail.tsx): its quote, the mail as sent, or its files. */
 export function ChatMailBodyLazy(p: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files'; words?: (text: string, quoted: boolean) => preact.JSX.Element }) {
