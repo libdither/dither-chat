@@ -1,14 +1,17 @@
 /**
  * Settings → Catching up (docs/catch-up.md): each stretch of time where the hub may have missed messages, across an
  * account or in one chat, why it thinks so, and what it is doing about it. The hub finds, plans and fetches; this asks
- * it and draws what it says, and lets you stop a hole, check every chat of it, or put it away. A chunk of its own,
- * loaded when Settings draws it (Settings.tsx CatchUpLazy).
+ * it and draws what it says, and lets you stop a hole, check every chat of it, or put it away; and you can ask it to go
+ * through every chat of an account, the last two weeks or all their history. A chunk of its own, loaded when Settings
+ * draws it (Settings.tsx CatchUpLazy). A single chat is asked from its menu (catchupask.ts).
  */
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { convLabel } from '../model.ts';
+import { netName } from '../model.ts';
 import { api, db, go, rev, toast } from '../state.ts';
+import { checkAccount } from '../catchupask.ts';
 import { NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
@@ -34,6 +37,7 @@ const CAUSE_LABEL: Record<P.CatchUpCause, string> = {
   behind: 'The network has newer messages',
   report: 'Reported',
   nearby: 'Other chats missed messages then',
+  asked: 'You asked',
 };
 
 const RESTING_LABEL: Record<NonNullable<P.CatchUpHoleView['resting']>['why'], string> = {
@@ -95,7 +99,8 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
       live = false;
     };
   }, [shown, h.updatedAt, h.pages]);
-  const title = h.scope === 'chat' && h.conversationId ? chatName(h.conversationId, h.conversationName ?? '') : h.accountName;
+  const one = h.scope === 'chat' && h.named <= 1 && h.conversationId;
+  const title = one ? chatName(h.conversationId!, h.conversationName ?? '') : h.accountName;
   const pct = h.chats ? Math.round((h.chatsDone / h.chats) * 100) : open(h) ? 0 : 100;
   const left = h.left.reduce((n, l) => n + l.count, 0);
   return (
@@ -104,7 +109,7 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
         {h.network ? <NetGlyph network={h.network} size={14} /> : <Icon name="refresh" size={14} />}
         <b class="job-name">{title}</b>
         <span class="job-kind">
-          {h.scope === 'chat' ? `${h.accountName} · one chat` : 'Every chat'} · {stretch(h.from, h.to)}
+          {one ? `${h.accountName} · one chat` : h.scope === 'chat' ? plural(h.named, 'chat') : h.named ? `Every chat, ${h.named} named` : 'Every chat'} · {h.from <= 0 ? `all history, to ${when(h.to)}` : stretch(h.from, h.to)}
         </span>
         <span class={`job-pill ${PILL[h.state]}`}>{h.state === 'clear' && !h.pages ? 'Nothing to fetch' : STATE_LABEL[h.state]}</span>
       </div>
@@ -182,6 +187,58 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
   );
 }
 
+const TWO_WEEKS = 14 * 24 * 3_600_000;
+
+/**
+ * Each account that can read its history, with the ask to go back through every chat of it: the last two weeks, or
+ * all its history (a first full pass, for chats the hub has never fetched). One already being checked says so.
+ */
+function AccountChecks({ holes, reload }: { holes: P.CatchUpHoleView[]; reload: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const accounts = [...db.accounts.values()].filter((a) => a.status !== 'disabled' && a.capabilities.includes('history')).sort((a, b) => a.network.localeCompare(b.network) || a.label.localeCompare(b.label));
+  if (!accounts.length) return null;
+  const run = async (id: string, from: number) => {
+    setBusy(id);
+    try {
+      await checkAccount(id, from);
+      reload();
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <>
+      <h4 class="hist-sub">Check an account</h4>
+      <p class="set-help">Goes back through every chat of the account and fetches what the hub does not have, at the same reading pace.</p>
+      <ul class="catchup-accounts">
+        {accounts.map((a) => {
+          const asked = holes.find((h) => h.accountId === a.id && h.scope === 'account' && open(h) && h.causes.includes('asked'));
+          return (
+            <li key={a.id} class="catchup-account">
+              <NetGlyph network={a.network} size={14} />
+              <span class="catchup-account-name">
+                {a.label} <span class="job-kind">{netName(a.network)}</span>
+              </span>
+              {asked ? (
+                <span class="job-pill running">Checking</span>
+              ) : (
+                <span class="catchup-account-buttons">
+                  <button class="btn ghost small" disabled={busy === a.id} aria-label={`Check ${a.label}: the last two weeks`} onClick={() => void run(a.id, Date.now() - TWO_WEEKS)}>
+                    Last 2 weeks
+                  </button>
+                  <button class="btn ghost small" disabled={busy === a.id} aria-label={`Check ${a.label}: all history`} title="Every chat back to its start, chats never fetched too" onClick={() => void run(a.id, 0)}>
+                    All history
+                  </button>
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
 /** Settings → Catching up: looked at every 2 s while a hole is open, every 30 s otherwise. */
 export function CatchUpSettings() {
   rev.value;
@@ -213,14 +270,16 @@ export function CatchUpSettings() {
       <h3>Catching up</h3>
       <p class="set-help">
         When the hub may have missed messages (it was restarted or lost events, an account was offline, or a network says a chat has newer messages than the hub), it works out which chats and when, and fetches them through your account at the
-        same reading pace as indexing. Each stretch is listed here with why, and what it found. Signal keeps no old messages on its servers: what the hub missed there needs an import.
+        same reading pace as indexing. Each stretch is listed here with why, and what it found. Signal keeps no old messages on its servers: what the hub missed there needs an import. A chat&rsquo;s menu has Check for Missing Messages for that chat alone.
       </p>
+      {holes && <AccountChecks holes={holes} reload={reload} />}
       {error && !holes && (
         <p class="set-help job-error" role="alert">
           Could not load it: {error}
         </p>
       )}
       {!holes && !error && <Loading inline label="Loading…" />}
+      {holes && <h4 class="hist-sub">What it found</h4>}
       {holes && !holes.length && <p class="set-help">Nothing missing that the hub knows of.</p>}
       {holes && holes.length > 0 && (
         <ul class="jobs">

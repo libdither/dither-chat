@@ -1,13 +1,16 @@
 # Catching up
 
 The hub keeps every message that reaches it, but some never do. Catching up is how the hub notices that it may be
-missing messages, works out where (a stretch of time across one account's chats, or one chat), fetches them through
+missing messages, works out where (a stretch of time across one account's chats, or some chats), fetches them through
 the account's own history at the [reading pace](indexing.md#reading-pace), and keeps track of each hole until it is
-filled, found whole, or known to need another source.
+filled, found whole, or known to need another source. You can also ask it to: for one chat, or for every chat of an
+account (see [Asking](#asking)).
 
-Hub: `packages/hub/src/catchup.ts` (with `historyspan.ts`, shared with the index jobs). Types:
+Hub: `packages/hub/src/catchup.ts`, reading pages through `historypage.ts` as the index jobs and the gap fill do
+(with `historyspan.ts`). Types:
 `packages/protocol/src/catchup.ts`. The adapter's `gap` event: `packages/protocol/src/adapter.ts`. Web:
-`packages/web/src/ui/CatchUp.tsx`, Settings → Catching up.
+`packages/web/src/ui/CatchUp.tsx`, Settings → Catching up; `packages/web/src/catchupask.ts`, a chat's Check for Missing
+Messages.
 
 ## How the hub falls behind
 
@@ -22,19 +25,30 @@ Each way a message can fail to arrive, what the hub can know about it, and what 
 | The manager restarts while the hub is away, or an extractor did not hold its events | The manager's `gap` too (`markGap`) | `dropped` |
 | An account is offline, turned off, or out of the hub's reach for a while | It was not online from one look to the next, for at least 2 minutes (turned on again days later, it checks those days; an account that never came up after a start is offline from the start) | `offline`, possible: most networks replay what an account missed when it comes back (Signal's server queues, Telegram's difference, Matrix's sync), so this is only checked |
 | A network connection the adapter could not resume (Discord's gateway sends no replay after a new session) | Only the adapter knows | the adapter's `gap` event, likely |
-| The network says a chat's newest message is newer than any the hub holds | `ConversationFact.lastMessageAt` from the adapter, after 2 minutes for its messages to follow | `behind`, likely, that chat; once per claim |
-| Someone notices ("Sam says they wrote last night") | — | `POST /api/catch-up/report` |
-| Several chats of one account turn out to miss messages around the same time | Their chat holes | `nearby`, likely, the account |
+| The network says a chat's newest message is one the hub does not hold | `ConversationFact.lastMessageAt` from the adapter, after 2 minutes for its messages to follow: the hub looks for a message at that time (within 2 s), not at its newest, so a live message that came after the claim does not hide it | `behind`, likely, that chat, from the newest held before the claim; once per claim |
+| Someone notices ("they say they wrote last night") | — | `POST /api/catch-up/report` |
+| You ask (a chat's Check for Missing Messages, or an account's in Settings) | — | `asked`, sure |
+| Several chats of one account turn out to miss messages around the same time | The holes that named them | `nearby`, likely, the account |
 
-What it does not cover: a network that never told anyone (a message that never reached the account at all), and old
-history the hub never had, which is the index jobs' business. A hole looks back at most 14 days.
+What it does not cover by itself: a network that never told anyone (a message that never reached the account at all),
+and old history the hub never had, which is the index jobs' business, or yours to ask for. A hole the hub found looks
+back at most 14 days; one you asked for, as far as you said.
 
 ## Holes
 
-A report lands in a **hole**: one account's chats over a stretch of time (`account`), or one chat (`chat`). A report
-within 30 minutes of an open hole of the same scope joins it: the stretch widens, the strength takes the surer of the
-two, and its cause and note are added. A hole is planned a minute after its first report, so the reports of one trouble
-(an offline account whose manager also dropped events) are planned once.
+A report lands in a **hole**: one account's chats over a stretch of time (`account`), or only the chats reports named
+(`chat`). There is one open hole per account and time: a report within 30 minutes of an open hole of that account joins
+it, its cause and note added.
+
+- A chat's report (a claim, a message that failed to be stored, an adapter's gap naming chats, you asking about a chat)
+  **names** the chat in the hole, with its own stretch. A named chat is fetched whatever the plan says of the rest, and
+  is among the first a possible hole checks.
+- An account's report widens the hole's stretch across every chat, takes the surer strength, and makes a hole that
+  named only chats one of the account.
+
+So one trouble is one hole and one row in Settings: an account offline for an hour, then a claim per chat as its adapter
+reconnects, is one account hole with those chats named, not an account hole and a chat hole each. A hole is planned a
+minute after its first report (at once for a person's), so the reports of one trouble are planned once.
 
 **Strength.**
 
@@ -60,44 +74,45 @@ times the stretch's length. Then:
 
 What was left out is counted, with why, and **Check every chat** plans the hole again with all of them.
 
-**Checking a possible hole.** The three chats likeliest to have had messages then (expected at least one, or half for a
-direct chat) are fetched first. If none of them was missing anything, the hole is `clear` and the rest are skipped. If
-any was, or one of them could not be read (an error is not a sign that it was whole), the hole becomes likely and
-fetches the rest. When no chat was busy enough to check, the hole is clear at once; so is a hole with no chat worth a
-page (a chat hole on a channel you do not read, unless someone named it).
+**Checking a possible hole.** The chats it names, and the three likeliest to have had messages then (expected at least
+one, or half for a direct chat), are fetched first. If none of them was missing anything, the hole is `clear` and the
+rest are skipped. If any was, or one of them could not be read (an error is not a sign that it was whole), the hole
+becomes likely and fetches the rest. When no chat was busy enough to check, the hole is clear at once; so is a hole
+with no chat worth a page. (A claim about a channel you have not read lately opens nothing: the hub follows it, you do
+not.)
 
-**Time or chat?** A chat hole that finds missing messages looks for other chat holes of the same account in the last
-day, close in time, that found some too. Three or more mean the trouble was the account's, not those chats': the
-account's other chats are checked for that stretch (`nearby`), once. The other way, an account hole checks chat by
+**Time or chat?** A hole of named chats that finds missing messages counts the chats of the account, in such holes of
+the last day close in time, that were missing some. Three or more mean the trouble was the account's, not those chats':
+the account's other chats are checked for that stretch (`nearby`), once. What you asked for is not counted: history the
+hub never had is not a trouble at one time. The other way, an account hole checks chat by
 chat, so its list shows which chats were actually missing messages.
 
-**Fetching.** Each chat is paged back from the end of the stretch to its start, 50 messages a page, `pace: 'read'`, as
-an index job pages (docs/indexing.md). It jumps over what is known whole (`history_span`), so a chat that two holes, or
-a hole and an index job, both cover is fetched once. A page that reaches the chat's start ends it. One chat stops after
-60 pages (3,000 messages) and says so. A stretch that grows starts its pages again: grown further back, the walk goes
-on from where it was; grown at the end, it reads the new end and then jumps to where it was (each earlier end is
-kept, so growing at the end twice still skips what was read).
+**Fetching.** Each chat is paged back from the end of its stretch to its start, 50 messages a page, `pace: 'read'`,
+through `historypage.ts` as an index job pages ([indexing.md](indexing.md), "History, and why a repeat is cheap"). It
+jumps over what is known whole (`history_span`), so a chat that two holes, or a hole and an index job, both cover is
+fetched once. A page that reaches the chat's start ends it. One chat of a hole the hub found stops after 60 pages
+(3,000 messages) and says so; one you asked for has no cap. A stretch that grows starts its pages again: grown further
+back, the walk goes on from where it was; grown at the end, it reads the new end, and the spans its earlier pages
+recorded take it back down to where it was.
 
-A page's messages come as events, and a remote account's come after its answer (the manager sends events on a short
-timer and the answer at once; the supervisor applies a big batch in slices). So after each answer the worker waits for
-them to land: nothing queued in the supervisor, and what the page covered holding still (from `oldest` to the cursor
-when the answer said where the page ended, so an import writing older history meanwhile does not hold it up; else the
-whole chat below the cursor). With `oldest`, it also needs that stretch to hold as many as the page had, and the chat
-to have changed since it was asked: a stretch that already held enough (messages deleted on the network but kept
-here) proves nothing. Only then does it count what it found, and only inside the stretch (older history a page
-reaches is not missing). Looks while the queue is busy do not count against it; after 10 s of quiet looks, or 5
-minutes in all, the page is asked again 30 s later, nothing recorded, and what it brings is counted from what was held
-before the first asking (unless the stretch grew meanwhile: then afresh). After three such askings what came is
-counted and nothing of that page recorded whole. Each asking counts against the reading pace. A page that held fewer
-than it said, with nothing changing for 2 s, is taken as in (kinds the hub does not keep).
+What a page brought is known exactly, not guessed from how many rows a chat holds: the store records the page's own
+messages as they are stored, and the reader waits until every event the account sent before the answer is applied
+(`Supervisor.settled`). What it **found** is those of the page's messages the hub did not hold before, inside the
+stretch. So older history a page reaches below the stretch is not missing, a message kept here that the network
+deleted proves nothing either way, and a message the network replays live while a check runs (Signal's queue,
+Telegram's difference) is not counted as the check's: a possible hole whose missed messages came back by themselves is
+clear. A page whose messages did not come with its answer records nothing and is asked again 30 s later, three times;
+then the chat fails, saying so. Its chat cannot say it was whole (what came late may be stored uncounted), so a check
+it was among goes on to the rest.
 
-Only a page that says where it ended (`oldest`: Discord, Matrix, T3) is recorded in `history_span` as whole. From one
-that does not (Telegram, WhatsApp, X, Meta, Google Messages), the hub cannot tell which held messages were the page's,
-so it guesses the next cursor (the `count`-th newest below the old one) and records nothing. A page that answers with
-newer messages than asked for (a network that cannot fetch by time) fails the chat. A hole stopped or planned again
-while a page was out keeps its new state: the page's answer is not written over it. The account's worker takes the surest hole first,
-then the oldest, and goes through the shared reading pace as reader `catchup`: in your hours, in sessions, under the
-day's cap, never at once with an index job on the same account. A rate limit waits 30 s; an adapter that cannot read
+Every page that came is recorded whole, with or without `oldest` (where a page without it ended is its `count`-th
+newest message), so Telegram, WhatsApp, X, Meta and Google Messages, too, never read a stretch twice. A page that
+answers with newer messages than asked for (a network that cannot fetch by time) fails the chat. A hole stopped or
+planned again while a page was out keeps its new state: the page's answer is not written over it.
+
+The account's worker takes the surest hole first, then the oldest, and goes through the shared reading pace as reader
+`catchup`: in your hours, in sessions, under the day's cap, never at once with an index job or the gap fill on the same
+account. A rate limit waits 30 s; an adapter that cannot read
 just now (`deferMs`) is asked again later; an account that goes offline pauses its holes until it is back.
 
 **Done, with what failed.** A hole ends when no chat is left to fetch, said each tick too, so a restart or a check
@@ -114,8 +129,9 @@ removed account's holes go at the next hourly sweep.
 
 ## What it keeps
 
-- `catchup_hole` and `catchup_task` (schema.sql): the holes and their chats, with each chat's cursor and the
-  adapter's own cursor (`walk`), so a restart carries on where it was.
+- `catchup_hole` and `catchup_task` (schema.sql): the holes, with the chats reports named (`named`, each with its
+  stretch), and their chats, with each chat's cursor and the adapter's own cursor (`walk`), so a restart carries on
+  where it was.
 - `catchup_claim`: the latest claim already checked per chat, so an adapter announcing its chats again on each
   reconnect does not open the same hole twice.
 - `meta`: `catchup:heard` (when each account was last heard, saved each minute and at a stop), `catchup:away` (since
@@ -133,17 +149,33 @@ land between their read and their write. If the save at a stop fails while event
 open, so the next start counts as unclean and checks from the marker. The waiting events' marker is saved when it changes and every 30 s while events wait,
 so a crash's time is known to within that.
 
+## Asking
+
+- **A chat:** its menu (and its details' More) has **Check for Missing Messages**. The chat is read back to its start,
+  over what is known whole, and what the hub did not have is fetched. A first pass for a chat the hub never fetched
+  reads all of it; a chat read before costs a page or two.
+- **An account:** Settings → Catching up → Check an account lists every account that can read its history, each with
+  **Last 2 weeks** and **All history**. Either goes through every chat of the account, the ones a plan would leave
+  out too (channels you don't read, quiet chats, archived ones aside). All history is the first full pass for an account
+  whose chats the hub knows of but never fetched.
+
+An ask is a report with `asked: true`: sure, as far back as it says (no two-week limit), no page cap, planned at once,
+at the reading pace like the rest, through the account's one reader. It joins an open hole of the account like any
+report, and an account already being checked shows so instead of its buttons.
+
 ## Routes
 
 - `GET /api/catch-up`: `{ holes }`, newest first, at most 100.
 - `GET /api/catch-up/:id`: one hole with its chats (`list`).
-- `POST /api/catch-up/report` `{ accountId? , conversationId?, from, to?, strength?, note? }`: a report from a person or
-  a script. A chat's report needs no account; one is picked that sees the chat and can fetch.
+- `POST /api/catch-up/report` `{ accountId? , conversationId?, from, to?, strength?, note?, asked? }`: a report from a
+  script, or your ask from the app (`asked`). A chat's report needs no account; one is picked that sees the chat and can
+  fetch.
 - `POST /api/catch-up/:id/stop`, `POST /api/catch-up/:id/all` (check every chat), `DELETE /api/catch-up/:id`.
 
 ## The page
 
-Settings → Catching up lists every hole: the account or chat, the stretch, why (its causes and the latest note), a
+Settings → Catching up has Check an account (above), then lists every hole: the account or chat (or how many chats it
+names), the stretch, why (its causes and the latest note), a
 progress bar of chats, how many missing messages it found in how many pages, what it is fetching now, or why it waits
 ("Outside your usual hours, reading again today at 09:12"), and what it left out. **Show chats** lists each chat with
 its state, what it found or how many messages were expected, and why it was skipped; a chat's name opens it. **Stop**,
@@ -159,10 +191,6 @@ its state, what it found or how many messages were expected, and why it was skip
 - **Signal from its Desktop.** A linked Signal Desktop holds what the account received. An extractor that reads it
   could answer `history`, making Signal's holes fetchable without an import by hand. It needs the owner's say-so to
   read that profile.
-- **Index jobs' guessed spans.** An index job still records a span for a page that did not say where it ended (its
-  guess), and the whole chat when a page never arrived (jobs.ts). The catch-up trusts spans and jumps over them, so a
-  stretch an index job guessed wrong is not checked again. The fix is the catch-up's rule there too; it makes a
-  repeat of an index job on those networks read again what it read before.
 - **Orphans.** A reaction or edit for a message the hub does not have is dropped today (store.ts); with Discord's and
   Signal's ids, which carry a time, it could report a chat hole at that time.
 - **The chat itself.** An open chat inside a hole could say so in its timeline ("Messages from 03:40 to 15:49 may be

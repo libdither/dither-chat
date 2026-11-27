@@ -5,8 +5,10 @@
  *
  * Reports come from what the hub sees (EventWatch, called by the supervisor), from adapters (a `gap` event), from
  * the network (a chat's `lastMessageAt` newer than anything held), and from people and scripts
- * (`POST /api/catch-up/report`). Each lands in a hole: a stretch of time across an account's chats (scope `account`),
- * or one chat (`chat`). Reports a few minutes apart about the same account or chat merge into one hole.
+ * (`POST /api/catch-up/report`), and from you (Check for missing messages, on a chat or an account). Each lands in a
+ * hole: a stretch of time across an account's chats (scope `account`), or only the chats it names (`chat`). Every
+ * report about one account that comes within half an hour of an open hole of that account joins it, so one trouble
+ * (an account hole, then a claim per chat as its adapter restarts) is one hole, one row in Settings.
  *
  * A hole is planned a minute after its first report, so the reports of one trouble merge first. Its account's chats
  * are ranked by how many messages each was likely to get in the stretch (its pace in the two weeks before), direct
@@ -16,9 +18,11 @@
  * out to miss messages around the same time, the trouble was the account's, not the chats': the account's other
  * chats are checked for that time too (`nearby`).
  *
- * A chat is paged back from the end of the stretch to its start, 50 messages a page, jumping over what is known whole
- * (history_span, shared with the index jobs), and each page is recorded there. One reader per account at a time
- * through the shared reading pace (readingpace.ts). An account that cannot fetch history (Signal keeps none on its
+ * A chat is paged back from the end of the stretch to its start, 50 messages a page, through historypage.ts as the
+ * index jobs and the gap fill read: what a page brought is known exactly (the store records the page's own messages,
+ * and the reader waits until the account's events before its answer are applied), and what it covered is recorded
+ * whole (history_span), so nothing is fetched twice. One reader per account at a time through the shared reading
+ * pace (readingpace.ts). An account that cannot fetch history (Signal keeps none on its
  * servers) leaves its holes `unfetchable`, with the chats that likely had messages, for an import to fill.
  *
  * Its state is in catchup_hole and catchup_task, and in meta (catchup:*) for what it must remember across a restart:
@@ -29,7 +33,8 @@ import type * as P from '@dither-chat/protocol';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import { type Clock, realClock, sleep, unref } from './clock.ts';
 import { jobFailed } from './errors.ts';
-import { addSpan, cutSpan, spanAt } from './historyspan.ts';
+import { LAND_AGAIN_MS, LAND_RETRIES, NOT_LANDED, type Pager, readPage, skipWhole } from './historypage.ts';
+import { cutSpan } from './historyspan.ts';
 import { READING, ReadingPace } from './readingpace.ts';
 import type { Store } from './store.ts';
 
@@ -39,8 +44,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-/** Messages a page: what Discord's client loads when you scroll up. */
-export const PAGE = 50;
+export { PAGE } from './historypage.ts';
 /** The pace's name for this reader (readingpace.ts: one reader per account). */
 const READER = 'catchup';
 /** How often it looks for work, plans holes that are due and turns what it heard into reports. */
@@ -61,7 +65,7 @@ const MIN_EXPECTED = 0.3;
 const MAX_CHATS = 60;
 /** How many chats a `possible` hole checks first. */
 const PROBES = 3;
-/** Pages one chat of one hole fetches at most: 3,000 messages, a day's reading. */
+/** Pages one chat of a hole the hub found fetches at most: 3,000 messages, a day's reading. One you asked for has no cap. */
 const MAX_PAGES = 60;
 /** An account offline this long opens a hole when it is back. */
 export const OFFLINE_MIN_MS = 2 * MIN;
@@ -92,21 +96,6 @@ const CLAIMS_PER_TICK = 300;
 const REST_STEP_MS = MIN;
 /** An adapter that cannot read just now (deferMs) is asked again after at most this long. */
 const DEFER_MAX_MS = 10 * MIN;
-/**
- * A page's messages come as events, and a remote account's come after its answer (dither-accounts' manager sends
- * events on a short timer, the answer at once; a big batch is applied in slices): looked for this often, at most this
- * many times, until they are in.
- */
-const LAND_MS = 250;
-const LAND_TRIES = 40;
-/** Looks with nothing changing after which a page counts as landed although it held fewer than it said (kinds the hub does not keep). */
-const LAND_STILL = 8;
-/** However busy the supervisor's queue, a page waits at most this long; then it is asked again later. */
-const LAND_MAX_MS = 5 * MIN;
-/** A page whose messages had not landed is asked again after this long. */
-const LAND_AGAIN_MS = 30_000;
-/** Times a page is asked again for not landing; then what came is counted, and nothing recorded whole. */
-const LAND_RETRIES = 3;
 /** Channels whose own history holds nothing: their posts are threads. */
 const NO_MESSAGES = new Set(['forum', 'media']);
 const STRENGTH: Record<P.CatchUpStrength, number> = { possible: 0, likely: 1, sure: 2 };
@@ -133,6 +122,7 @@ export interface EventWatch {
 }
 
 interface Report {
+  /** `account`: every chat of it over the stretch; `chat`: only the one named. */
   scope: 'account' | 'chat';
   accountId?: string;
   conversationId?: string | null;
@@ -141,10 +131,14 @@ interface Report {
   strength: P.CatchUpStrength;
   cause: P.CatchUpCause;
   note: string;
+  /** You asked (the app's Check for missing messages): every chat, no two-week limit, no page cap. */
+  asked?: boolean;
 }
 
-interface Options {
-  command: (accountId: string, cmd: any, timeoutMs?: number) => Promise<any>;
+/** A hole's named chats: each with its own stretch, fetched whatever the plan says of the account's other chats. */
+type Named = Record<string, { from: number; to: number }>;
+
+interface Options extends Pager {
   /** The account's adapter is connected. */
   online: (accountId: string) => boolean;
   /** Events waiting in the supervisor's queue (Supervisor.backlog). */
@@ -199,8 +193,6 @@ export class CatchUp implements EventWatch {
   private up = new Map<string, boolean>();
   private offlineSince = new Map<string, number>();
   private lastSweep = 0;
-  /** Accounts whose history pages say where they ended (HistoryResult.oldest). */
-  private givesOldest = new Set<string>();
 
   constructor(
     private store: Store,
@@ -349,23 +341,26 @@ export class CatchUp implements EventWatch {
 
   // ------------------------------------------------------------------ the API
 
-  /** POST /api/catch-up/report. */
+  /** POST /api/catch-up/report: a script's report, or your ask from the app (`asked`). */
   reportFrom(r: P.CatchUpReport): P.CatchUpHoleView {
     if (typeof r?.from !== 'number' || !Number.isFinite(r.from)) throw new Error('from when? `from` is a time in ms');
     if (r.to !== undefined && (typeof r.to !== 'number' || !Number.isFinite(r.to))) throw new Error('`to` is a time in ms');
     if (!r.accountId && !r.conversationId) throw new Error('which account or chat?');
     if (r.strength !== undefined && !(r.strength in STRENGTH)) throw new Error('strength is possible, likely or sure');
+    const asked = r.asked === true;
     const id = this.report({
       scope: r.conversationId ? 'chat' : 'account',
       accountId: r.accountId,
       conversationId: r.conversationId ?? null,
       from: r.from,
       to: r.to,
-      strength: r.strength ?? 'likely',
-      cause: 'report',
-      note: typeof r.note === 'string' && r.note.trim() ? r.note.trim().slice(0, 200) : 'Reported',
+      strength: asked ? 'sure' : (r.strength ?? 'likely'),
+      cause: asked ? 'asked' : 'report',
+      asked,
+      note: typeof r.note === 'string' && r.note.trim() ? r.note.trim().slice(0, 200) : asked ? 'You asked' : 'Reported',
     });
     if (!id) throw new Error(r.conversationId ? 'no such chat, or no account sees it' : 'no such account');
+    this.tick();
     return this.get(id)!;
   }
 
@@ -407,12 +402,17 @@ export class CatchUp implements EventWatch {
 
   // ------------------------------------------------------------------ reports into holes
 
-  /** A report: into the open hole it is close to, or a new one. The hole's id; null if it names nothing known. */
+  /**
+   * A report: into the account's open hole it is close to, or a new one. The hole's id; null if it names nothing
+   * known. A chat's report names the chat in that hole, with its own stretch; an account's widens the hole's stretch
+   * across every chat (and makes a hole that named only chats one of the account).
+   */
   report(r: Report): string | null {
     if (!Number.isFinite(r.from) || (r.to !== undefined && !Number.isFinite(r.to))) return null;
     const now = this.clock.now();
     const to = Math.min(typeof r.to === 'number' ? r.to : now, now);
-    let from = Math.max(r.from, to - MAX_STRETCH_MS);
+    // What the hub found looks back two weeks at most; what you asked for, as far as you said.
+    let from = r.asked ? Math.max(0, r.from) : Math.max(r.from, to - MAX_STRETCH_MS);
     if (from >= to) from = to - 1;
     let accountId = r.accountId ?? null;
     const cid = r.scope === 'chat' ? (r.conversationId ?? null) : null;
@@ -422,11 +422,8 @@ export class CatchUp implements EventWatch {
     }
     if (!accountId || !this.store.account(accountId)) return null;
     const open = this.store.one<Row>(
-      `SELECT * FROM catchup_hole WHERE scope = ? AND account_id = ? AND conversation_id IS ? AND state IN ${OPEN} AND from_ts <= ? AND to_ts >= ?
-       ORDER BY created_at LIMIT 1`,
-      r.scope,
+      `SELECT * FROM catchup_hole WHERE account_id = ? AND state IN ${OPEN} AND from_ts <= ? AND to_ts >= ? ORDER BY scope = 'account' DESC, created_at LIMIT 1`,
       accountId,
-      cid,
       to + MERGE_MS,
       from - MERGE_MS,
     );
@@ -435,21 +432,53 @@ export class CatchUp implements EventWatch {
       const notes = JSON.parse(open.notes) as string[];
       if (!causes.includes(r.cause)) causes.push(r.cause);
       if (notes[notes.length - 1] !== r.note) notes.push(r.note);
-      const lo = Math.min(open.from_ts, from);
-      const hi = Math.max(open.to_ts, to);
-      const strength = STRENGTH[r.strength] > STRENGTH[open.strength as P.CatchUpStrength] ? r.strength : open.strength;
-      // A wider stretch, or a surer cause, plans it again (what was fetched stays fetched: the spans skip it).
-      const replan = open.state !== 'planning' && (lo < open.from_ts || hi > open.to_ts || strength !== open.strength);
+      const named = JSON.parse(open.named || '{}') as Named;
+      let { from_ts: lo, to_ts: hi, scope, strength } = open as { from_ts: number; to_ts: number; scope: 'account' | 'chat'; strength: P.CatchUpStrength };
+      let grew = false;
+      if (cid) {
+        // Named in the hole, with its own stretch; a hole of named chats only spans them all.
+        const had = named[cid];
+        if (!had || from < had.from || to > had.to) {
+          named[cid] = { from: Math.min(had?.from ?? from, from), to: Math.max(had?.to ?? to, to) };
+          grew = true;
+        }
+        if (scope === 'chat') {
+          lo = Math.min(lo, from);
+          hi = Math.max(hi, to);
+        }
+      } else {
+        // The account's chats over this stretch: a hole that named only chats becomes the account's, as sure as this.
+        if (scope === 'chat') {
+          scope = 'account';
+          lo = from;
+          hi = to;
+          strength = r.strength;
+          grew = true;
+        } else {
+          grew = from < lo || to > hi || STRENGTH[r.strength] > STRENGTH[strength];
+          lo = Math.min(lo, from);
+          hi = Math.max(hi, to);
+          if (STRENGTH[r.strength] > STRENGTH[strength]) strength = r.strength;
+        }
+      }
+      if (cid && STRENGTH[r.strength] > STRENGTH[strength] && scope === 'chat') strength = r.strength;
+      const all = open.all_chats || (r.asked && !cid) ? 1 : 0;
+      // Wider, surer or more: planned again (what was fetched stays fetched: the spans skip it).
+      const replan = open.state !== 'planning' && (grew || all !== open.all_chats);
       this.store.db
-        .query('UPDATE catchup_hole SET from_ts = ?, to_ts = ?, strength = ?, causes = ?, notes = ?, updated_at = ? WHERE id = ?')
-        .run(lo, hi, strength, JSON.stringify(causes), JSON.stringify(notes.slice(-20)), now, open.id);
+        .query('UPDATE catchup_hole SET scope = ?, conversation_id = ?, from_ts = ?, to_ts = ?, strength = ?, causes = ?, notes = ?, named = ?, all_chats = ?, updated_at = ? WHERE id = ?')
+        .run(scope, open.conversation_id ?? cid, lo, hi, strength, JSON.stringify(causes), JSON.stringify(notes.slice(-20)), Object.keys(named).length ? JSON.stringify(named) : null, all, now, open.id);
       if (replan) this.store.db.query(`UPDATE catchup_hole SET state = 'planning', plan_at = ? WHERE id = ?`).run(now, open.id);
       return open.id;
     }
     const id = randomId('cup');
+    const named: Named | null = cid ? { [cid]: { from, to } } : null;
     this.store.db
-      .query(`INSERT INTO catchup_hole (id, scope, account_id, conversation_id, from_ts, to_ts, strength, causes, notes, state, plan_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'planning', ?, ?, ?)`)
-      .run(id, r.scope, accountId, cid, from, to, r.strength, JSON.stringify([r.cause]), JSON.stringify([r.note]), r.cause === 'report' ? now : now + PLAN_DELAY_MS, now, now);
+      .query(
+        `INSERT INTO catchup_hole (id, scope, account_id, conversation_id, from_ts, to_ts, strength, causes, notes, named, all_chats, state, plan_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planning', ?, ?, ?)`,
+      )
+      .run(id, r.scope, accountId, cid, from, to, r.strength, JSON.stringify([r.cause]), JSON.stringify([r.note]), named ? JSON.stringify(named) : null, r.asked && !cid ? 1 : 0, r.cause === 'report' || r.cause === 'asked' ? now : now + PLAN_DELAY_MS, now, now);
     this.log(`catch-up: ${r.cause} ${r.scope} ${cid ?? accountId} ${new Date(from).toISOString()}..${new Date(to).toISOString()}`);
     return id;
   }
@@ -585,7 +614,11 @@ export class CatchUp implements EventWatch {
       const seen = this.store.one<Row>('SELECT ts FROM catchup_claim WHERE conversation_id = ?', cid)?.ts as number | undefined;
       if (seen !== undefined && c.ts <= seen) return;
       const newest = this.newest(cid);
-      if (newest === null || newest < now - FOLLOWED_MS || c.ts <= newest + CLAIM_SLACK_MS) return;
+      if (newest === null || newest < now - FOLLOWED_MS) return;
+      // The claimed message itself, or none: what the hub holds up to the claim, not its newest now (a live message
+      // that came after the claim says nothing of the ones before it).
+      const upTo = this.newest(cid, c.ts + CLAIM_SLACK_MS);
+      if (upTo !== null && upTo >= c.ts - CLAIM_SLACK_MS) return;
       // Marked seen once settled, after its report: a write that fails leaves it to be settled again.
       const mark = () => this.store.db.query('INSERT INTO catchup_claim (conversation_id, ts) VALUES (?, ?) ON CONFLICT (conversation_id) DO UPDATE SET ts = MAX(ts, excluded.ts)').run(cid, c.ts);
       // A channel you do not read is not worth a page each time it moves (the hub follows it, you do not).
@@ -594,14 +627,14 @@ export class CatchUp implements EventWatch {
       // A chat whose newest message is one the hub does not keep (a join, a pin, a call) claims more than it has
       // every time: after two checks that fetched and found nothing, its claims rest a week.
       const checks = this.store.raw<Row>(
-        `SELECT (SELECT COALESCE(SUM(found), 0) FROM catchup_task t WHERE t.hole_id = h.id) AS found FROM catchup_hole h
-         WHERE h.scope = 'chat' AND h.conversation_id = ? AND h.causes = '["behind"]' AND h.state IN ('done', 'clear') AND h.created_at >= ?
-         AND EXISTS (SELECT 1 FROM catchup_task t WHERE t.hole_id = h.id AND t.state = 'done') ORDER BY h.created_at DESC LIMIT 2`,
+        `SELECT t.found FROM catchup_task t JOIN catchup_hole h ON h.id = t.hole_id
+         WHERE t.conversation_id = ? AND t.state = 'done' AND h.causes = '["behind"]' AND h.state IN ('done', 'clear') AND h.created_at >= ?
+         ORDER BY h.created_at DESC LIMIT 2`,
         cid,
         now - 7 * DAY,
       );
       if (checks.length === 2 && checks.every((x) => !x.found)) return void mark();
-      this.report({ scope: 'chat', accountId: c.accountId, conversationId: cid, from: newest, to: c.ts + 1, strength: 'likely', cause: 'behind', note: 'The network has newer messages here than the hub' });
+      this.report({ scope: 'chat', accountId: c.accountId, conversationId: cid, from: upTo ?? c.ts - HOUR, to: c.ts + 1, strength: 'likely', cause: 'behind', note: 'The network has newer messages here than the hub' });
       mark();
     }
   }
@@ -616,8 +649,9 @@ export class CatchUp implements EventWatch {
     return ((r?.t as number | null) ?? 0) >= now - READ_RECENTLY_MS;
   }
 
-  private newest(cid: string): number | null {
-    return (this.store.one<Row>('SELECT MAX(ts) AS t FROM message WHERE conversation_id = ?', cid)?.t as number | null) ?? null;
+  /** The newest message held, or the newest up to `upTo`. */
+  private newest(cid: string, upTo = Number.MAX_SAFE_INTEGER): number | null {
+    return (this.store.one<Row>('SELECT MAX(ts) AS t FROM message WHERE conversation_id = ? AND ts <= ?', cid, upTo)?.t as number | null) ?? null;
   }
 
   /** The waiting events' marker: gone once nothing waits, saved when it changed and every so often while events wait. */
@@ -700,62 +734,64 @@ export class CatchUp implements EventWatch {
     const from = h.from_ts as number;
     const to = h.to_ts as number;
     const all = !!h.all_chats;
-    const causes = JSON.parse(h.causes) as P.CatchUpCause[];
-    // Someone said so, or a message was lost there: the chat is fetched whatever it looks like.
-    const named = causes.some((c) => c === 'report' || c === 'lost' || c === 'adapter');
-    // Each chat with what planning needs in one statement: its pace before the stretch, whether it had messages
+    const named = JSON.parse(h.named || '{}') as Named;
+    // Each chat with what planning needs in one statement: its pace before its stretch, whether it had messages
     // right around it, and when you last read it.
     const cols = `c.id, c.shape, c.variant,
       (SELECT COUNT(*) FROM message m WHERE m.conversation_id = c.id AND m.ts >= ?1 AND m.ts < ?2) AS before,
       EXISTS (SELECT 1 FROM message m WHERE m.conversation_id = c.id AND m.ts >= ?3 AND m.ts < ?4) AS around,
       MAX(COALESCE((SELECT last_visit FROM place_usage p WHERE p.kind = 'conversation' AND p.id = c.id), 0),
           COALESCE((SELECT MAX(last_read_ts) FROM vantage r WHERE r.target_kind = 'conversation' AND r.target_id = c.id), 0)) AS read_at`;
-    const args = [from - RATE_MS, from, from - AROUND_MS, to + AROUND_MS];
-    const convs =
-      h.scope === 'chat'
-        ? this.store.raw<Row>(`SELECT ${cols} FROM conversation c WHERE c.id = ?5`, ...args, h.conversation_id)
-        : this.store.raw<Row>(
-            `SELECT ${cols} FROM conversation c
-             JOIN vantage v ON v.target_kind = 'conversation' AND v.target_id = c.id AND v.account_id = ?5
-             WHERE c.shape IN ('direct', 'group', 'channel', 'thread') AND c.archived = 0`,
-            ...args,
-            h.account_id,
-          );
+    const args = (a: number, b: number) => [a - RATE_MS, a, a - AROUND_MS, b + AROUND_MS];
     const left = new Map<string, number>();
     const leave = (why: string) => left.set(why, (left.get(why) ?? 0) + 1);
-    const picked: { id: string; expected: number; score: number; tie: number; why: string; direct: boolean; around: boolean }[] = [];
-    for (const c of convs) {
-      if (NO_MESSAGES.has(c.variant)) continue;
-      const expected = ((c.before as number) / RATE_MS) * (to - from);
+    type Pick = { id: string; from: number; to: number; expected: number; score: number; tie: number; why: string; direct: boolean; around: boolean; named: boolean };
+    const picked: Pick[] = [];
+    const pick = (c: Row, a: number, b: number, isNamed: boolean): Pick => {
+      const expected = ((c.before as number) / RATE_MS) * (b - a);
       const direct = c.shape === 'direct' || c.shape === 'group';
       const read = (c.read_at as number) >= now - READ_RECENTLY_MS;
-      if (h.scope === 'account' && !all) {
-        // A direct chat or a group goes in if it was busy enough then, or had messages right around the stretch (a
-        // conversation that started that day has no pace yet): each one costs a page, wanted or not.
-        // Direct chats and groups: their tail is cut below, together.
-        if (!direct && !read) {
-          leave("you don't read them");
-          continue;
-        }
-        if (!direct && expected < MIN_EXPECTED) {
-          leave('quiet before then');
-          continue;
-        }
-      }
-      if (h.scope === 'chat' && !all && !named && !direct && !read) {
-        leave("you don't read it");
-        continue;
-      }
-      const why = direct ? (c.shape === 'direct' ? 'a direct chat' : 'a group') : read ? 'a channel you read' : 'a channel';
+      const why = isNamed ? 'named by a report' : direct ? (c.shape === 'direct' ? 'a direct chat' : 'a group') : read ? 'a channel you read' : 'a channel';
       // Ranked by messages likely missed, a direct chat or group's counting three times; among chats as quiet, a
       // direct chat first, then a channel you read.
       const weight = direct ? 3 : read ? 1 : 0.3;
-      picked.push({ id: c.id, expected, direct, around: !!c.around, why, score: weight * expected, tie: weight });
+      return { id: c.id, from: a, to: b, expected, direct, around: !!c.around, why, score: weight * expected, tie: weight, named: isNamed };
+    };
+    if (h.scope === 'account')
+      for (const c of this.store.raw<Row>(
+        `SELECT ${cols} FROM conversation c
+         JOIN vantage v ON v.target_kind = 'conversation' AND v.target_id = c.id AND v.account_id = ?5
+         WHERE c.shape IN ('direct', 'group', 'channel', 'thread') AND c.archived = 0`,
+        ...args(from, to),
+        h.account_id,
+      )) {
+        if (NO_MESSAGES.has(c.variant) || named[c.id]) continue;
+        const p = pick(c, from, to, false);
+        if (!all) {
+          // A channel you do not read, or quiet before then, is left out. Direct chats and groups: their tail is cut
+          // below, together (each costs a page, wanted or not).
+          if (!p.direct && p.tie < 1) {
+            leave("you don't read them");
+            continue;
+          }
+          if (!p.direct && p.expected < MIN_EXPECTED) {
+            leave('quiet before then');
+            continue;
+          }
+        }
+        picked.push(p);
+      }
+    // The chats a report named are fetched whatever they look like, each over its own stretch (and the account's).
+    for (const [cid, st] of Object.entries(named)) {
+      const a = h.scope === 'account' ? Math.min(st.from, from) : st.from;
+      const b = h.scope === 'account' ? Math.max(st.to, to) : st.to;
+      const c = this.store.one<Row>(`SELECT ${cols} FROM conversation c WHERE c.id = ?5`, ...args(a, b), cid);
+      if (c && !NO_MESSAGES.has(c.variant)) picked.push(pick(c, a, b, true));
     }
     if (h.scope === 'account' && !all) {
       // The quietest direct chats and groups go while all that went were expected under DIRECT_TAIL messages between
       // them; one with messages right around the stretch stays however quiet (a conversation that started that day).
-      const quiet = picked.filter((p) => p.direct && !p.around).sort((a, b) => a.expected - b.expected || a.id.localeCompare(b.id));
+      const quiet = picked.filter((p) => p.direct && !p.around && !p.named).sort((a, b) => a.expected - b.expected || a.id.localeCompare(b.id));
       let sum = 0;
       const out = new Set<string>();
       for (const p of quiet) {
@@ -766,34 +802,38 @@ export class CatchUp implements EventWatch {
       }
       if (out.size) picked.splice(0, picked.length, ...picked.filter((p) => !out.has(p.id)));
     }
-    picked.sort((a, b) => b.score - a.score || b.tie - a.tie || a.id.localeCompare(b.id));
-    if (!all && picked.length > MAX_CHATS) {
-      for (let i = MAX_CHATS; i < picked.length; i++) leave(`beyond the first ${MAX_CHATS}`);
-      picked.length = MAX_CHATS;
+    // Named chats first, then by messages likely missed.
+    picked.sort((a, b) => Number(b.named) - Number(a.named) || b.score - a.score || b.tie - a.tie || a.id.localeCompare(b.id));
+    const cap = MAX_CHATS + picked.filter((p) => p.named).length;
+    if (!all && picked.length > cap) {
+      for (let i = cap; i < picked.length; i++) leave(`beyond the first ${MAX_CHATS}`);
+      picked.length = cap;
     }
     const fetchable = this.can(h.account_id, 'history');
     if (!fetchable && h.scope === 'account' && !all)
       // Nothing will be fetched: the list is of the chats likely to have had messages then, for an import to fill.
       for (let i = picked.length - 1; i >= 0; i--)
-        if (picked[i].expected < MIN_EXPECTED) {
+        if (!picked[i].named && picked[i].expected < MIN_EXPECTED) {
           leave('quiet before then');
           picked.splice(i, 1);
         }
     const possible = h.strength === 'possible' && !all;
     // The likeliest few, checked first when the hole is only possible: the busiest, a direct chat before a channel.
-    const probes = new Set(
-      [...picked]
-        .filter((p) => p.expected >= 1 || (p.direct && p.expected >= 0.5))
+    // Named chats are always among them: something said those may be missing messages.
+    const probes = new Set([
+      ...picked.filter((p) => p.named).map((p) => p.id),
+      ...[...picked]
+        .filter((p) => !p.named && (p.expected >= 1 || (p.direct && p.expected >= 0.5)))
         .sort((a, b) => b.expected * (b.direct ? 2 : 1) - a.expected * (a.direct ? 2 : 1))
         .slice(0, PROBES)
         .map((p) => p.id),
-    );
+    ]);
     let state: P.CatchUpState = !fetchable ? 'unfetchable' : possible ? 'checking' : 'fetching';
     const notes = JSON.parse(h.notes) as string[];
     if (state !== 'unfetchable' && !picked.length) {
       // Nothing worth a page: clear, with the reasons in left_out (a channel you don't read, chats quiet then).
       state = 'clear';
-      notes.push(h.scope === 'chat' ? 'Not fetched: a channel you have not read lately' : 'No chat was likely to have had messages then');
+      notes.push(h.scope === 'chat' ? 'Not fetched: the chat cannot be read here' : 'No chat was likely to have had messages then');
     } else if (state === 'checking' && !probes.size) {
       state = 'clear';
       notes.push('No chat was busy enough then to be worth checking');
@@ -809,31 +849,20 @@ export class CatchUp implements EventWatch {
         const taskState = state === 'unfetchable' ? 'unfetchable' : state === 'clear' ? 'skipped' : 'queued';
         // A check with nothing worth checking: each chat says why it was not fetched, not why it was planned.
         const why = taskState === 'skipped' ? 'quiet then: no messages were expected' : p.why;
-        if (!t) return put.run(h.id, p.id, h.account_id, rank, probes.has(p.id) ? 1 : 0, p.expected, why, taskState, from, to, now);
+        if (!t) return put.run(h.id, p.id, h.account_id, rank, probes.has(p.id) ? 1 : 0, p.expected, why, taskState, p.from, p.to, now);
         // Planned again (a wider stretch, a surer cause, every chat asked for): a finished chat goes again only if
-        // its stretch grew; the walk starts over from the top, and the spans skip what it fetched.
-        const grew = from < t.from_ts || to > t.to_ts;
+        // its stretch grew. Grown further back, the walk goes on from where it was; grown at its end, it starts at the
+        // new end, and the spans its pages recorded skip what it read.
+        const grew = p.from < t.from_ts || p.to > t.to_ts;
         const again = t.state === 'queued' || grew || (t.state === 'skipped' && taskState === 'queued');
         // A stretch that grew is a new walk with its own page budget. Grown only further back, the walk goes on from
         // where it was; grown at the end, it starts at the new end and, reaching the old one, jumps to where it was
         // (`resume`): an account without spans (no `oldest`) would otherwise read it all again.
-        const later = to > t.to_ts;
-        const cursor = !grew ? t.cursor : later ? null : t.cursor;
-        let walk: string | null = t.walk;
-        if (grew) {
-          let w: { next?: string; at?: number; resumes?: { top: number; cursor: number }[] } = {};
-          try {
-            w = JSON.parse(t.walk || '{}') ?? {};
-          } catch {
-            /* none */
-          }
-          // A page that had not landed counted from what was held in the old stretch: it counts afresh. Each earlier
-          // end the walk had passed is kept, so a stretch that grows at its end twice still skips what it read.
-          const resumes = [...(w.resumes ?? []), ...(later && t.cursor !== null ? [{ top: t.to_ts + 1, cursor: t.cursor }] : [])];
-          const kept = later ? {} : w.next && w.at !== undefined ? { next: w.next, at: w.at } : {};
-          walk = resumes.length || Object.keys(kept).length ? JSON.stringify({ ...kept, ...(resumes.length ? { resumes } : {}) }) : null;
-        }
-        update.run(rank, probes.has(p.id) ? 1 : 0, p.expected, again ? why : t.why, again ? taskState : t.state, Math.min(from, t.from_ts), Math.max(to, t.to_ts), cursor, walk, grew ? 0 : t.pages, again ? null : t.error, now, h.id, p.id);
+        const later = p.to > t.to_ts;
+        const cursor = grew && later ? null : t.cursor;
+        // The adapter's cursor goes with the walk's: kept only while the walk goes on from where it was.
+        const walk = grew && later ? null : t.walk;
+        update.run(rank, probes.has(p.id) ? 1 : 0, p.expected, again ? why : t.why, again ? taskState : t.state, Math.min(p.from, t.from_ts), Math.max(p.to, t.to_ts), cursor, walk, grew ? 0 : t.pages, again ? null : t.error, now, h.id, p.id);
       });
       const leftOut = [...left].map(([why, count]) => ({ why, count }));
       if (state === 'unfetchable') notes.push(`${acc.label || 'This account'} cannot fetch older messages from ${acc.network}: an import (Settings → Import) can fill this`);
@@ -901,134 +930,60 @@ export class CatchUp implements EventWatch {
   }
 
   /**
-   * One page of a chat back from its cursor, over what is known whole; whether the chat is done.
-   *
-   * A page's messages may land after the answer (a remote account's events come on their own timer, a big batch in
-   * slices), so it waits for them before counting what it found. Only a page that says where it ended (`oldest`) is
-   * recorded as whole: from one that does not, the hub cannot tell which messages were the page's.
+   * One page of a chat back from its cursor, over what is known whole (historypage.ts); whether the chat is done.
+   * What it found is the page's own messages the hub did not hold, inside the stretch: older history a page reaches
+   * below it is not missing, and a message the network replays live meanwhile is not the page's.
    */
   private async page(t: Row): Promise<{ count: number; done: boolean; deferMs?: number }> {
     const cid = t.conversation_id as string;
-    const now = () => this.clock.now();
     const native = this.store.nativeOf('conversation', cid)?.nativeId;
-    const save = (patch: { cursor?: number | null; walk?: string | null; state?: string; error?: string | null; pages?: number; found?: number }, row: Row = t) =>
+    const save = (patch: { cursor?: number | null; walk?: object | null; state?: string; error?: string | null; pages?: number; found?: number }) =>
       this.store.db
         .query('UPDATE catchup_task SET cursor = ?, walk = ?, state = ?, error = ?, pages = pages + ?, found = found + ?, updated_at = ? WHERE hole_id = ? AND conversation_id = ?')
-        .run(patch.cursor === undefined ? row.cursor : patch.cursor, patch.walk === undefined ? null : patch.walk, patch.state ?? 'queued', patch.error ?? null, patch.pages ?? 0, patch.found ?? 0, now(), t.hole_id, cid);
+        .run(patch.cursor === undefined ? t.cursor : patch.cursor, patch.walk ? JSON.stringify(patch.walk) : null, patch.state ?? 'queued', patch.error ?? null, patch.pages ?? 0, patch.found ?? 0, this.clock.now(), t.hole_id, cid);
     if (!native) return (save({ state: 'failed', error: 'the chat is gone' }), { count: 0, done: true });
-    /**
-     * The adapter's cursor at `at`; a page asked at `at` whose messages had not landed (`before`: held in the stretch
-     * from `from` then; `tries`: times asked again); where a walk that restarted at a new end goes on (`resumes`).
-     */
-    let mark: { next?: string; at?: number; before?: number; from?: number; tries?: number; resumes?: { top: number; cursor: number }[] } = {};
+    // The adapter's cursor at `at`; `tries`: times the page at `at` was asked again for not landing.
+    let mark: { next?: string; at?: number; tries?: number } = {};
     try {
       mark = JSON.parse(t.walk || '{}') ?? {};
     } catch {
       /* none */
     }
-    let cursor: number = t.cursor ?? t.to_ts + 1;
-    let resumes = mark.resumes ?? [];
-    for (;;) {
-      const s = spanAt(this.store, cid, cursor);
-      const r = resumes.find((x) => cursor <= x.top);
-      if (s) cursor = s.from_ts;
-      else if (r) {
-        cursor = Math.min(cursor, r.cursor);
-        resumes = resumes.filter((x) => x !== r);
-      } else break;
-    }
-    const keep = (w: Record<string, unknown>) => JSON.stringify(resumes.length ? { ...w, resumes } : w);
+    const cursor = skipWhole(this.store, cid, t.cursor ?? t.to_ts + 1);
     if (cursor <= t.from_ts) return (save({ cursor, state: 'done' }), { count: 0, done: true });
-    if (t.pages >= MAX_PAGES) return (save({ cursor, state: 'done', error: `Stopped after ${MAX_PAGES} pages; older messages in the stretch were not fetched` }), { count: 0, done: true });
-    // Found: what came into the stretch, not older history the page reached below it.
-    const inStretch = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts >= ? AND ts < ?');
-    const held = () => (inStretch.get(cid, t.from_ts, cursor) as Row).n as number;
-    const below = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts < ?');
-    const heldBelow = () => (below.get(cid, cursor) as Row).n as number;
-    const again = mark.at === cursor && typeof mark.before === 'number' && mark.from === t.from_ts;
-    const before = again ? mark.before! : held();
-    const tries = again ? (mark.tries ?? 0) : 0;
-    const n0 = heldBelow();
-    const cmd = { t: 'history' as const, conversation: native, beforeTs: cursor, limit: PAGE, pace: 'read' as const, ...(mark.next && mark.at === cursor ? { cursor: mark.next } : {}) };
-    const r = (await this.o.command(t.account_id, cmd, 180_000)) as P.HistoryResult | null;
-    if (r?.deferMs && !r.count) return { count: 0, done: false, deferMs: r.deferMs };
-    const count = r?.count ?? 0;
-    const oldest: number | null = typeof r?.oldest === 'number' && Number.isFinite(r.oldest) ? r.oldest : null;
-    if (oldest !== null) this.givesOldest.add(t.account_id);
-    const arrived = !count || (await this.landed(cid, cursor, count, oldest, heldBelow, n0));
-    // Asked again LAND_RETRIES times and still moving (something else writing this chat, a queue that never empties):
-    // what came is counted, and nothing of this page is recorded as whole.
-    const sure = arrived;
-
-    // While it waited, the hole may have been stopped or planned again: what this page says is no longer the task's.
+    const capped = !(JSON.parse(this.store.one<Row>('SELECT causes FROM catchup_hole WHERE id = ?', t.hole_id)?.causes ?? '[]') as string[]).includes('asked');
+    if (capped && t.pages >= MAX_PAGES) return (save({ cursor, state: 'done', error: `Stopped after ${MAX_PAGES} pages; older messages in the stretch were not fetched` }), { count: 0, done: true });
+    const p = await readPage(this.store, this.o, { accountId: t.account_id, cid, native, beforeTs: cursor, cursor: mark.next && mark.at === cursor ? mark.next : undefined });
+    if (p.kind === 'defer') return { count: 0, done: false, deferMs: p.deferMs };
+    // While it was out, the hole may have been stopped or planned again: what this page says is no longer the task's.
+    // (Whatever it recorded whole stays: that is true of the chat, whoever asked.)
     const now_ = this.store.one<Row>('SELECT * FROM catchup_task WHERE hole_id = ? AND conversation_id = ?', t.hole_id, cid);
     const same = !!now_ && now_.state === 'queued' && now_.cursor === t.cursor && now_.walk === t.walk && now_.from_ts === t.from_ts && now_.to_ts === t.to_ts;
-    if (!arrived && tries < LAND_RETRIES) {
-      // Not in yet (a long queue in the supervisor): nothing is recorded, and the same page is asked again later,
-      // counting from what was held before the first asking.
-      if (same) save({ cursor, walk: keep({ ...(mark.at === cursor && mark.next ? { next: mark.next } : {}), at: cursor, before, from: t.from_ts, tries: tries + 1 }), state: 'queued' });
-      return { count, done: false, deferMs: LAND_AGAIN_MS };
+    if (p.kind === 'unlanded') {
+      const tries = mark.at === cursor ? (mark.tries ?? 0) : 0;
+      if (tries >= LAND_RETRIES) {
+        if (same) save({ cursor, state: 'failed', error: NOT_LANDED, pages: 1 });
+        return { count: p.count, done: true };
+      }
+      if (same) {
+        save({ cursor, walk: { ...(mark.at === cursor && mark.next ? { next: mark.next } : {}), at: cursor, tries: tries + 1 } });
+        // What it brought may still come and be stored, uncounted: this chat cannot say it was whole.
+        this.store.db.query('UPDATE catchup_task SET unsure = 1 WHERE hole_id = ? AND conversation_id = ?').run(t.hole_id, cid);
+      }
+      return { count: p.count, done: false, deferMs: LAND_AGAIN_MS };
     }
-    const found = Math.max(0, held() - before);
-
-    if (oldest !== null && oldest >= cursor) {
-      // Messages from after the cursor: the network does not page back by time here, and a walk would go nowhere.
-      if (same) save({ state: 'failed', error: 'The network sent newer messages than asked for: it cannot fetch by time here', pages: 1, found });
-      return { count, done: true };
+    const found = p.fresh.filter((ts) => ts >= t.from_ts && ts <= t.to_ts).length;
+    if (p.kind === 'failed') {
+      if (same) save({ state: 'failed', error: p.error, pages: 1, found });
+      return { count: p.count, done: true };
     }
-    if (!r || r.done || !count) {
-      // The start of the chat. Whole below the cursor only when the network says where its pages end: one that does
-      // not may answer an empty page for a chat it could not read.
-      if (sure && r?.done && (oldest !== null || this.givesOldest.has(t.account_id))) addSpan(this.store, cid, 0, cursor);
+    if (p.end) {
       if (same) save({ cursor: 0, state: 'done', pages: 1, found });
-      return { count, done: true };
+      return { count: p.count, done: true };
     }
-    let next: number | null = oldest;
-    if (next !== null) {
-      if (sure) addSpan(this.store, cid, next, cursor);
-    } else {
-      // Where the page ended, as best it can tell: the `count`-th newest held below the cursor. Not recorded as whole.
-      next = (this.store.one<Row>('SELECT ts FROM message WHERE conversation_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1 OFFSET ?', cid, cursor, count - 1)?.ts as number | undefined) ?? null;
-      if (next === null) {
-        if (same) save({ state: 'failed', error: 'The page did not arrive', pages: 1, found });
-        return { count, done: true };
-      }
-    }
-    const done = next <= t.from_ts && !resumes.length;
-    if (same) save({ cursor: next, walk: done ? null : keep(typeof r.next === 'string' ? { next: r.next, at: next } : {}), state: done ? 'done' : 'queued', pages: 1, found });
-    return { count, done };
-  }
-
-  /**
-   * Waits until a page's messages are in: nothing waits in the supervisor's queue, and what the page covered held still
-   * from one look to the next (the stretch from `oldest` to the cursor when the page said where it ended, else the
-   * whole chat below the cursor). With `oldest`, it is in once that stretch holds as many as the page sent and the
-   * chat has moved since it was asked (`n0`: held below the cursor then; a stretch that already held enough, with
-   * messages deleted on the network but kept here, proves nothing). Looks while the queue is busy do not count (a
-   * snapshot after a gap can take minutes): only LAND_TRIES quiet ones, or LAND_MAX_MS in all. A page that held fewer
-   * than it said, with nothing changing for LAND_STILL looks, is in (kinds the hub does not keep). Whether it is in.
-   */
-  private async landed(cid: string, cursor: number, count: number, oldest: number | null, heldBelow: () => number, n0: number): Promise<boolean> {
-    const inPage = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts >= ? AND ts < ?');
-    const covered = () => (oldest === null ? heldBelow() : ((inPage.get(cid, oldest, cursor) as Row).n as number));
-    const until = this.clock.now() + LAND_MAX_MS;
-    let last = -1;
-    let still = 0;
-    for (let tries = 0; tries < LAND_TRIES && this.clock.now() < until; ) {
-      await sleep(this.clock, LAND_MS);
-      const n = covered();
-      if ((this.o.backlog?.() ?? 0) > 0) {
-        last = -1;
-        still = 0;
-        continue;
-      }
-      tries++;
-      still = n === last ? still + 1 : 0;
-      last = n;
-      if (!still) continue;
-      if (oldest === null || (n >= count && heldBelow() !== n0) || still >= LAND_STILL) return true;
-    }
-    return false;
+    const done = p.oldest! <= t.from_ts;
+    if (same) save({ cursor: p.oldest, walk: done || !p.next ? null : { next: p.next, at: p.oldest }, state: done ? 'done' : 'queued', pages: 1, found });
+    return { count: p.count, done };
   }
 
   /** A chat of the hole is done: whether the hole is, and what the first chats of a check said. */
@@ -1041,7 +996,8 @@ export class CatchUp implements EventWatch {
     if (h.state === 'checking') {
       if (sum(`probe = 1 AND state = 'queued'`).n) return;
       const found = sum('probe = 1').found as number;
-      const failed = sum(`probe = 1 AND state != 'done'`).n as number;
+      // A chat that could not be read, or one a page's messages came late in (maybe uncounted), did not show it whole.
+      const failed = sum(`probe = 1 AND (state != 'done' OR unsure = 1)`).n as number;
       if (found > 0 || failed > 0) {
         // Messages missing, or a chat that could not be checked: either way the first chats did not show it whole.
         notes.push(found > 0 ? `${plural(found, 'missing message')} in the first chats checked: fetching the rest` : `${plural(failed, 'chat')} of the first could not be checked: fetching the rest`);
@@ -1061,15 +1017,17 @@ export class CatchUp implements EventWatch {
       this.store.db.query(`UPDATE catchup_hole SET state = 'done', notes = ?, updated_at = ? WHERE id = ?`).run(JSON.stringify(notes.slice(-20)), now, holeId);
     }
     else this.store.db.query('UPDATE catchup_hole SET updated_at = ? WHERE id = ?').run(now, holeId);
-    if (h.scope === 'chat' && sum('1').found > 0) this.nearby(h);
+    // History you asked for is not a trouble at one time: only what the hub found looks for others near it.
+    if (h.scope === 'chat' && !(JSON.parse(h.causes) as string[]).includes('asked') && sum('1').found > 0) this.nearby(h);
   }
 
   /** Several chats of one account missed messages around the same time: the account's other chats are checked too. */
   private nearby(h: Row) {
     const now = this.clock.now();
+    // Each chat that was missing messages then, in holes of named chats (one hole may name many).
     const rows = this.store.raw<Row>(
-      `SELECT h.from_ts, h.to_ts FROM catchup_hole h WHERE h.scope = 'chat' AND h.account_id = ? AND h.created_at >= ? AND h.from_ts <= ? AND h.to_ts >= ?
-       AND EXISTS (SELECT 1 FROM catchup_task t WHERE t.hole_id = h.id AND t.found > 0)`,
+      `SELECT MIN(t.from_ts) AS from_ts, MAX(t.to_ts) AS to_ts FROM catchup_task t JOIN catchup_hole h ON h.id = t.hole_id
+       WHERE h.scope = 'chat' AND h.account_id = ? AND h.created_at >= ? AND t.from_ts <= ? AND t.to_ts >= ? AND t.found > 0 GROUP BY t.conversation_id`,
       h.account_id,
       now - DAY,
       h.to_ts + MERGE_MS,
@@ -1096,6 +1054,8 @@ export class CatchUp implements EventWatch {
     const w = this.working.get(h.account_id);
     // Between pages the worker still names the chat it read last: only while the hole is open is it on it.
     const here = w && w.holeId === h.id && ['checking', 'fetching'].includes(h.state) ? w : null;
+    // The stretch shown spans the account's and every named chat's.
+    const named = Object.values(JSON.parse(h.named || '{}') as Named);
     const v: P.CatchUpHoleView = {
       id: h.id,
       scope: h.scope,
@@ -1104,8 +1064,9 @@ export class CatchUp implements EventWatch {
       network: (acc?.network as P.Network | undefined) ?? null,
       conversationId: h.conversation_id ?? null,
       conversationName: c?.name ?? null,
-      from: h.from_ts,
-      to: h.to_ts,
+      named: named.length,
+      from: Math.min(h.from_ts, ...named.map((n) => n.from)),
+      to: Math.max(h.to_ts, ...named.map((n) => n.to)),
       strength: h.strength,
       causes: JSON.parse(h.causes),
       notes: JSON.parse(h.notes),

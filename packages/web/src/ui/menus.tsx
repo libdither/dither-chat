@@ -32,6 +32,7 @@ import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from '../opening.ts';
 import { canIndex, startIndexing } from '../indexjobs.ts';
+import { canCheck, checkChat } from '../catchupask.ts';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from '../opening.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';
@@ -477,6 +478,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[], channelR
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
         { label: `Search in ${noun}`, icon: 'search', run: () => go({ view: 'search', q: `in:${c.id}` }) },
         c.shape !== 'self' && canIndex('conversation', c.id) && { label: `Index This ${channel ? 'Channel' : 'Chat'}…`, icon: 'archive', run: () => startIndexing('conversation', c.id) },
+        c.shape !== 'self' && canCheck(c.id) && { label: 'Check for Missing Messages', icon: 'refresh', run: () => void checkChat(c.id) },
         { label: 'Copy Link', icon: 'link', run: () => copy(link ?? appLink({ view: 'inbox', conv: c.id }), 'Link copied') },
       ],
       [

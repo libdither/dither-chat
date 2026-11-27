@@ -97,6 +97,8 @@ function heldFor(e: unknown): string | null {
 }
 /** Adapter events applied in one transaction, and between turns of the event loop when a batch is long. */
 export const EVENTS_STEP = 32;
+/** The hub's own marker among an account's events (`settled`): never an adapter's, and nothing to store. */
+const BARRIER = 'hub.settled';
 /** How long held events wait before they are tried again, and how many times in a row. */
 const HELD_RETRY_MS = 1000;
 const HELD_TRIES = 60;
@@ -382,16 +384,48 @@ export class Supervisor {
    */
   apply(accountId: string, events: P.AdapterEvent[]) {
     this.tell((w) => w.heard(accountId));
+    this.enqueue(accountId, events, true);
+  }
+
+  /** Applied now, or behind what waits for the account (`tell`: the watch hears they wait). */
+  private enqueue(accountId: string, events: P.AdapterEvent[], tell: boolean) {
     const waiting = this.held.get(accountId);
     if (waiting) {
       waiting.push(...events);
-      this.tell((w) => w.queued(accountId, events));
+      if (tell) this.tell((w) => w.queued(accountId, events));
       return;
     }
     if (!this.inbox.length && events.length <= EVENTS_STEP) return this.applyNow(accountId, events);
     this.inbox.push({ account: accountId, events: [...events] });
-    this.tell((w) => w.queued(accountId, events));
+    if (tell) this.tell((w) => w.queued(accountId, events));
     this.work();
+  }
+
+  /** Barriers waiting their turn (`settled`), by id. */
+  private barriers = new Map<number, () => void>();
+  private barrierSeq = 0;
+
+  /**
+   * Once every event this account sent before now is applied (stored and committed) or lost: true; false if that
+   * takes longer than `timeoutMs` (a database held locked). A marker goes into the account's events behind what came
+   * before it, in their order, and is passed once the transaction that applied it commits. A history page's messages
+   * come before its answer (an adapter's socket keeps its order; dither-accounts' manager sends a call's events
+   * before its result), so a page read through historypage.ts waits on this to know they are in.
+   */
+  settled(accountId: string, timeoutMs = 120_000): Promise<boolean> {
+    return new Promise((resolve) => {
+      const id = ++this.barrierSeq;
+      const timer = setTimeout(() => {
+        this.barriers.delete(id);
+        resolve(false);
+      }, timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+      this.barriers.set(id, () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+      this.enqueue(accountId, [{ t: BARRIER, id } as unknown as P.AdapterEvent], false);
+    });
   }
 
   /** Tells the watch (catchup.ts), which never stops an event: whatever it throws is logged and dropped. */
@@ -411,6 +445,9 @@ export class Supervisor {
       .finally(() => {
         this.applying = null;
         this.tidyPending();
+        // A batch that came after the last slice looked and before this (the worker still counted as running): its
+        // own run now, rather than waiting for the next event to start one.
+        if (this.inbox.length) this.work();
       });
   }
 
@@ -473,7 +510,17 @@ export class Supervisor {
         console.error(`[${accountId}] applying ${events.length} events failed:`, e);
       }
     }
-    this.onApplied?.(busyAt < 0 ? events.length : busyAt);
+    const applied = busyAt < 0 ? events.length : busyAt;
+    this.onApplied?.(applied);
+    // Committed: the barriers among them are passed (one in a transaction that failed is held with it).
+    if (this.barriers.size)
+      for (let i = 0; i < applied; i++) {
+        const e = events[i] as { t: string; id?: unknown };
+        if (e.t === BARRIER && typeof e.id === 'number') {
+          this.barriers.get(e.id)?.();
+          this.barriers.delete(e.id);
+        }
+      }
     if (busyAt < 0) return;
     // After anything already held for it (none: a held account's events wait in `held` and never reach here).
     const held = events.slice(busyAt);
@@ -505,7 +552,7 @@ export class Supervisor {
       // What came for the account while it was held and is still queued comes after it.
       for (const b of this.inbox) if (b.account === id) evs.push(...b.events.splice(0));
       this.inbox = this.inbox.filter((b) => b.events.length);
-      this.apply(id, evs);
+      this.enqueue(id, evs, true);
     }
     if (!this.held.size) {
       this.heldTries = 0;
@@ -679,6 +726,8 @@ export class Supervisor {
 
   /** One event. `held`: the database could not take it for now (locked, disk full) and nothing of it was applied. */
   protected handle(accountId: string, ev: P.AdapterEvent): { held: string } | void {
+    // A barrier (`settled`): passed once its transaction commits, in applyNow.
+    if ((ev as { t: string }).t === BARRIER) return;
     if (ev.t === 'reply') {
       const p = this.pending.get(ev.id);
       if (!p) return;

@@ -19,8 +19,9 @@ export type CatchUpStrength = 'possible' | 'likely' | 'sure';
  * - `report`: someone (a person, a script) told the hub, through `POST /api/catch-up/report`.
  * - `nearby`: several chats of one account turned out to be missing messages around the same time, so the rest of the
  *   account's chats are checked for that time too.
+ * - `asked`: you asked, from the app (Check for missing messages on a chat, or on an account in Settings).
  */
-export type CatchUpCause = 'lost' | 'dropped' | 'offline' | 'adapter' | 'behind' | 'report' | 'nearby';
+export type CatchUpCause = 'lost' | 'dropped' | 'offline' | 'adapter' | 'behind' | 'report' | 'nearby' | 'asked';
 
 /**
  * Where a hole is in its life:
@@ -38,14 +39,19 @@ export type CatchUpState = 'checking' | 'fetching' | 'done' | 'clear' | 'unfetch
 export interface CatchUpReport {
   /** The account whose chats may miss messages; or give `conversationId` alone. */
   accountId?: string;
-  /** One chat: a chat hole, not the account's. */
+  /** One chat: named in the account's hole, not every chat of it. */
   conversationId?: string;
-  /** The stretch of time, ms. `to` absent: until now. */
+  /** The stretch of time, ms. `to` absent: until now. With `asked`, 0 is the whole history. */
   from: number;
   to?: number;
   strength?: CatchUpStrength;
   /** A short line on why, shown with the hole. */
   note?: string;
+  /**
+   * You asked, from the app: sure, as far back as `from` (no two-week limit), no cap on pages, and for an account
+   * every chat of it, the ones a plan would leave out too.
+   */
+  asked?: boolean;
 }
 
 /** One chat a hole fetches. */
@@ -67,14 +73,16 @@ export interface CatchUpChatView {
 
 export interface CatchUpHoleView {
   id: string;
-  /** `account`: a stretch of time across an account's chats; `chat`: one chat. */
+  /** `account`: a stretch of time across an account's chats; `chat`: only the chats reports named. */
   scope: 'account' | 'chat';
   accountId: string;
   accountName: string;
   network: Network | null;
-  /** A chat hole's chat. */
+  /** The first chat a report named in it (a `chat` hole's, when it names one). */
   conversationId: string | null;
   conversationName: string | null;
+  /** How many chats reports named in it, each fetched whatever the plan says of the rest. */
+  named: number;
   from: number;
   to: number;
   strength: CatchUpStrength;

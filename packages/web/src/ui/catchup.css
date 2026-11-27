@@ -51,3 +51,31 @@
   flex-basis: 100%;
   color: var(--text-faint);
 }
+/* Check an account: one line each, its asks at the end. */
+.catchup-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.catchup-account {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.catchup-account-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.catchup-account-buttons,
+.catchup-account .job-pill {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}

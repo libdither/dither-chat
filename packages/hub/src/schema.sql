@@ -985,14 +985,16 @@ CREATE TABLE IF NOT EXISTS history_span (
 ) WITHOUT ROWID;
 
 -- Catching up (catchup.ts, docs/catch-up.md): a stretch of time where the hub may be missing messages, across an
--- account's chats (scope 'account') or in one chat ('chat'), and what it did about it.
+-- account's chats (scope 'account') or only in the chats reports named ('chat'), and what it did about it. One open
+-- hole per account and time: reports close to it join it.
 CREATE TABLE IF NOT EXISTS catchup_hole (
   id              TEXT PRIMARY KEY,
   scope           TEXT NOT NULL CHECK (scope IN ('account', 'chat')),
   account_id      TEXT NOT NULL,
-  conversation_id TEXT,                   -- a chat hole's chat
-  from_ts         INTEGER NOT NULL,
+  conversation_id TEXT,                   -- the first chat a report named
+  from_ts         INTEGER NOT NULL,       -- the account's stretch; a 'chat' hole's spans its named chats
   to_ts           INTEGER NOT NULL,
+  named           TEXT,                   -- JSON {conversation id: {from, to}}: chats fetched whatever the plan says
   strength        TEXT NOT NULL CHECK (strength IN ('possible', 'likely', 'sure')),
   causes          TEXT NOT NULL,          -- JSON CatchUpCause[], first first
   notes           TEXT NOT NULL,          -- JSON string[], newest last
@@ -1005,7 +1007,7 @@ CREATE TABLE IF NOT EXISTS catchup_hole (
 );
 CREATE INDEX IF NOT EXISTS catchup_hole_account ON catchup_hole(account_id, state);
 
--- One chat a hole fetches: paged back from to_ts to from_ts, jumping over history_span.
+-- One chat a hole fetches: paged back from to_ts to from_ts, jumping over history_span (historypage.ts).
 CREATE TABLE IF NOT EXISTS catchup_task (
   hole_id         TEXT NOT NULL REFERENCES catchup_hole(id) ON DELETE CASCADE,
   conversation_id TEXT NOT NULL,
@@ -1018,9 +1020,10 @@ CREATE TABLE IF NOT EXISTS catchup_task (
   from_ts         INTEGER NOT NULL,
   to_ts           INTEGER NOT NULL,
   cursor          INTEGER,                -- the next page ends before this ts; NULL: from to_ts
-  walk            TEXT,                   -- JSON {next, at}: the adapter's own cursor for that place
+  walk            TEXT,                   -- JSON {next, at, tries}: the adapter's own cursor there; times asked again
   pages           INTEGER NOT NULL DEFAULT 0,
   found           INTEGER NOT NULL DEFAULT 0,
+  unsure          INTEGER NOT NULL DEFAULT 0, -- a page's messages came after its answer: `found` may miss some
   error           TEXT,
   updated_at      INTEGER NOT NULL,
   PRIMARY KEY (hole_id, conversation_id)

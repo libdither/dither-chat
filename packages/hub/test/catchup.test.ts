@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { CatchUp, CLAIM_SETTLE_MS, OFFLINE_MIN_MS, PAGE, PLAN_DELAY_MS } from '../src/catchup.ts';
+import { LAND_RETRIES, NOT_LANDED } from '../src/historypage.ts';
 import { BRISK, ReadingPace } from '../src/readingpace.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
@@ -88,9 +89,12 @@ function world(o: { caps?: P.Capability[]; held?: string[]; path?: string; insid
 }
 
 /**
- * A catch-up over the world's network: each history page as Discord's extractor answers it.
- * - `late`: the page's messages are stored a moment (`lateMs`) after the answer, as a remote account's are (the
- *   manager sends events on a short timer and the answer at once); `onLand` is told when.
+ * A catch-up over the world's network: each history page as Discord's extractor answers it, its messages handed to a
+ * real supervisor (queue, slices, transactions) before the answer, as an adapter's socket and dither-accounts'
+ * manager send them; the catch-up waits on the supervisor's barrier (Supervisor.settled), as the hub does.
+ * - `behind`: that many unrelated events of the account wait in the supervisor's queue before each page's.
+ * - `answerFirst`: the answer comes before the page's messages, which land `lateMs` later (a manager from before
+ *   it sent a call's events first); a function says it per page.
  * - `oldest: false`: the answer does not say where the page ended (Telegram, WhatsApp, X, Meta, Google Messages).
  * - `fail`: each page fails, as for a channel the account lost access to.
  */
@@ -98,16 +102,21 @@ function catchUp(
   store: Store,
   acc: AccountRow,
   net: Net,
-  o: { online?: () => boolean; start?: boolean; at?: number; backlog?: () => number; late?: boolean; lateMs?: number; onLand?: () => void; oldest?: boolean; fail?: string; pace?: typeof BRISK } = {},
+  o: { online?: () => boolean; start?: boolean; at?: number; backlog?: () => number; behind?: number; answerFirst?: boolean | (() => boolean); lateMs?: number; oldest?: boolean; fail?: string; pace?: typeof BRISK } = {},
 ) {
   const clock = new FakeClock(o.at ?? NOW);
   const asked: { conversation: string; beforeTs: number; cursor?: string }[] = [];
+  const sup = new Supervisor(store, { hubAdapterUrl: '', dataDir: '/nonexistent', repoRoot: '/nonexistent', inproc: () => null, onFresh: () => {} });
+  // A long batch's slices take the turns the fake clock takes (a timer's turn waits behind them in Bun).
+  sup.slices = { pause: () => new Promise((r) => setImmediate(r)) };
   let answer = () => {};
+  let filler = 0;
   const c = new CatchUp(store, {
     clock,
     online: o.online ?? (() => true),
-    backlog: o.backlog,
+    backlog: o.backlog ?? (() => sup.backlog),
     pace: new ReadingPace(store, o.pace ?? BRISK, clock),
+    settled: (a) => sup.settled(a),
     command: async (_a, cmd) => {
       expect(cmd).toMatchObject({ t: 'history', limit: PAGE, pace: 'read' });
       asked.push({ conversation: cmd.conversation, beforeTs: cmd.beforeTs, cursor: cmd.cursor });
@@ -115,15 +124,19 @@ function catchUp(
       if (o.fail) throw new Error(o.fail);
       const below = net[cmd.conversation].filter((m) => m.ts < cmd.beforeTs);
       const page = below.slice(-cmd.limit);
-      const land = () => {
-        for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
-        o.onLand?.();
-      };
-      if (o.late) clock.setTimeout(land, o.lateMs ?? 5);
-      else land();
+      if (o.behind)
+        sup.apply(
+          acc.id,
+          Array.from({ length: o.behind }, () => ({ t: 'typing', conversation: 'cq', author: `p${filler++}`, stop: true }) as P.AdapterEvent),
+        );
+      const events = page.map((m): P.AdapterEvent => ({ t: 'message', message: m, live: false }));
+      const first = typeof o.answerFirst === 'function' ? o.answerFirst() : !!o.answerFirst;
+      if (first) clock.setTimeout(() => sup.apply(acc.id, events), o.lateMs ?? 5);
+      else sup.apply(acc.id, events);
       return { count: page.length, done: page.length === below.length, ...(o.oldest === false ? {} : { oldest: page[0]?.ts }), next: page[0]?.nativeId };
     },
   });
+  sup.watch = c;
   if (o.start !== false) c.start();
   /** Runs `f` as the next page is asked for, before it is answered. */
   const onAsk = (f: () => void) => {
@@ -132,7 +145,7 @@ function catchUp(
       f();
     };
   };
-  return { c, clock, asked, onAsk };
+  return { c, clock, asked, onAsk, sup };
 }
 
 const count = (store: Store, cid: string, from = 0, to = Number.MAX_SAFE_INTEGER) => (store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts >= ? AND ts <= ?').get(cid, from, to) as any).n as number;
@@ -394,7 +407,7 @@ describe('what the hub itself lost', () => {
     expect(c.list()[0]).toMatchObject({ scope: 'chat', conversationId: hub('d1'), causes: ['lost'], from: S1 - MIN - 1, notes: ['A message could not be stored: boom'] });
   });
 
-  test("the adapter's gap event: a hole for the account, or for the chats it names", () => {
+  test("the adapter's gap event: a hole for the account, the chats it names joining it", () => {
     const { store, acc, net, hub } = world();
     const { c } = catchUp(store, acc, net, { start: false });
     const sup = new Supervisor(store, { hubAdapterUrl: '', dataDir: '/nonexistent', repoRoot: '/nonexistent', inproc: () => null, onFresh: () => {} });
@@ -403,37 +416,55 @@ describe('what the hub itself lost', () => {
     sup.apply(acc.id, [{ t: 'gap', from: S0, conversations: ['cr'] }]);
     c.tick();
     const h = c.list();
-    expect(h.map((x) => [x.scope, x.conversationId, x.causes])).toEqual(
-      expect.arrayContaining([
-        ['account', null, ['adapter']],
-        ['chat', hub('cr'), ['adapter']],
-      ]),
-    );
-    expect(h.find((x) => x.scope === 'account')!.notes[0]).toBe('The account says it may have missed messages: the gateway session could not be resumed');
+    expect(h).toHaveLength(1);
+    expect(h[0]).toMatchObject({ scope: 'account', named: 1, causes: ['adapter'] });
+    expect(h[0].notes[0]).toBe('The account says it may have missed messages: the gateway session could not be resumed');
+    // A gap naming chats only: a hole of those chats.
+    const other = world();
+    const c2 = catchUp(other.store, other.acc, other.net, { start: false }).c;
+    c2.gap(other.acc.id, { t: 'gap', from: S0, conversations: ['cr', 'd1'] });
+    c2.tick();
+    expect(c2.list()).toHaveLength(1);
+    expect(c2.list()[0]).toMatchObject({ scope: 'chat', named: 2, conversationId: other.hub('cr') });
+    void hub;
   });
 });
 
 describe('what review found', () => {
-  test("a remote account's page lands after its answer: the check waits for it, finds what was missing, and fetches the rest", async () => {
+  test('a page applied in slices behind a long queue: the check waits for its own messages, finds what was missing, and fetches the rest', async () => {
     const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
-    const { c, clock } = catchUp(store, acc, net, { late: true });
+    const { c, clock } = catchUp(store, acc, net, { behind: 500 });
     const id = c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'possible', cause: 'offline', note: 'offline' })!;
     await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
     expect(c.get(id)).toMatchObject({ state: 'done', found: 12 });
     expect(count(store, hub('d1'), S0, S1)).toBe(12);
   });
-
-  test('pages that do not say where they ended are walked to the start of the stretch, and never recorded as whole', async () => {
+  test('pages that do not say where they ended are recorded whole from the messages that came, so a second check reads nothing again', async () => {
     const { store, acc, net, hub } = world({ inside: { d1: 180 } });
-    const { c, clock, asked } = catchUp(store, acc, net, { late: true, oldest: false });
+    const { c, clock, asked } = catchUp(store, acc, net, { oldest: false });
     const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
     await clock.until(() => c.get(id)!.state === 'done', DAY, 'the hole');
     expect(count(store, hub('d1'), S0, S1)).toBe(180);
     expect(c.get(id)).toMatchObject({ found: 180 });
     expect(asked.length).toBe(4);
-    expect(store.raw('SELECT 1 FROM history_span WHERE conversation_id = ?', hub('d1'))).toEqual([]);
+    // A later hole over the same stretch: the spans cover it.
+    await clock.advance(2 * HOUR);
+    const again = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'again' })!;
+    expect(again).not.toBe(id);
+    await clock.until(() => c.get(again)!.state === 'done', DAY, 'the second hole');
+    expect(asked.length).toBe(4);
   });
 
+  test("an answer that comes before its page's messages (an old manager): nothing is counted or recorded whole, and the chat says so", async () => {
+    const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
+    // They come ten minutes after each answer: after every asking.
+    const { c, clock, asked } = catchUp(store, acc, net, { answerFirst: true, lateMs: 10 * MIN });
+    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
+    await clock.until(() => c.get(id)!.state === 'done', DAY, 'the hole');
+    expect(c.get(id)!.list![0]).toMatchObject({ state: 'failed', error: NOT_LANDED, found: 0 });
+    expect(asked.length).toBe(1 + LAND_RETRIES);
+    expect(store.raw('SELECT 1 FROM history_span WHERE conversation_id = ?', hub('d1'))).toEqual([]);
+  });
   test('a check whose chats could not be read is not called clear: it goes on to the rest', async () => {
     const { store, acc, net } = world();
     const quiet = console.error;
@@ -529,7 +560,7 @@ describe('what review found', () => {
 
   test('a hole stopped while a page is out keeps what it was told', async () => {
     const { store, acc, net, hub } = world();
-    const { c, clock, onAsk } = catchUp(store, acc, net, { late: true });
+    const { c, clock, onAsk } = catchUp(store, acc, net);
     const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
     onAsk(() => c.stopHole(id));
     await clock.until(() => c.get(id)!.state === 'stopped', DAY, 'the stop');
@@ -589,50 +620,31 @@ describe('review, round 2', () => {
     expect(c.get(id)).toMatchObject({ state: 'clear', found: 0 });
   });
 
-  test('a page whose messages wait behind a long queue is counted once they land', async () => {
+  test('a check whose page came late is not called clear: it goes on to the rest', async () => {
     const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
-    let waiting = 0;
-    const { c, clock } = catchUp(store, acc, net, { late: true, lateMs: 20_000, backlog: () => waiting, onLand: () => (waiting = 0) });
-    const id = possible(c, acc);
-    waiting = 500;
-    await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
-    expect(c.get(id)).toMatchObject({ state: 'done', found: 12 });
-    expect(count(store, hub('d1'), S0, S1)).toBe(12);
-  });
-
-  test('a page that never lands is asked again, and what it brings is still counted', async () => {
-    const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
-    // The supervisor's queue stays busy for ten minutes, past the wait, and the first answer's messages land only
-    // then: the page is asked again, and what came is counted from what was held before the first asking.
-    let waiting = 0;
+    // The first page of d1 comes after its answer; asked again, it lands, but what it brought was in already.
     let first = true;
-    const { c, clock, asked } = catchUp(store, acc, net, {
-      late: true,
-      backlog: () => waiting,
-      onLand: () => (waiting = 0),
-      get lateMs() {
-        const ms = first ? 10 * MIN : 5;
+    const { c, clock } = catchUp(store, acc, net, {
+      answerFirst: () => {
+        const late = first;
         first = false;
-        return ms;
+        return late;
       },
     });
     const id = possible(c, acc);
-    waiting = 500;
     await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
-    expect(c.get(id)).toMatchObject({ state: 'done', found: 12 });
-    expect(asked.filter((a) => a.conversation === 'd1').length).toBe(2);
+    expect(c.get(id)!.state).toBe('done');
     expect(count(store, hub('d1'), S0, S1)).toBe(12);
   });
 
-  test('a page landing late in a chat that keeps messages deleted on the network is still counted', async () => {
+  test('messages kept here that the network deleted do not hide the missing ones', async () => {
     const { store, acc, net } = world({ held: ['g1', 'cr'] });
     for (let i = 0; i < 12; i++) store.ingest(acc, { t: 'message', message: { nativeId: `d1-gone${i}`, conversation: 'd1', author: PEER, ts: S0 + 5 * MIN + i * 1000, body: 'gone' }, live: false });
-    const { c, clock } = catchUp(store, acc, net, { late: true });
+    const { c, clock } = catchUp(store, acc, net);
     const id = possible(c, acc);
     await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
     expect(c.get(id)).toMatchObject({ state: 'done', found: 12 });
   });
-
   test('an account that does not come up after a start, and is back hours later, opens a hole', async () => {
     const { store, acc, net } = world({ held: ['d1', 'd2', 'g1', 'cr', 'cu', 'cq'] });
     let up = false;
@@ -719,7 +731,7 @@ describe('review, round 2', () => {
 
   test('a stretch that grows at its end reads the new end, then goes on from where it was', async () => {
     const { store, acc, net, hub } = world({ inside: { d1: 180 } });
-    const { c, clock, asked } = catchUp(store, acc, net, { late: true, oldest: false });
+    const { c, clock, asked } = catchUp(store, acc, net, { oldest: false });
     const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
     await clock.until(() => asked.length === 3, DAY, 'three pages');
     c.report({ scope: 'chat', conversationId: hub('d1'), from: S1, to: S1 + 5 * MIN, strength: 'sure', cause: 'report', note: 'again' });
@@ -730,9 +742,9 @@ describe('review, round 2', () => {
 });
 
 describe('review, round 3', () => {
-  test('a page whose chat something else keeps writing older history into still lands, and is not asked over and over', async () => {
+  test('older history something else writes into the chat meanwhile is not counted, and the page is asked once', async () => {
     const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
-    const { c, clock, asked } = catchUp(store, acc, net, { late: true });
+    const { c, clock, asked } = catchUp(store, acc, net, { oldest: false });
     // An import writes d1's old history a message at a time, all along.
     let i = 0;
     const writeOld = () => {
@@ -746,7 +758,6 @@ describe('review, round 3', () => {
     expect(asked.filter((a) => a.conversation === 'd1').length).toBe(1);
     expect(count(store, hub('d1'), S0, S1)).toBe(12);
   });
-
   test('many quiet direct chats do not push out the channels you read that were busy', async () => {
     const { store, acc, net, hub } = world({ quiet: 80, held: ['d1', 'd2', 'g1', 'cu', 'cq'], after: false });
     const { c, clock } = catchUp(store, acc, net, { start: false });
@@ -759,34 +770,19 @@ describe('review, round 3', () => {
     expect(h.list!.map((t) => t.conversationId).slice(0, 2)).toEqual([hub('d1'), hub('cr')]);
   });
 
-  test('a stretch that grows further back while a page waits to land counts afresh', async () => {
+  test('messages the network replays live during a check are not counted as found by it', async () => {
     const { store, acc, net, hub } = world({ held: ['g1', 'cr'] });
-    let waiting = 0;
-    let first = true;
-    const { c, clock, onAsk } = catchUp(store, acc, net, {
-      late: true,
-      backlog: () => waiting,
-      onLand: () => (waiting = 0),
-      get lateMs() {
-        const ms = first ? 10 * MIN : 5;
-        first = false;
-        return ms;
-      },
-    });
-    const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
-    // The first page waits past its limit and is to be asked again; before it is, the stretch grows back three hours,
-    // over messages the hub already held.
-    onAsk(() => {
-      waiting = 500;
-      clock.setTimeout(() => c.report({ scope: 'chat', conversationId: hub('d1'), from: S0 - 3 * HOUR, to: S1, strength: 'sure', cause: 'report', note: 'earlier too' }), 5 * MIN + 10_000);
-    });
-    await clock.until(() => c.get(id)!.state === 'done' && c.get(id)!.from === S0 - 3 * HOUR, DAY, 'the hole');
-    expect(c.get(id)!.found).toBe(12);
+    const { c, clock, onAsk, sup } = catchUp(store, acc, net);
+    // As the check asks for d1, the network replays what the account missed, live, before the page comes.
+    onAsk(() => sup.apply(acc.id, net.d1.filter((m) => m.ts >= S0 && m.ts <= S1).map((m): P.AdapterEvent => ({ t: 'message', message: m, live: true }))));
+    const id = c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'possible', cause: 'offline', note: 'offline' })!;
+    await clock.until(() => ['clear', 'done'].includes(c.get(id)!.state), DAY, 'the hole');
+    expect(c.get(id)).toMatchObject({ state: 'clear', found: 0 });
+    expect(count(store, hub('d1'), S0, S1)).toBe(12);
   });
-
   test('a stretch that grows at its end twice still goes on from where its walk was', async () => {
     const { store, acc, net, hub } = world({ inside: { d1: 180 } });
-    const { c, clock, asked } = catchUp(store, acc, net, { late: true, oldest: false });
+    const { c, clock, asked } = catchUp(store, acc, net, { oldest: false });
     const id = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'sure', cause: 'report', note: 'x' })!;
     await clock.until(() => asked.length === 3, DAY, 'three pages');
     c.report({ scope: 'chat', conversationId: hub('d1'), from: S1, to: S1 + 5 * MIN, strength: 'sure', cause: 'report', note: 'again' });
@@ -796,5 +792,118 @@ describe('review, round 3', () => {
     // The third page, out while the stretch grew, is read again; the first walk is not (that would be 7).
     expect(asked.length).toBeLessThanOrEqual(6);
     expect(count(store, hub('d1'), S0, S1)).toBe(180);
+  });
+});
+
+describe('one hole per trouble, and asking', () => {
+  test('an account hole, then a claim per chat as its adapter restarts: one hole, the chats named in it', async () => {
+    const { store, acc, net, hub } = world();
+    for (const x of ['d1', 'g1', 'cr']) store.db.query('DELETE FROM message WHERE conversation_id = ? AND ts > ?').run(hub(x), S1);
+    const { c, clock } = catchUp(store, acc, net, { start: false });
+    c.report({ scope: 'account', accountId: acc.id, from: S0, to: S1, strength: 'possible', cause: 'offline', note: 'offline' });
+    for (const x of ['d1', 'g1', 'cr']) c.conversation(acc.id, { nativeId: x, shape: 'direct', lastMessageAt: net[x].at(-1)!.ts });
+    await clock.advance(CLAIM_SETTLE_MS);
+    c.tick();
+    const h = c.list();
+    expect(h).toHaveLength(1);
+    expect(h[0]).toMatchObject({ scope: 'account', named: 3, causes: ['offline', 'behind'], strength: 'possible' });
+    // Named chats are checked first, over their own stretch: each was missing its two messages after the stretch.
+    c.start();
+    await clock.until(() => ['clear', 'done'].includes(c.get(h[0].id)!.state), DAY, 'the hole');
+    for (const x of ['d1', 'g1', 'cr']) expect(count(store, hub(x))).toBe(net[x].length);
+  });
+
+  test('chat reports on one account close in time share a hole', () => {
+    const { store, acc, net, hub } = world();
+    const { c } = catchUp(store, acc, net, { start: false });
+    const a = c.report({ scope: 'chat', conversationId: hub('d1'), from: S0, to: S1, strength: 'likely', cause: 'behind', note: 'x' });
+    const b = c.report({ scope: 'chat', conversationId: hub('g1'), from: S0 + HOUR, to: S1, strength: 'sure', cause: 'lost', note: 'y' });
+    expect(b).toBe(a);
+    expect(c.get(a!)).toMatchObject({ scope: 'chat', named: 2, strength: 'sure', causes: ['behind', 'lost'] });
+  });
+
+  test("a live message after the network's claim does not hide that the claimed message is missing", async () => {
+    const { store, acc, net, hub } = world({ held: ['d1'] });
+    // The claimed newest (a1) never came; a new live message did, right after the claim.
+    store.db.query('DELETE FROM message WHERE native_id = ?').run('d1-a1');
+    const { c, clock } = catchUp(store, acc, net);
+    c.conversation(acc.id, { nativeId: 'd1', shape: 'direct', lastMessageAt: net.d1.at(-1)!.ts });
+    store.ingest(acc, { t: 'message', message: { nativeId: 'd1-live', conversation: 'd1', author: PEER, ts: NOW, body: 'hi' }, live: true });
+    await clock.until(() => c.list()[0]?.state === 'done', DAY, 'the chat hole');
+    expect(c.list()[0]).toMatchObject({ causes: ['behind'], found: 1 });
+    expect(count(store, hub('d1'))).toBe(net.d1.length + 1);
+  });
+
+  test('a chat you ask for is read back to its start, however long ago', async () => {
+    const { store, acc, net, hub } = world();
+    store.db.query('DELETE FROM message WHERE conversation_id = ?').run(hub('cu'));
+    const { c, clock } = catchUp(store, acc, net);
+    const v = c.reportFrom({ conversationId: hub('cu'), from: 0, asked: true });
+    expect(v).toMatchObject({ scope: 'chat', from: 0, causes: ['asked'], strength: 'sure' });
+    await clock.until(() => c.get(v.id)!.state === 'done', 3 * DAY, 'the ask');
+    expect(count(store, hub('cu'))).toBe(net.cu.length);
+    expect(c.get(v.id)!.found).toBe(net.cu.length);
+    expect(store.raw('SELECT from_ts FROM history_span WHERE conversation_id = ?', hub('cu'))).toEqual([{ from_ts: 0 }]);
+  });
+
+  test("every chat of an account, all history: chats the hub never fetched and channels you don't read too", async () => {
+    const { store, acc, net, hub } = world({ held: ['d1', 'g1'] });
+    // A direct chat the hub knows of and never fetched a message of.
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'x1', shape: 'direct', participants: [PEER] } });
+    net.x1 = Array.from({ length: 70 }, (_, i) => ({ nativeId: `x1-${i}`, conversation: 'x1', author: PEER, ts: S0 - 40 * DAY + i * HOUR, body: 'x' }));
+    const { c, clock } = catchUp(store, acc, net);
+    const v = c.reportFrom({ accountId: acc.id, from: 0, asked: true });
+    await clock.until(() => c.get(v.id)!.state === 'done', 7 * DAY, 'the ask');
+    for (const x of ['d1', 'd2', 'g1', 'cr', 'cu', 'cq', 'x1']) expect([x, count(store, hub(x))]).toEqual([x, net[x].length]);
+    expect(c.get(v.id)).toMatchObject({ left: [], causes: ['asked'] });
+  });
+
+  test("the supervisor's barrier waits for events held for a locked database, and passes once they commit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'catchup-'));
+    const path = join(dir, 'hub.sqlite');
+    const { store, acc, net, hub } = world({ path });
+    const sup = new Supervisor(store, { hubAdapterUrl: '', dataDir: dir, repoRoot: '/nonexistent', inproc: () => null, onFresh: () => {} });
+    store.db.exec('PRAGMA busy_timeout = 0');
+    const other = new Database(path);
+    const quiet = [console.warn, console.error];
+    console.warn = console.error = () => {};
+    try {
+      const held = count(store, hub('d1'));
+      other.exec('BEGIN IMMEDIATE');
+      sup.apply(acc.id, net.d1.slice(0, 3).map((m): P.AdapterEvent => ({ t: 'message', message: { ...m, nativeId: `${m.nativeId}-new` }, live: false })));
+      expect(sup.heldEvents).toBe(3);
+      let passed: boolean | null = null;
+      const settled = sup.settled(acc.id).then((v) => (passed = v));
+      await new Promise((r) => setImmediate(r));
+      expect(passed).toBeNull();
+      other.exec('ROLLBACK');
+      sup.retryHeld();
+      await settled;
+      expect(passed).toBe(true);
+      expect(count(store, hub('d1'))).toBe(held + 3);
+    } finally {
+      [console.warn, console.error] = quiet;
+      other.close();
+      clearTimeout((sup as any).heldTimer);
+      store.db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('stretches once recorded whole that hold no message are forgotten, once', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'catchup-'));
+    const path = join(dir, 'hub.sqlite');
+    try {
+      const { store, hub } = world({ path });
+      const [d1, cq] = [hub('d1'), hub('cq')];
+      store.db.query('INSERT INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?), (?, ?, ?)').run(d1, S0 - DAY, S0, cq, S0 + MIN, S0 + 2 * MIN);
+      store.db.query(`DELETE FROM meta WHERE key = 'spans_without_messages'`).run();
+      store.db.close();
+      const again = new Store(path, mediaSigner('s'));
+      expect(again.raw('SELECT conversation_id FROM history_span')).toEqual([{ conversation_id: d1 }]);
+      again.db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -445,10 +445,12 @@ export class HubServer {
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
     // One pace for both, so the gap fill and a job never read through one account at once.
     const pace = new ReadingPace(store, opts.pace ?? READING, realClock);
-    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace);
-    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
+    // Every history reader waits until an account's page is applied before it counts or records it (historypage.ts).
+    const settled = (acc: string) => this.sup.settled(acc);
+    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace, settled);
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), settled, online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
     // The same pace again: catching up reads through the account the jobs and the gap fill read through.
-    this.catchup = new CatchUp(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), backlog: () => sup.backlog, log: (msg) => console.warn(msg), pace });
+    this.catchup = new CatchUp(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), settled, online: (a) => sup.online(a), backlog: () => sup.backlog, log: (msg) => console.warn(msg), pace });
     // Told what comes, waits and is lost from here on (supervisor.ts).
     sup.watch = this.catchup;
     this.netsearch = new NetSearch(store, {

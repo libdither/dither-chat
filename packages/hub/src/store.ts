@@ -243,7 +243,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 8;
+const MIGRATIONS = 9;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -284,6 +284,13 @@ function unreactView(raw: string | null): { data: P.UnreactData; seen?: true } {
   return { data, ...(d.exact ? {} : { seen: true as const }) };
 }
 
+/** A history page's messages as they are stored: by native id, its time and whether it was new to the hub. */
+export interface PageTap {
+  accountId: string;
+  conversation: string;
+  seen: Map<string, { ts: number; fresh: boolean }>;
+}
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -294,6 +301,11 @@ export class Store {
    * what you owed, a mark settles or holds it (replymarks.ts). They fold again.
    */
   readonly selfReacted = new Set<string>();
+  /**
+   * History pages being read (historypage.ts): each records the messages of its account and chat that backfill stores
+   * while it is open, and which of them the hub did not hold before. Empty but for the moment a page is out.
+   */
+  private taps = new Set<PageTap>();
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
   private selfIdentities = new Set<string>();
@@ -382,6 +394,8 @@ export class Store {
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
       this.addColumns('folder', { parent_id: 'TEXT', parent_pos: 'REAL' });
       this.addColumns('reaction', { at: 'INTEGER', at_exact: 'INTEGER NOT NULL DEFAULT 0' });
+      this.addColumns('catchup_hole', { named: 'TEXT' });
+      this.addColumns('catchup_task', { unsure: 'INTEGER NOT NULL DEFAULT 0' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -399,6 +413,7 @@ export class Store {
       this.facesOnce();
       this.forgetGoneSeenVia();
       this.bandsWithoutNextLook();
+      this.emptySpansOnce();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -557,6 +572,20 @@ export class Store {
    * stored "next" says "show" (the loudness numbers themselves stay as they were), what was held for it is let go (it
    * is in the inbox already), and its settings (when the next look came, its set times) are dropped. Once.
    */
+  /**
+   * Index jobs once recorded a page's stretch as whole before its messages were stored (and a page that never came
+   * as the whole chat): a crash between, or an adapter that answered first, left stretches known whole that hold
+   * nothing, skipped by every walk since. Spans that hold no message go, once; a walk that meets one reads it again
+   * (a page each). Pages are recorded only once their messages are in now (historypage.ts).
+   */
+  private emptySpansOnce() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'spans_without_messages'`).get()) return;
+    this.db.exec(
+      `DELETE FROM history_span WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.conversation_id = history_span.conversation_id AND m.ts >= history_span.from_ts AND m.ts <= history_span.to_ts)`,
+    );
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('spans_without_messages', '1')`);
+  }
+
   private bandsWithoutNextLook() {
     if (this.db.query(`SELECT 1 FROM meta WHERE key = 'bands_without_next'`).get()) return;
     this.db.exec(`UPDATE triage SET loud_view = json_set(loud_view, '$.band', 'show') WHERE loud IS NOT NULL AND loud >= 30 AND loud < 55 AND json_extract(loud_view, '$.band') = 'next'`);
@@ -876,6 +905,17 @@ export class Store {
 
   isSelf(identityId: string | null) {
     return !!identityId && this.selfIdentities.has(identityId);
+  }
+
+  /** Records the backfilled messages of one account's chat (native id) from now until `untap` (historypage.ts). */
+  tap(accountId: string, conversation: string): PageTap {
+    const t: PageTap = { accountId, conversation, seen: new Map() };
+    this.taps.add(t);
+    return t;
+  }
+
+  untap(t: PageTap) {
+    this.taps.delete(t);
   }
 
   // ------------------------------------------------------------ ingest
@@ -1695,6 +1735,7 @@ export class Store {
     if (f.reactions) this.reactionSnapshot(acc, id, f.reactions, existed);
     if (existed && f.extra?.poll) pollSeen(this.db, id, f.extra);
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
+    if (this.taps.size && !live) for (const t of this.taps) if (t.accountId === acc.id && t.conversation === f.conversation) t.seen.set(f.nativeId, { ts: f.ts, fresh: !existed });
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
     const conv = this.db.query('SELECT last_message_at, last_message_id, variant FROM conversation WHERE id = ?').get(cid) as Row;
