@@ -170,7 +170,8 @@ marked `filesComing` (`packages/hub/src/sendqueue.ts`). From then on the send is
   above"), so they still go out in the order they were sent. The page uploads its files on, its own copy hidden behind
   the hub's row, after a reload too; the row says "The hub has it, and sends it once the files are in".
 - **Sent when the last byte lands** (`Uploads.onWhole`): the row stops waiting, and goes as any other (a chat that
-  moved on meanwhile holds it, as it holds any send). The page stops uploading once the row no longer waits.
+  moved on meanwhile holds it, as it holds any send). The page stops uploading once the row no longer waits, and
+  keeps showing the photos from its own copy until the row is through (sent, cancelled or failed), a held one too.
 - **Sent as far as it came** when the phone stops. Every 10 s the hub looks at the rows that wait for files. When
   every file still coming has had no byte for the wait set in Settings → Sending, and each is a photo the hub can cut
   at the quality set there or better, it cuts each after its last whole layer, closes it with an end marker, and sends.

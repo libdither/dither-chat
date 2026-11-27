@@ -1237,11 +1237,14 @@ async function idsOf(jobs: UploadJob[]): Promise<string[] | null> {
 
 /** Sends the hub took with their files still coming, whose files this device uploads on (carryOn). */
 const carrying = new Set<string>();
-/** Once the hub's row for this send no longer waits for its files: sent as far as they came, cancelled, or gone. */
+/**
+ * Once the hub's row for this send is through: sent (whole, or as far as its files came), cancelled, failed, or gone.
+ * Held for you, its files may all be in, and its photos are still shown from this device's copy.
+ */
 const rowThrough = (clientId: string) =>
   new Promise<void>((done) => {
     const off = hubSends.subscribe((v) => {
-      if (v.rows.some((r) => r.clientId === clientId && r.filesComing)) return;
+      if (v.rows.some((r) => r.clientId === clientId && (r.filesComing || r.state === 'queued' || r.state === 'sending' || r.state === 'held' || r.state === 'unsure'))) return;
       queueMicrotask(() => off());
       done();
     });
@@ -1257,7 +1260,11 @@ async function carryOn(tempId: string, jobs: UploadJob[]) {
   carrying.add(tempId);
   let done = false;
   try {
-    await Promise.race([Promise.all(jobs.map((j) => j.settle())), rowThrough(tempId)]);
+    const through = rowThrough(tempId);
+    await Promise.race([Promise.all(jobs.map((j) => j.settle())), through]);
+    // All up, and the row not through yet (held for you: the chat moved on): its photos stay shown from this device's
+    // copy until it goes or is cancelled, rather than as bare file names.
+    await through;
     done = true;
   } catch {
     // An upload failed (the link, most likely): the hub keeps the row; this carries on when it is back.

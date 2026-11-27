@@ -8,7 +8,9 @@
  *     first, and its badge says the quality the hub has, preview then fair then good, from the hub's own count;
  *   - sent while it uploads, the send is the hub's (its queue row waits for the file): the pending copy shows the tile
  *     and "Sending · …"; once the last piece lands the hub sends it whole;
- *   - a second photo sent the same way, and the link cut partway: the pending copy says what the hub has and when it
+ *   - one sent the same way in another chat, where you wrote from another device and they answered meanwhile: once all
+ *     up it is held (the chat moved on) and counts down, still showing the photo, then goes whole;
+ *   - a photo sent the same way, and the link cut partway: the pending copy says what the hub has and when it
  *     sends; the hub sends it as far as it came after Settings → Sending's wait (one minute here), cut after a whole
  *     layer; back online, the page shows the message and says it went as it was;
  *   - Settings → Sending shows the hub's choice.
@@ -351,10 +353,52 @@ try {
     await p.until(`!!document.querySelector('#m-${answer.id}')`, 15_000);
   }
 
-  // ---------------------------------------------------------------- 2. the link cut partway: the hub sends what it has
+  // ---------------------------------------------------------------- 2. someone writes while it uploads: held, its photo still shown
+  {
+    // A chat of another person's: what is written here does not land in the first one.
+    const other = boot.conversations.find(
+      (c: any) => c.shape === 'direct' && c.id !== conv.id && c.peerPersonId !== conv.peerPersonId && c.vantages.some((v: any) => media.has(v.accountId)),
+    );
+    if (!other) throw new Error('no second direct conversation');
+    await p.goto(`${url}/#/inbox/c/${other.id}`);
+    await p.until(`!!document.querySelector('.composer textarea')`, 30_000);
+    await paste(3, 'pier.jpg');
+    const up = await startedUpload(2);
+    while ((await letGo(up.id, up.size)) / up.size <= CUT_FAIR + 0.05);
+    // You write from another device; its answer comes a few seconds later, after the photo is sent.
+    await json(`/api/conversations/${other.id}/send`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'on my way', clientId: 'other-device-1', ack: 'hub', device: 'other-device' }),
+    });
+    const mine = await until('the other device\'s message', () => json(`/api/conversations/${other.id}/messages?limit=30`).then((r) => (r.messages as any[]).find((m) => m.body === 'on my way') ?? null));
+    await p.until(`!!document.querySelector('#m-${mine.id}')`, 10_000);
+    await typeIn('[pictures] the pier');
+    await enter();
+    check((await firstSend('[pictures] the pier')).held, 'the photo is sent waiting for its file');
+    await until(
+      'their answer',
+      () => json(`/api/conversations/${other.id}/messages?limit=30`).then((r) => (r.messages as any[]).find((m) => m.ts > mine.ts && !/^(on my way|\[pictures\])/.test(m.body ?? '')) ?? null),
+      20_000,
+    );
+    let got = 0;
+    while (got < up.size) got = await letGo(up.id, up.size);
+    await p.until(`!!document.querySelector('.pending .pending-actions')`, 15_000);
+    const note = await p.eval<string>(`document.querySelector('.pending .pending-note')?.textContent ?? ''`);
+    // The chat is open here: the hold counts down (Settings → Sending, 10 s), and it goes by itself.
+    check(/came in since you wrote this\. Sends in \d+ s/.test(note), 'all up, it is held: the chat moved on', note);
+    check(await p.eval(`!!document.querySelector('.pending .pend-tile img')`), 'held, it still shows the photo, not its name');
+    const m = await until('the message on the hub', () => onHub(other.id, '[pictures] the pier'), 20_000);
+    check((await hubBytes(m)).length === up.size, 'after the countdown it goes whole');
+    await p.until(`!document.querySelector('.pending') && !!document.querySelector('#m-${m.id}')`, 15_000);
+    await p.goto(`${url}/#/inbox/c/${conv.id}`);
+    await p.until(`!!document.querySelector('.composer textarea')`, 30_000);
+  }
+
+  // ---------------------------------------------------------------- 3. the link cut partway: the hub sends what it has
   {
     await paste(2, 'harbour.jpg');
-    const up = await startedUpload(2);
+    const up = await startedUpload(3);
     let got = 0;
     // Up to fair, and a piece more.
     for (;;) {
@@ -441,7 +485,7 @@ try {
     await shot('sent-cut');
   }
 
-  // ---------------------------------------------------------------- 3. Settings → Sending
+  // ---------------------------------------------------------------- 4. Settings → Sending
   {
     await p.goto(`${url}/#/settings`);
     await p.until(`!!document.querySelector('#set-sending [data-wait]:not([disabled])')`, 20_000);
