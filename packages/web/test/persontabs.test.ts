@@ -1,10 +1,11 @@
 /**
  * A person's switch row (docs/places.md "A person's networks"): which tabs it has and in what order (chattabs.ts
- * personTabs), what a view chooses and sends through (viewIn, tabOf, routeForTab), and the keys that move along any
+ * personTabs), what a view chooses and sends through (viewIn, tabOf, routeForTab), a pick against the address (pickAt),
+ * and the keys that move along any
  * page's row (tabkeys.ts). The page itself is checked in a browser by scripts/verify-chat-header.ts.
  */
 import { expect, test } from 'bun:test';
-import { netTab, personTabs, POSTS_TAB, postNetworks, routeForTab, tabNetwork, tabOf, viewIn } from '../src/chattabs.ts';
+import { netTab, personTabs, pickAt, POSTS_TAB, postNetworks, routeForTab, tabNetwork, tabOf, viewIn } from '../src/chattabs.ts';
 import { tabStep } from '../src/tabkeys.ts';
 
 const NAMES: Record<string, string> = { signal: 'Signal', discord: 'Discord', matrix: 'Matrix', telegram: 'Telegram', whatsapp: 'WhatsApp', email: 'Email' };
@@ -78,6 +79,25 @@ test('a view that no longer fits their routes is All again', () => {
   expect(viewIn('net:zulip', ALICE)).toBe('all');
   expect(viewIn('dc-alt', ALICE)).toBe('dc-alt');
   expect(viewIn('gone', ALICE)).toBe('all');
+});
+
+test('a tab picked at one address never hides the chat another address opens', () => {
+  const discord = { v: netTab('discord'), at: '' };
+  // The person's own page, and the address the tab was picked at: the pick holds.
+  expect(pickAt(discord, '', undefined)).toBe('net:discord');
+  expect(pickAt({ v: netTab('discord'), at: 'thread-1' }, 'thread-1', { network: 'email' })).toBe('net:discord');
+  // Another address naming a chat on that network: still shown, so it holds.
+  expect(pickAt(discord, 'dc-main', { network: 'discord' })).toBe('net:discord');
+  // A mail of theirs opened from the inbox: the Discord tab would hide it, so the page is All again...
+  expect(pickAt(discord, 'thread-1', { network: 'email' })).toBeUndefined();
+  expect(viewIn(pickAt(discord, 'thread-1', { network: 'email' }), ALICE)).toBe('all');
+  // ...and a second thread of theirs after a tab picked at the first, though both are the one mail route.
+  expect(pickAt({ v: netTab('discord'), at: 'thread-1' }, 'thread-2', { network: 'email' })).toBeUndefined();
+  // Their posts hide every chat; All hides none; a route shown alone follows the route in use (pairpick.ts).
+  expect(pickAt({ v: POSTS_TAB, at: '' }, 'sig', { network: 'signal' }, [POSTS_TAB])).toBeUndefined();
+  expect(pickAt({ v: 'all', at: '' }, 'sig', { network: 'signal' })).toBe('all');
+  expect(pickAt({ v: 'mx', at: '' }, 'sig', { network: 'signal' })).toBe('mx');
+  expect(pickAt(undefined, 'sig', { network: 'signal' })).toBeUndefined();
 });
 
 test('a route shown alone chooses its network\'s tab', () => {

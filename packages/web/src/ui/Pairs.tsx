@@ -16,7 +16,7 @@ import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, tagTells, tagText, tells, yourAccount, yourName, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
-import { personTabs, POSTS_TAB, postNetworks, routeForTab, tabNetwork, tabOf, viewIn } from '../chattabs.ts';
+import { personTabs, pickAt, postNetworks, POSTS_TAB, routeForTab, tabNetwork, tabOf, viewIn } from '../chattabs.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
@@ -365,9 +365,11 @@ function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[];
 
 /**
  * What the page shows, per person this session: every route ('all', the default), one network's (`net:<network>`,
- * its tab), or one route's, picked from the list (its id). Never in the address (docs/places.md).
+ * its tab), or one route's, picked from the list (its id). Never in the address (docs/places.md), but kept with the
+ * address it was picked at: opening another of their chats is not hidden by a tab left on elsewhere (chattabs.ts
+ * pickAt).
  */
-const viewing = signal<Record<string, string>>({});
+const viewing = signal<Record<string, { v: string; at: string }>>({});
 /**
  * The networks of posts they post on that your accounts read (chattabs.ts postNetworks): with any, their row ends in
  * Posts. From what the app holds already, their identities and your accounts: nothing asked, no bytes added at start.
@@ -379,8 +381,12 @@ export const postNetsOf = (person: P.PersonView): P.Network[] =>
     POST_NETWORKS,
   );
 const extraOf = (person: P.PersonView) => (postNetsOf(person).length ? [POSTS_TAB] : []);
-export const viewOf = (person: P.PersonView, directs: P.ConversationView[]) => viewIn(viewing.value[person.id], directs, extraOf(person));
-export const setView = (personId: string, v: string) => void (viewing.value = { ...viewing.value, [personId]: v });
+/** `at`: the chat of theirs the address names, and `addr` that address's conversation, when the page was opened as one. */
+export function viewOf(person: P.PersonView, directs: P.ConversationView[], at?: P.ConversationView, addr?: string) {
+  const extra = extraOf(person);
+  return viewIn(pickAt(viewing.value[person.id], addr ?? '', at, extra), directs, extra);
+}
+export const setView = (personId: string, v: string, addr?: string) => void (viewing.value = { ...viewing.value, [personId]: { v, at: addr ?? '' } });
 
 const unreadOf = (d: P.ConversationView) => d.vantages.reduce((n, x) => n + x.unread, 0);
 
@@ -470,14 +476,11 @@ interface ListRow {
  * The list is a card: the person, how many accounts, chats and networks, and All; then the routes, under their
  * network's name where a network has two or more, the rest after them, each by their account's own picture and name,
  * its handle, your account where yours differ there (chatroutes.ts tells), unread, and when it was last active. The
- * route messages go to says "sending". `focus`: where messages go now. What the page shows is read here (`viewing`),
- * so a network's tab is not taken for one route: `view` is what older callers pass, and is not needed.
+ * route messages go to says "sending". `focus`: where messages go now. `view`: what the page shows (PersonChat's):
+ * all, a network's tab, their posts, or one route, which is then `focus`.
  */
-export function PairDropdown({ person, directs, focus, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view?: string; onPick: (view: string) => void }) {
+export function PairDropdown({ person, directs, focus, view: v, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view: string; onPick: (view: string) => void }) {
   metaRev.value; // names: counts and times come with a new `directs`
-  const shows = viewOf(person, directs);
-  // One route shown alone follows the route you send through (PersonChat); their posts are no one route.
-  const v = shows === 'all' || shows === POSTS_TAB || tabNetwork(shows) !== null ? shows : focus.id;
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   // The header clips what overflows it, so the card is placed on the page, under the line.

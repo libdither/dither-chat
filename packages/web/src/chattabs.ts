@@ -58,6 +58,21 @@ export function viewIn(v: string | undefined, routes: readonly { id: string; net
   return routes.some((r) => r.id === v) ? v : 'all';
 }
 
+/**
+ * A pick against the address (docs/places.md "A person's networks"): it holds while the page stays at the address it
+ * was made at (`addr`, the conversation the address names; '' for the person's own page). At another address that
+ * names one of their chats (`opened`) it holds only while it still shows that chat: another network's tab, or an
+ * added tab, would hide what you just opened, so the page is All again. A route shown alone needs no rule here: it
+ * follows the route in use, which the address already sets (pairpick.ts).
+ */
+export function pickAt(pick: { v: string; at: string } | undefined, addr: string, opened: { network: string } | undefined, extra: readonly string[] = []): string | undefined {
+  if (!pick) return undefined;
+  if (!opened || pick.at === addr) return pick.v;
+  const net = tabNetwork(pick.v);
+  if (net !== null) return net === opened.network ? pick.v : undefined;
+  return extra.includes(pick.v) ? undefined : pick.v;
+}
+
 /** Which tab of the row a view has chosen: a route shown alone chooses its network's. `extra`: the added tabs' ids. */
 export function tabOf(v: string, routes: readonly { id: string; network: string }[], extra: readonly string[] = []): string {
   if (v === 'all' || tabNetwork(v) !== null || extra.includes(v)) return v;

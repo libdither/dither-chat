@@ -332,16 +332,17 @@ function HeadMore({ c, also, profile }: { c: P.ConversationView; also?: P.Conver
  * (the crumbs) and your account. The picture's badge is the network you send on.
  *
  * `chat`: someone you reach through several routes (PersonChat), and `c` the route messages go through. The header is
- * the same, saying the same of that route; it adds one control, the pill that opens the list of routes (Pairs.tsx).
+ * the same, saying the same of that route; the line under the name opens the list of routes (Pairs.tsx PairDropdown).
+ * `chat.view`: what the page shows (every route, a network's tab, their posts, or `c` alone).
  */
-export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; all: boolean; onView: (view: string) => void } }) {
+export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?: () => void; chat?: { person: P.PersonView; directs: P.ConversationView[]; view: string; onView: (view: string) => void } }) {
   // Names it shows come from people and accounts, which change without `c` changing (a nickname, a rename).
   metaRev.value;
   const accounts = c.vantages.map((v) => db.accounts.get(v.accountId)).filter((a): a is P.AccountView => !!a && visibleAccount(a.id));
   const isDirect = c.shape === 'direct';
   const person = chat?.person ?? (c.peerPersonId ? db.persons.get(c.peerPersonId) : null);
-  // All chats together: the header is the person's, not one conversation's.
-  const all = !!chat?.all;
+  // Several chats together: the header is the person's, not one conversation's.
+  const all = !!chat && chat.view !== c.id;
   const whoTitle = person && isDirect ? `${person.name}'s profile` : `About ${convTitle(c)}`;
   // One route: the pencil by the name is for the nickname of their account in it. Several: the name is made of
   // their accounts' names, each with its own nickname on their profile, so it has none.
@@ -393,7 +394,7 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
         </h2>
         <div class="conv-head-sub">
           {chat ? (
-            <PairDropdown person={chat.person} directs={chat.directs} focus={c} view={all ? 'all' : c.id} onPick={chat.onView} />
+            <PairDropdown person={chat.person} directs={chat.directs} focus={c} view={chat.view} onPick={chat.onView} />
           ) : isDirect ? (
             <SendLine c={c} accounts={accounts} />
           ) : (
@@ -2370,9 +2371,9 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
   const t = isMailThread(convId) ? mailThread(convId) : undefined;
   const route = t ? personRouteOf(t) : null;
   const via = route ? chatPersonOf(route) : null;
-  if (route && via) return <PersonChat person={via} directs={directsOf(via.id)} at={route} onBack={onBack} msg={focus} />;
+  if (route && via) return <PersonChat person={via} directs={directsOf(via.id)} at={route} addr={convId} onBack={onBack} msg={focus} />;
   const person = chatPersonOf(c);
-  if (c && person) return <PersonChat person={person} directs={directsOf(person.id)} at={c} onBack={onBack} msg={focus} />;
+  if (c && person) return <PersonChat person={person} directs={directsOf(person.id)} at={c} addr={convId} onBack={onBack} msg={focus} />;
   return <PlainPane convId={convId} onBack={onBack} focus={focus} />;
 }
 
@@ -2620,18 +2621,20 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
 /**
  * Someone you reach by several routes (ui/Pairs.tsx, docs/chats.md), as one chat: the page any conversation has,
  * every route interleaved, adding only what the chat needs (chatroutes.ts). `at`: the DM the address names, which
- * messages go through until another route is picked. The list under the name filters to one route without leaving.
+ * messages go through until another route is picked, and `addr` the conversation of that address (a mail thread of
+ * theirs is one, its route the `at`): a tab picked at another address never hides it (chattabs.ts pickAt). The list
+ * under the name filters to one route without leaving.
  * `msg`: a message to open at, in the interleaved timeline when paging back reaches it, else in its route alone.
  */
 // redraws: it reads only these chats, requests and accounts, and directsOf gives a new `directs` when any of those
 // changes (model.ts placesMemo).
-function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView; directs: P.ConversationView[]; at?: P.ConversationView; onBack?: () => void; msg?: string }) {
+function PersonChat({ person, directs, at, addr, onBack, msg }: { person: P.PersonView; directs: P.ConversationView[]; at?: P.ConversationView; addr?: string; onBack?: () => void; msg?: string }) {
   const [reply, setReply] = useState<P.MessageView | null>(null);
   const unreadAt = useMemo(() => firstUnread(directs), [person.id]);
   useEffect(() => setReply(null), [person.id]);
   useEffect(() => void loadChat(person.id), [person.id]);
   // What the page shows (Pairs.tsx viewOf): every route, one network's (the switch row), or one route's (the list).
-  const chosen = viewOf(person, directs);
+  const chosen = viewOf(person, directs, at, addr);
   const net = tabNetwork(chosen);
   // Their posts (docs/places.md): the head stays, the body is the list, and no box (a post is answered in its thread).
   const posts = chosen === POSTS_TAB;
@@ -2652,15 +2655,15 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
     focusPair(person.id, focus.id, id, at?.id);
     // A network's tab moves with the route you send through (docs/chats.md "The page").
     const to = directs.find((d) => d.id === id);
-    if (net !== null && to && to.network !== net) setView(person.id, netTab(to.network));
+    if (net !== null && to && to.network !== net) setView(person.id, netTab(to.network), addr);
   };
   const onView = (v: string) => {
-    setView(person.id, v);
+    setView(person.id, v, addr);
     if (v !== 'all' && tabNetwork(v) === null) onFocus(v);
   };
   // A network's tab sends through that network; All leaves the send route as it is.
   const onTab = (t: string) => {
-    setView(person.id, t);
+    setView(person.id, t, addr);
     const r = tabRoute(t, focus, directs);
     if (r && r.id !== focus.id) {
       if (reply && reply.conversationId !== r.id) setReply(null);
@@ -2672,7 +2675,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   const held = heldRequest(db.requests, focus.id);
   return (
     <section class="pane">
-      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all' || net !== null || posts, onView }} />
+      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, view, onView }} />
       <PersonTabs person={person} directs={directs} view={view} onTab={onTab} />
       <SameLine person={person} />
       {!held && shown.filter((d) => d.pending).map((d) => <LinkBanner key={d.id} c={d} />)}

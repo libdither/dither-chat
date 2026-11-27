@@ -62,6 +62,10 @@ one function, `personTabs` in `chattabs.ts`, which takes tabs to add after the n
 - What the page shows is kept per person for the session (`viewing` in `ui/Pairs.tsx`: `all`, `net:<network>` or a
   route's id), never in the address. Where a message goes is kept by the hub, an email route too
   (`PATCH /api/chats/person:<id>`), so after a reload the page shows All and still sends where you left it.
+- **A tab never hides what you opened.** The choice is kept with the address it was made at. Opening another of
+  their chats (a mail of theirs from the inbox, their other DM from a search) keeps the tab only if it still shows
+  that chat; a tab of another network, or Posts, gives way and the page shows All (`pickAt` in `chattabs.ts`). Back
+  on the address the tab was picked at, it is chosen again.
 - **Posts** ends the row when they have an account on a network of posts (X, Mastodon, Reddit, Bluesky, …) that one
   of your accounts reads (`postNetsOf` in `ui/Pairs.tsx`, `postNetworks` in `chattabs.ts`): their identities and your
   accounts, both already on the page, so the tab costs nothing at start and asks nothing. When they post on one
