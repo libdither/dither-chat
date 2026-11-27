@@ -17,9 +17,15 @@
  * - A restart: a row left `sending` may be out, so it is in doubt (`unsure`), never sent again by itself; `queued`
  *   ones go; a countdown starts again from the start, so a device that comes back can see it go. Every sync answer carries the list (sync.ts), so a page back after a
  *   restart, or opened from its kept copy, has the rows as they are now.
+ * - Files still coming (`waitForFiles`, docs/uploads.md "A send the hub holds"): a phone that sends while its pictures
+ *   upload hands the message over at once. Its row heads its chat (`files_coming`) and goes the moment the last byte is
+ *   in, whether or not the phone is still there. If the phone stops, the hub waits as long as Settings → Sending says,
+ *   then cuts each picture still coming after its last whole layer (a valid JPEG at a lower detail, jpegscans.ts) and
+ *   sends it so, when every one of them is at least as good as the setting asks. A video or another file cannot be
+ *   cut: the message waits for the phone, a day at most.
  */
 import type * as P from '@dither-chat/protocol';
-import { HOLD_SECONDS_DEFAULT, HOLD_SECONDS_MAX } from '@dither-chat/protocol';
+import { atLeast, CUT_QUALITIES, HOLD_SECONDS_DEFAULT, HOLD_SECONDS_MAX } from '@dither-chat/protocol';
 import { type Clock, realClock, unref } from './clock.ts';
 import { unknownOutcome } from './outcome.ts';
 import type { Store } from './store.ts';
@@ -54,10 +60,24 @@ interface SendQueueDeps {
   /** A send waits for you and no device shows its chat: tell you (a notification), once per send. */
   told?: (row: P.SendRow) => void;
   clock?: Clock;
+  // Files still coming (docs/uploads.md "A send the hub holds"); without these a send must have its files whole.
+  /** An upload as it is now, or null once it is gone. */
+  upload?: (id: string) => P.UploadState | null;
+  /** How long since a piece of this upload last came, at `now`. */
+  idle?: (id: string, now: number) => number;
+  /** How good this upload would be cut now after its last whole layer; null when it cannot be cut. */
+  cuttable?: (id: string) => P.CutQuality | null;
+  /** Cut it so: whole from then on, at that size. */
+  cut?: (id: string) => boolean;
+  cutSettings?: () => P.CutSettings;
 }
 
 /** Sent ones stay in the list this long, so a device shows two ticks until the message itself comes. */
 const SENT_SHOWN_MS = 2 * 60_000;
+/** How often sends whose files are coming are looked at, for a cut or an expiry. */
+const FILES_TICK_MS = 10_000;
+/** The longest a send waits for its files. Then it fails, and you see why. */
+export const FILES_MAX_MS = 24 * 3600_000;
 /** At most this many messages that came since are named in a hold. */
 const HOLD_IDS = 20;
 const BODY_MAX = 20_000;
@@ -75,6 +95,7 @@ export class SendQueue {
   /** Callers waiting for a row to settle (old callers: no `ack: 'hub'`). */
   private waiters = new Set<() => void>();
   private stopped = false;
+  private filesTimer: unknown = null;
 
   constructor(
     private store: Store,
@@ -101,12 +122,27 @@ export class SendQueue {
       } else this.set(r.client_id, 'hold_until = NULL');
     }
     for (const r of this.db.query(`SELECT DISTINCT conversation_id FROM send_queue WHERE state = 'queued'`).all() as Row[]) this.kick(r.conversation_id);
+    if (this.d.upload && this.filesTimer === null) {
+      const tick = () => {
+        this.filesTimer = this.clock.setTimeout(tick, FILES_TICK_MS);
+        unref(this.filesTimer);
+        try {
+          this.filesTick();
+        } catch (e) {
+          console.error('send queue: files:', e);
+        }
+      };
+      this.filesTimer = this.clock.setTimeout(tick, FILES_TICK_MS);
+      unref(this.filesTimer);
+    }
   }
 
   stop() {
     this.stopped = true;
     for (const t of this.timers.values()) this.clock.clearTimeout(t);
     this.timers.clear();
+    if (this.filesTimer !== null) this.clock.clearTimeout(this.filesTimer);
+    this.filesTimer = null;
   }
 
   private get db() {
@@ -180,7 +216,10 @@ export class SendQueue {
     const sticker = typeof b.sticker === 'string' && b.sticker ? b.sticker.slice(0, 128) : null;
     if (!body.trim() && !ids.length && !sticker) throw refuse('empty message');
     if (body.length > BODY_MAX) throw refuse('That is too long to send');
-    const names = ids.length ? this.d.files(ids) : [];
+    // Files still coming are taken as they are, by name, when the caller says it carries on uploading them.
+    const coming = b.waitForFiles === true && !!this.d.upload && ids.length > 0 && !this.d.files(ids);
+    const states = coming ? ids.map((id) => this.d.upload!(id)) : [];
+    const names = coming ? (states.every(Boolean) ? states.map((u) => u!.name) : null) : ids.length ? this.d.files(ids) : [];
     if (!names) throw refuse('that upload has expired, attach the file again', 410);
     const now = this.clock.now();
     const seen = this.seenOf(conversationId, b.seenUpTo);
@@ -204,10 +243,10 @@ export class SendQueue {
     this.db.transaction(() => {
       this.db
         .query(
-          `INSERT INTO send_queue (client_id, seq, conversation_id, account_id, device, body, reply_to, attachments, files, sticker, voice, gif, view_once, silent, mention_replied, seen_ts, seen_id, pressed_at, state, told, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+          `INSERT INTO send_queue (client_id, seq, conversation_id, account_id, device, body, reply_to, attachments, files, sticker, voice, gif, view_once, silent, mention_replied, seen_ts, seen_id, pressed_at, state, told, files_coming, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
         )
-        .run(clientId, this.nextSeq(), conversationId, ...Object.values(fields), o.answered ? 1 : 0, now);
+        .run(clientId, this.nextSeq(), conversationId, ...Object.values(fields), o.answered ? 1 : 0, coming ? 1 : 0, now);
       // Already behind what you saw: held from the start.
       this.holdIfMoved(this.row(clientId)!);
     })();
@@ -221,14 +260,14 @@ export class SendQueue {
 
   /**
    * Waits until the row is through for a caller that waits for the network (no `ack: 'hub'`): sent, failed, in doubt,
-   * cancelled, held, or queued behind one that waits for you.
+   * cancelled, held, or queued behind one that waits for you or for its files.
    */
   async settled(clientId: string): Promise<P.SendRow> {
     for (;;) {
       const r = this.get(clientId);
       if (!r) throw refuse('no such send', 404);
       if (r.state !== 'queued' && r.state !== 'sending') return r;
-      if (r.state === 'queued' && this.blockedBy(r.conversationId, r.seq)) return r;
+      if (r.state === 'queued' && (r.filesComing || this.blockedBy(r.conversationId, r.seq) || this.filesBefore(r.conversationId, r.seq))) return r;
       await new Promise<void>((resolve) => {
         const w = () => (this.waiters.delete(w), resolve());
         this.waiters.add(w);
@@ -241,6 +280,11 @@ export class SendQueue {
     const r = await this.settled(clientId);
     const raw = this.row(clientId)!;
     return answerOf(r, raw.status ?? null, raw.native_id ?? null);
+  }
+
+  /** Whether a row before this one in its chat waits for its files. */
+  private filesBefore(conversationId: string, seq: number): boolean {
+    return !!this.db.query(`SELECT 1 FROM send_queue WHERE conversation_id = ? AND seq < ? AND state = 'queued' AND files_coming = 1`).get(conversationId, seq);
   }
 
   /** The open row before this one in its chat that waits for you (held or in doubt), if any. */
@@ -267,7 +311,7 @@ export class SendQueue {
       this.kick(r.conversation_id);
     } else if (action === 'cancel' || action === 'edit') {
       if (r.state !== 'cancelled') {
-        this.set(clientId, `state = 'cancelled', hold_until = NULL`);
+        this.set(clientId, `state = 'cancelled', hold_until = NULL, files_coming = 0`);
         this.disarm(clientId);
         this.d.dropFiles(JSON.parse(r.attachments));
         this.changed();
@@ -329,6 +373,12 @@ export class SendQueue {
       this.again.delete(conversationId);
       const head = this.db.query(`SELECT * FROM send_queue WHERE conversation_id = ? AND state IN ('queued', 'sending', 'held', 'unsure') ORDER BY seq LIMIT 1`).get(conversationId) as Row | null;
       if (!head || head.state !== 'queued') return;
+      // Its files still coming: it goes when they are in (uploaded) or cut (filesTick); the rows behind it wait.
+      if (head.files_coming && !this.filesIn(head)) {
+        // Its upload gone, it failed: the rows behind it go.
+        if (this.row(head.client_id)?.state === 'failed') continue;
+        return;
+      }
       // Right before it goes: did the chat move on while it waited?
       if (!head.confirmed && this.db.transaction(() => this.holdIfMoved(head))()) {
         this.afterHold(head.client_id);
@@ -380,6 +430,87 @@ export class SendQueue {
     }
     record();
     this.changed();
+  }
+
+  // ------------------------------------------------------------------ files still coming
+
+  /** A piece came that finished an upload: a send waiting only on it goes now. */
+  uploaded(id: string) {
+    for (const r of this.filesWaiting()) if ((JSON.parse(r.attachments) as string[]).includes(id) && this.filesIn(r)) this.kick(r.conversation_id);
+  }
+
+  /** Whether this upload went with a send: its next piece is answered 410, not "no such upload, begin again". */
+  sentUpload(id: string): boolean {
+    for (const r of this.db.query(`SELECT attachments FROM send_queue WHERE state = 'sent' AND attachments LIKE ?`).all(`%"${id}"%`) as Row[])
+      if ((JSON.parse(r.attachments) as string[]).includes(id)) return true;
+    return false;
+  }
+
+  /**
+   * Whether the row's files are all in: then it no longer waits for them. One whose upload is gone fails (nothing went
+   * out), so the rows behind it go.
+   */
+  private filesIn(r: Row): boolean {
+    const states = (JSON.parse(r.attachments) as string[]).map((id) => this.d.upload?.(id) ?? null);
+    if (states.some((u) => !u)) {
+      this.set(r.client_id, `state = 'failed', files_coming = 0, error = ?, status = 410`, 'that upload has expired, attach the file again');
+      this.changed();
+      return false;
+    }
+    if (states.some((u) => u!.received < u!.size)) return false;
+    this.set(r.client_id, 'files_coming = 0');
+    return true;
+  }
+
+  /** Sends whose phone has gone quiet past the setting: their pictures cut and sent. Ones a day old fail. */
+  filesTick() {
+    const now = this.clock.now();
+    for (const r of this.filesWaiting()) {
+      // Nothing else changes a row while it waits for its files: `updated_at` is when the hub took it.
+      if (now - r.updated_at > FILES_MAX_MS) {
+        this.set(r.client_id, `state = 'failed', files_coming = 0, error = ?, status = 410`, 'Its files did not finish uploading within a day');
+        this.changed();
+        this.kick(r.conversation_id);
+        continue;
+      }
+      if (this.filesIn(r)) {
+        this.kick(r.conversation_id);
+        continue;
+      }
+      const cut = this.cutIfStopped(r, now);
+      if (!cut) continue;
+      this.set(r.client_id, 'files_coming = 0, cut = ?', cut);
+      this.changed();
+      this.kick(r.conversation_id);
+    }
+  }
+
+  /**
+   * The phone stopped sending this row's files past the setting's wait: each still coming is cut after its last whole
+   * layer, all or none (a message goes once, so every one must be good enough first). The worst of them, which is what
+   * the message is said to have gone at; null when it waits on.
+   */
+  private cutIfStopped(r: Row, now: number): P.CutQuality | null {
+    const d = this.d;
+    if (!d.upload || !d.idle || !d.cuttable || !d.cut || !d.cutSettings) return null;
+    const set = d.cutSettings();
+    if (set.afterMs === null) return null;
+    const ids = JSON.parse(r.attachments) as string[];
+    const coming = ids.map((id) => d.upload!(id)).filter((u): u is P.UploadState => !!u && u.received < u.size);
+    if (!coming.length || coming.some((u) => d.idle!(u.id, now) < set.afterMs!)) return null;
+    const qs = coming.map((u) => d.cuttable!(u.id));
+    if (!qs.every((q) => atLeast(q, set.atLeast))) return null;
+    if (!coming.every((u) => d.cut!(u.id))) return null;
+    if (!ids.every((id) => {
+      const u = d.upload!(id);
+      return !!u && u.received >= u.size;
+    }))
+      return null;
+    return (qs as P.CutQuality[]).reduce((worst, q) => (CUT_QUALITIES.indexOf(q) < CUT_QUALITIES.indexOf(worst) ? q : worst), 'full');
+  }
+
+  private filesWaiting(): Row[] {
+    return this.db.query(`SELECT * FROM send_queue WHERE state = 'queued' AND files_coming = 1 ORDER BY seq`).all() as Row[];
   }
 
   // ------------------------------------------------------------------ holding
@@ -514,6 +645,8 @@ function view(r: Row): P.SendRow {
     hold: r.hold_reason ? JSON.parse(r.hold_reason) : null,
     holdUntil: r.hold_until ?? null,
     seq: r.seq,
+    filesComing: !!r.files_coming,
+    cut: r.cut ?? null,
   };
 }
 
@@ -529,7 +662,7 @@ function answerOf(r: P.SendRow, status: number | null, nativeId: string | null):
     case 'cancelled':
       return Response.json({ error: 'That send was cancelled' }, { status: 409 });
     default:
-      // Held, or waiting behind one that waits for you: the hub has it, and it goes when you say.
+      // Held, waiting for its files, or behind one that waits: the hub has it, and it goes when that is through.
       return Response.json({ ok: true, queued: true, row: r } satisfies P.SendAccepted, { status: 202 });
   }
 }

@@ -12,11 +12,15 @@ import { ATTACHMENT_LIMITS, splitsFiles } from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { bytes } from '../format.ts';
 import { netName } from '../model.ts';
-import { connected, startUpload, uploadsOf } from '../state.ts';
+import { connected, filesOf, startUpload, uploadsOf } from '../state.ts';
 import { readable, refusalOf, type UploadJob } from '../upload.ts';
+import { cutSettings, loadCutSettings } from '../cutsettings.ts';
+import { sendLine } from '../sendline.ts';
 import { isMedia } from '../camera.ts';
 import { viewer } from '../viewer.ts';
 import { Icon } from './icons.tsx';
+import { fileState, UploadSize, UploadTile } from './UploadTile.tsx';
+import './uploads.css';
 
 type PeekBox = typeof import('./Peek.tsx').Peek;
 let peekBox: PeekBox | null = null;
@@ -130,9 +134,9 @@ function AttachedFile({ f, remove }: { f: Attached; remove: () => void }) {
           <span class="composer-file-why" role="alert">
             {why}
           </span>
-        ) : status === 'uploading' ? (
-          <span class="upload-bar" role="progressbar" aria-label={`Uploading ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
-            <span style={{ width: `${pct}%` }} />
+        ) : f.job && status !== 'refused' ? (
+          <span class="composer-file-size" role="progressbar" aria-label={`Uploading ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+            <UploadSize job={f.job} />
           </span>
         ) : (
           <span class="composer-file-size">{bytes(f.file.size)}</span>
@@ -164,12 +168,13 @@ function AttachedMedia({ f, remove, open }: { f: Attached; remove: () => void; o
   return (
     <div class={`composer-media ${status}`} data-status={status}>
       <button class="composer-media-open" data-track="look at attached" onClick={open} title={why ? `${name}: ${why}` : `${name}, ${bytes(f.file.size)}`} aria-label={`Look at ${name}`}>
-        <Thumb f={f} />
-        {f.file.type.startsWith('video/') && (
-          <span class="composer-media-play" aria-hidden="true">
-            <Icon name="play" size={14} />
-          </span>
-        )}
+        <UploadTile job={f.refused ? undefined : f.job} url={f.url} video={f.file.type.startsWith('video/')}>
+          {f.file.type.startsWith('video/') ? (
+            <span class="composer-media-play" aria-hidden="true">
+              <Icon name="play" size={14} />
+            </span>
+          ) : null}
+        </UploadTile>
         <span class="composer-media-cap" aria-hidden="true">
           <span>{name}</span>
           <small>{bytes(f.file.size)}</small>
@@ -185,13 +190,9 @@ function AttachedMedia({ f, remove, open }: { f: Attached; remove: () => void; o
           )}
         </span>
       ) : (
-        status === 'uploading' && (
-          <span class="upload-bar composer-media-bar" role="progressbar" aria-label={`Uploading ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
-            <span style={{ width: `${pct}%` }} />
-          </span>
-        )
+        (status === 'uploading' || status === 'packing') && <span class="up-sr" role="progressbar" aria-label={`Uploading ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} />
       )}
-      <button class="composer-media-remove" data-track="remove" onClick={remove} title={status === 'uploading' ? 'Cancel the upload' : 'Remove'} aria-label={status === 'uploading' ? `Cancel uploading ${name}` : `Remove ${name}`}>
+      <button class="composer-media-remove" data-track="remove" onClick={remove} title={status === 'uploading' || status === 'packing' ? 'Cancel the upload' : 'Remove'} aria-label={status === 'uploading' || status === 'packing' ? `Cancel uploading ${name}` : `Remove ${name}`}>
         <Icon name="x" size={12} />
       </button>
     </div>
@@ -208,15 +209,73 @@ export function Thumb({ f, size = 22 }: { f: Attached; size?: number }) {
 export function statusOf(f: Attached): { status: string; why: string | null; pct: number } {
   const p = f.job?.progress.value;
   const status = f.refused ? 'refused' : (p?.status ?? 'done');
-  const pct = p && f.file.size ? Math.min(100, Math.floor((p.sent / f.file.size) * 100)) : 0;
+  // Of what goes up: a photo made progressive is smaller than the file attached.
+  const size = f.job?.size ?? f.file.size;
+  const pct = p && size ? Math.min(100, Math.floor((p.sent / size) * 100)) : 0;
   const why = f.refused ?? (p?.status === 'failed' ? (p.offline ? 'Waiting for the hub' : `Upload failed: ${p.error}`) : null);
   return { status, why, pct };
 }
 
-/** How far one file of a sent message has uploaded, on its pending copy. */
-export function PendingUpload({ tempId, index }: { tempId: string; index: number }) {
-  const job = uploadsOf(tempId)[index];
-  const p = job?.progress.value;
-  if (!job || !p || p.status === 'done') return null;
-  return <span class="pending-upload"> · {p.status === 'failed' ? p.error : `${Math.min(100, Math.floor((p.sent / (job.size || 1)) * 100))}%`}</span>;
+/** When each send began uploading, and how much the hub had then: how long is left is worked out from it. */
+const began = new Map<string, { at: number; sent: number }>();
+
+/** A clock that ticks each second while `on`: for a countdown or how long is left. */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on]);
+  return on ? now : Date.now();
+}
+
+/**
+ * A sent message's files on its pending copy (docs/uploads.md "How it looks"): photos and videos as tiles at their own
+ * shape, showing what the hub has of each, other files by name with a ring; and a line for all of them: sending, how
+ * much and how long, or with the link lost, what the hub has and when it sends them as they are.
+ */
+export function PendingFiles({ tempId, names, held }: { tempId: string; names: string[]; held?: boolean }) {
+  const files = filesOf(tempId);
+  const jobs = uploadsOf(tempId);
+  const [urls, setUrls] = useState<(string | null)[]>([]);
+  useEffect(() => {
+    const u = files.map((f) => (/^(image|video)\//.test(f.type) ? URL.createObjectURL(f.blob) : null));
+    setUrls(u);
+    return () => u.forEach((x) => x && URL.revokeObjectURL(x));
+  }, [files.length, tempId]);
+  const states = jobs.map(fileState);
+  const online = connected.value;
+  // Read while the hub can still be asked: the line needs the setting once the link is gone.
+  useEffect(() => void (held && loadCutSettings(true)), [held]);
+  const going = states.some((s) => s.status !== 'done' && s.status !== 'cancelled');
+  const now = useNow(going);
+  const sent = states.reduce((n, s) => n + s.sent, 0);
+  if (going && sent > 0 && !began.has(tempId)) began.set(tempId, { at: now, sent });
+  if (!going) began.delete(tempId);
+  const line = sendLine({ files: states, online, held: !!held, cut: cutSettings.value, now, began: began.get(tempId) });
+  return (
+    <div class="pend-files">
+      <div class="pend-tiles">
+        {names.map((name, i) =>
+          urls[i] ? (
+            <span key={i} class="pend-tile" title={name}>
+              <UploadTile job={jobs[i]} url={urls[i]} video={files[i]?.type.startsWith('video/')} />
+            </span>
+          ) : (
+            <div key={i} class="pending-file">
+              <Icon name="paperclip" size={12} /> {name}
+              {jobs[i] && jobs[i].progress.value.status !== 'done' && (
+                <>
+                  {' · '}
+                  <UploadSize job={jobs[i]} />
+                </>
+              )}
+            </div>
+          ),
+        )}
+      </div>
+      {line && <span class={`pend-line${line.amber ? ' amber' : ''}`}>{line.text}</span>}
+    </div>
+  );
 }

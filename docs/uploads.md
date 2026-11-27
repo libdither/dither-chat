@@ -1,7 +1,9 @@
 # Sending files
 
 How a file gets from the composer to a network: checked first, uploaded as it is attached, a piece at a time, kept
-on the hub's disk until it is sent, and through a restart of either end.
+on the hub's disk until it is sent, and through a restart of either end. A photo goes so that whatever part of it the
+hub has is the whole picture, and a message sent while its files upload is the hub's to send, even if the phone goes
+away.
 
 ## In the composer
 
@@ -16,12 +18,14 @@ on the hub's disk until it is sent, and through a restart of either end.
 
   Refused files leave the row when you send or remove them. Before this, files over the limit were left out with a
   toast that named no file, and files over the count were dropped without a word.
-- **Each accepted file starts uploading at once**, with a progress bar and a cancel (×). Cancelling, or leaving the
+- **Each accepted file starts uploading at once**, with a cancel (×): a photo or video as a tile showing what the hub
+  has of it (see "How it looks"), another file with a ring and its size so far. Cancelling, or leaving the
   conversation with files attached, also deletes what the hub has of them (`ui/ComposerFiles.tsx`).
 - **A failed upload** says why, with Retry. Send waits until it is retried or removed. A failure for want of the hub
   shows "Waiting for the hub" instead: it tries again when the hub is back, and does not hold a send.
-- **Send while files are still uploading**, and the message goes to the outbox as any send does (docs/sync.md) and
-  waits for them. Its pending copy says "Uploading…", with each file's percentage. The composer is free at once.
+- **Send while files are still uploading**, and the message goes to the outbox as any send does (docs/sync.md). The
+  hub takes it at once and holds it until the files are in (see "A send the hub holds"). Its pending copy shows the
+  tiles and a line: "Sending · 376 KB of 711 KB · about 4 s left". The composer is free at once.
 - **Look before it goes.** Photos and videos in the row are tiles at their own shape (112px high, 84px on a phone,
   up to 220px wide), × in the corner, the name and size on a hover. A click opens one in a box over the chat, as
   other files open on a computer: as large as the window lets it be and never past its own size, with its name,
@@ -130,18 +134,89 @@ hears it (`info.device`), and a path outside the shared storage is refused. The 
 `MANAGE_EXTERNAL_STORAGE`, each asked for only when its tab asks. Google Play limits that last one to file managers
 and the like; the app is installed from its own APK.
 
+## Pictures that sharpen
+
+A JPEG photo is reordered into a progressive JPEG before it uploads (`web/src/progressive/`). The order is coarse to
+fine: first the whole picture at 1:8 detail, then scans that each sharpen all of it. Cut after any whole scan, with an
+end marker after it, it is a JPEG every decoder takes. So whatever part of it the hub has is the whole picture, only
+blurrier, and the hub can send that if the phone goes away.
+
+- **Lossless.** jpegtran (libjpeg-turbo 3.1, `-progressive -copy all`) reorders the coefficients already in the file:
+  the same pixels and the same metadata, often a little smaller. It runs as WebAssembly (`jpegtran.wasm`, 366 KB,
+  80 KB as the hub sends it) in a worker, through a small WASI shim (`wasi.ts`) with stdin in and stdout out. The
+  worker is loaded on the first photo only. About 0.5 s for a 12 MP photo on a desktop. Rebuild it with
+  `scripts/jpegtran-wasm.sh` (nix, `pkgsCross.wasi32`; only the `jpegtran-static` target, without SIMD or TurboJPEG,
+  which need setjmp). `packages/web/test/progressive.test.ts` checks its output is byte for byte jpegtran's.
+- **Left as they are:** a JPEG already progressive, a PNG, HEIC, video or any other file, and a JPEG the worker cannot
+  read or takes over 30 s on. Those upload as before.
+- **The layers** (`jpegLayers` in `protocol/src/jpegscans.ts`): each scan ends at the next marker that is not a
+  stuffed `FF00` or a restart. The preview point is the scan after which every component has its DC. How good a cut
+  looks, measured on camera photos (SSIMULACRA 2): the preview once the DC is in (a few % of the bytes), **fair** from
+  35% of the file kept (`CUT_FAIR`), **good** from 60% (`CUT_GOOD`).
+- **By quality across a send.** The upload pauses at each level (`qualityStops`): just past the marker after the
+  preview, after fair, after good, then the end. "Just past the marker" because a hub with only the bytes up to a
+  scan's end cannot tell it ended; the page counts a layer the same way (`seesEnd`). Photos in one send take turns at
+  each stop (`turn()` in `upload.ts`), so every picture is a preview before any goes on to fair.
+- Pieces are `UPLOAD_PIECE` (256 KiB) or up to the next stop, whichever is shorter. The hub still takes pieces up to
+  `UPLOAD_CHUNK` (2 MiB), which older pages send.
+
+## A send the hub holds
+
+A send is a row of the hub's send queue ([sync.md](sync.md), "The send queue"). `POST /api/conversations/:id/send`
+with `waitForFiles: true` and files not all in takes it at once, as any send with `ack: 'hub'` (one tick), its row
+marked `filesComing` (`packages/hub/src/sendqueue.ts`). From then on the send is the hub's:
+
+- **It heads its chat.** The sends after it in the chat, from any device, wait behind it ("waiting on the message
+  above"), so they still go out in the order they were sent. The page uploads its files on, its own copy hidden behind
+  the hub's row, after a reload too; the row says "The hub has it, and sends it once the files are in".
+- **Sent when the last byte lands** (`Uploads.onWhole`): the row stops waiting, and goes as any other (a chat that
+  moved on meanwhile holds it, as it holds any send). The page stops uploading once the row no longer waits.
+- **Sent as far as it came** when the phone stops. Every 10 s the hub looks at the rows that wait for files. When
+  every file still coming has had no byte for the wait set in Settings → Sending, and each is a photo the hub can cut
+  at the quality set there or better, it cuts each after its last whole layer, closes it with an end marker, and sends.
+  All or none: a message goes once, so one video or file not all there keeps the whole message waiting. The row
+  keeps `cut`, the worst quality of them, and says "Sent as far as it had come (fair)".
+- A piece for an upload that went (whole or cut) gets `410 { sent: true }`, and so does asking how much the hub has
+  of it: the phone, back online, ends the upload as sent instead of beginning it again.
+- Cancel on the row drops its files, and the sends behind it go. One whose upload is gone fails ("that upload has
+  expired"), and one whose files never come fails after 24 hours; the sends behind either go. A hub restart keeps the
+  row waiting, as any queued send.
+- **Settings → Sending** (`GET`/`PUT /api/sending/cut`, `{ afterMs, atLeast }`, kept in the hub's meta): send what the
+  hub has after Never, 1, 5 (the default) or 30 minutes; only if each picture is at least a preview, fair (the
+  default) or good.
+
+## How it looks
+
+`ui/UploadTile.tsx` and `sendline.ts`, the same in the composer and on the pending copy:
+
+- **A photo** sparkles as a two-colour dither of itself (an 8×8 Bayer pattern in the accent colour) while it is made
+  progressive. Then it shows the hub's copy: the file cut after the last layer the hub has whole, exactly what the hub
+  would send now, blurry at first and sharper with each layer. The badge says how good that is and how much is up:
+  "preview · 12%", "fair · 52%". Once it is all there the tile is the photo itself.
+- **A video** has no usable half: its frame turns from the dither to colour as its bytes reach the hub, with a ring.
+- **Another file**: a ring and "2.1 MB of 6.0 MB".
+- The ring and the counts are the hub's own count of what it has, never the browser's count of bytes sent. Amber
+  while the hub is out of reach; a tick once it has all of it.
+- **The line** under a pending copy: "Packing…", then "Sending · 376 KB of 711 KB · about 4 s left". With the link
+  lost and the send with the hub: "Link lost · the hub has all 2, at least fair · sends as is in 4:12", or "waits: not all
+  fair yet", or "the hub waits for this phone" with Never set.
+- A piece that has moved nothing for 30 s (`STALL_MS`) is given up as no answer and tried again, so a link gone
+  silent does not hang an upload.
+
 ## Uploading in pieces
 
 ```
 POST /api/uploads/start        { name, mime, size }        → { id, name, mime, size, received: 0 }
 PUT  /api/uploads/:id?offset=N  up to UPLOAD_CHUNK bytes    → { …, received }   (409 { received } at a wrong offset)
-GET  /api/uploads/:id                                       → { …, received }   (404 once gone)
+GET  /api/uploads/:id                                       → { …, received }   (404 once gone; 410 { sent } if sent)
 DELETE /api/uploads/:id                                     cancels
 POST /api/conversations/:id/send { attachments: [id, …] }   sends; 410 if one is gone or not all there
+     … { attachments, clientId, ack: 'hub', waitForFiles }  its queue row at once, `filesComing` until they are in
+GET|PUT /api/sending/cut  { afterMs, atLeast }              Settings → Sending
 ```
 
 - **Why pieces rather than one streamed request**: a phone on a flaky connection. A dropped connection loses at most
-  the piece in flight (`UPLOAD_CHUNK`, 2 MiB), and the app carries on from `received` instead of starting a 25 MB
+  the piece in flight (`UPLOAD_PIECE`, 256 KiB), and the app carries on from `received` instead of starting a 25 MB
   file again. The same pattern as history imports (docs/import.md).
 - `received` is the size of the file on the hub's disk. Every byte written is at its own offset, so a piece cut off
   midway still leaves good bytes, and the next piece starts after them.
@@ -157,14 +232,14 @@ POST /api/conversations/:id/send { attachments: [id, …] }   sends; 410 if one 
 ## On the hub
 
 - `<data>/uploads/` (0700) holds two files per upload, both 0600: `<id>`, the bytes so far, and `<id>.json`,
-  `{ name, mime, size, at }`. The bytes go to disk as they arrive. The hub never holds a whole file in memory
+  `{ name, mime, size, at }`, with `cut: { from, quality }` once a send whose phone stopped cut it. The bytes go to disk as they arrive. The hub never holds a whole file in memory
   (`packages/hub/src/uploads.ts`).
 - **Kept across a restart.** At startup the hub keeps every upload used in the last hour, whole or half-made. "Used"
   means made, written to, or handed to a send. Everything else in the folder goes: older uploads, a stream a crash
   cut off before its record, a half-written record. Before this, the folder was emptied at every start. A send
   queued on a device then had to upload all its files again, and a send that a remote adapter was still reading
   (dither-accounts keeps running while the hub restarts) lost its files.
-- **Deleted once sent**, after the adapter answers. A send that failed keeps them for a retry. Unused ones go an
+- **Deleted once sent**, after the adapter answers. One a send waits on is kept while it waits. A send that failed keeps them for a retry. Unused ones go an
   hour after their last use.
 - Names are cleaned to a name and never become a path: the last part after any `/` or `\`, no control characters,
   at most 200 characters keeping the end. A type that is not `type/subtype` becomes `application/octet-stream`.
@@ -183,7 +258,22 @@ limit, and streaming in the adapters (dither-accounts' extractors).
 - `packages/hub/test/server.test.ts` ("sending files"): the routes over HTTP, a stream with no length cut off at the
   cap, a dropped connection, a hub restarted between upload and send.
 - `packages/web/test/upload.test.ts`: pieces and progress against a fake hub, carrying on after a drop and after a
-  reload, refusals, cancel and retry, and why a file is refused.
+  reload, refusals, cancel and retry, and why a file is refused; pieces capped at the quality stops, photos taking
+  turns by quality, a stalled piece, packing, and a 410 `sent` ending an upload as sent.
+- `packages/protocol/test/jpegscans.test.ts`: the layers of an invented progressive JPEG (`test/fixtures/`), only
+  whole scans in a cut-off file, cuts closed with an end marker, qualities, and that a hub paused at a stop sees the layer whole.
+- `packages/hub/test/sendqueue-files.test.ts`: queue rows waiting for files, against real uploads and a fake clock:
+  sent when the last byte lands, a repeat, a send behind one waiting with it, cut after the wait and not before, never
+  with Never, all or none (one file that cannot be cut keeps the message waiting), a file gone, expiry, cancel and a
+  restart. `server.test.ts` ("sending files") does one and the cut setting over HTTP.
+- `packages/web/test/progressive.test.ts`: the wasm's output against jpegtran's own, a file it cannot read, what is
+  packed and what is left. `sendline.test.ts`: the line's words.
+- `scripts/verify-pictures.ts` (CI): a pasted photo made progressive in headless Chromium, its pieces held and let go
+  one at a time over DevTools; at each, the badge says what the hub could send, worked out from the hub's own bytes.
+  Sent mid-upload, the hub takes it at once and sends it whole at the last byte. A second photo, sent and then cut off
+  by cutting the link (`link-proxy.ts`): the pending copy says what the hub has and when it sends; a minute later the
+  hub sends it cut after a whole layer, at least fair; back online, the page shows the message. Then Settings →
+  Sending, kept on the hub.
 - `packages/web/test/camera.test.ts`: where a flip goes, what a recording is saved as, names, which picks open the
   send screen.
 - `scripts/verify-attach.ts`: the phone's attaching at 390x844 against a demo hub of its own, with Chromium's fake

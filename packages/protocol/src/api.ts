@@ -3,6 +3,7 @@
  * Every id here is a hub id; native ids are included for display and deep links only.
  */
 
+import type { CutQuality } from './jpegscans.ts';
 import type { About, AboutFields, AddWho, GroupRule, PersonAbout, PersonRelationship } from './about.ts';
 import type { AddAction, AddCheck, AddPreview, AddRef, LinkRelationship, RequestAnswer, RequestFact } from './add.ts';
 import type { Capability, NativeMute, ReceiptState } from './adapter.ts';
@@ -319,7 +320,7 @@ export interface UploadView {
 
 /**
  * An upload made a piece at a time (docs/uploads.md): `POST /api/uploads/start` with { name, mime, size }, then
- * `PUT /api/uploads/:id?offset=<received>` with up to UPLOAD_CHUNK bytes each. It can be sent once `received` is
+ * `PUT /api/uploads/:id?offset=<received>` with up to UPLOAD_CHUNK bytes each (the app sends UPLOAD_PIECE). It can be sent once `received` is
  * `size`. A piece at the wrong offset is refused with 409 and { received }, where to carry on from.
  */
 export interface UploadState extends UploadView {
@@ -335,6 +336,15 @@ export interface SendResult {
   accountId: string;
   result?: unknown;
   messageId?: string;
+}
+
+/**
+ * Settings → Sending → "When a picture is cut off" (`GET`/`PUT /api/sending/cut`): how long the hub waits for a phone
+ * that stopped uploading a send's pictures (null: for good), and how good what it has must be to go as it is.
+ */
+export interface CutSettings {
+  afterMs: number | null;
+  atLeast: CutQuality;
 }
 
 /**

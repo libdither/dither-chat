@@ -109,8 +109,8 @@
     "js/lottie-web/build/player/lottie_light.js.gzip": { "measured": 47438, "budget": 48387 },
     "js/shared/About.bytes": { "measured": 10624, "budget": 10837 },
     "js/shared/About.gzip": { "measured": 4188, "budget": 4235 },
-    "js/shared/ComposerFiles.bytes": { "measured": 6164, "budget": 6288 },
-    "js/shared/ComposerFiles.gzip": { "measured": 2479, "budget": 2510 },
+    "js/shared/ComposerFiles.bytes": { "measured": 12534, "budget": 12785, "reason": "Photos sharpen as they upload (docs/uploads.md \"Pictures that sharpen\", \"A send the hub holds\"): upload.ts's turns by quality, stall watchdog and packing step, and the outbox's held send (state.ts), at startup since the outbox delivers from there; the upload tiles and their line in the conversation's chunk; Settings > Sending" },
+    "js/shared/ComposerFiles.gzip": { "measured": 5221, "budget": 5326, "reason": "Photos sharpen as they upload (docs/uploads.md \"Pictures that sharpen\", \"A send the hub holds\"): upload.ts's turns by quality, stall watchdog and packing step, and the outbox's held send (state.ts), at startup since the outbox delivers from there; the upload tiles and their line in the conversation's chunk; Settings > Sending" },
     "js/shared/discard.bytes": { "measured": 684, "budget": 698, "reason": "The mail editor (docs/mail.md \"Writing\"): rich text with pictures in place, Markdown and HTML views, forwards and quotes kept whole; the rich editor and the CodeMirror views load as chunks of their own when a message is first written" },
     "js/shared/discard.gzip": { "measured": 440, "budget": 443 },
     "js/shared/dist.bytes": { "measured": 10649, "budget": 10862 },
@@ -265,8 +265,8 @@
     "js/src/ui/SendLists.tsx.gzip": { "measured": 2485, "budget": 2526 },
     "js/src/ui/ServerParts.tsx.bytes": { "measured": 10779, "budget": 10926 },
     "js/src/ui/ServerParts.tsx.gzip": { "measured": 4219, "budget": 4253 },
-    "js/src/ui/Settings.tsx.bytes": { "measured": 67712, "budget": 69066, "reason": "Settings gained a Sending section (docs/sync.md \"The send queue\"): the countdown's choice list and its help, beside the Catching up section (docs/catch-up.md)" },
-    "js/src/ui/Settings.tsx.gzip": { "measured": 20954, "budget": 21373, "reason": "Settings gained a Sending section (docs/sync.md \"The send queue\"): the countdown's choice list and its help, beside the Catching up section (docs/catch-up.md)" },
+    "js/src/ui/Settings.tsx.bytes": { "measured": 69474, "budget": 70863, "reason": "Settings → Sending gained the rows for a picture cut off (docs/uploads.md \"A send the hub holds\"): how long the hub waits for a phone that stopped uploading and how good what it has must be, beside the countdown of the send queue (docs/sync.md \"The send queue\")" },
+    "js/src/ui/Settings.tsx.gzip": { "measured": 21487, "budget": 21917, "reason": "Settings → Sending gained the rows for a picture cut off (docs/uploads.md \"A send the hub holds\"): how long the hub waits for a phone that stopped uploading and how good what it has must be, beside the countdown of the send queue (docs/sync.md \"The send queue\")" },
     "js/src/ui/SignalPeople.tsx.bytes": { "measured": 6766, "budget": 6869 },
     "js/src/ui/SignalPeople.tsx.gzip": { "measured": 2641, "budget": 2657 },
     "js/src/ui/Stream.tsx.bytes": { "measured": 5805, "budget": 5885 },
@@ -296,6 +296,14 @@
     "css/screens.css.bytes": { "measured": 613, "budget": 626, "reason": "A designed mail shown as sent in place in a chat (docs/mail.md \"A mail as a chat message\"): its height capped at about 60% of the pane, with a fade and Show all; Mail's chunk's own stylesheet" },
     "css/screens.css.gzip": { "measured": 326, "budget": 333, "reason": "A designed mail shown as sent in place in a chat (docs/mail.md \"A mail as a chat message\"): its height capped at about 60% of the pane, with a fade and Show all; Mail's chunk's own stylesheet" },
     "js/src/ui/ZoneMap.tsx.bytes": { "measured": 30192, "budget": 30796, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
-    "js/src/ui/ZoneMap.tsx.gzip": { "measured": 10885, "budget": 11103, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" }
+    "js/src/ui/ZoneMap.tsx.gzip": { "measured": 10885, "budget": 11103, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
+    "css/ComposerFiles.css.bytes": { "measured": 1796, "budget": 1832 },
+    "css/ComposerFiles.css.gzip": { "measured": 761, "budget": 777 },
+    "js/shared/cutsettings.bytes": { "measured": 477, "budget": 487 },
+    "js/shared/cutsettings.gzip": { "measured": 338, "budget": 345 },
+    "js/src/progressive/pack.ts.bytes": { "measured": 1243, "budget": 1268 },
+    "js/src/progressive/pack.ts.gzip": { "measured": 710, "budget": 725 },
+    "worker/pack.worker.js.bytes": { "measured": 2126, "budget": 2169 },
+    "worker/pack.worker.js.gzip": { "measured": 1087, "budget": 1109 }
   }
 }

@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { dirname, join } from 'node:path';
 import { hubId, randomId } from '@dither-chat/protocol/ids';
 import type * as P from '@dither-chat/protocol';
-import { calendarAccountUrl, canonicalReactionKey, DEFAULT_RETENTION, isPictureLayout, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
+import { calendarAccountUrl, canonicalReactionKey, CUT_SETTINGS_DEFAULT, DEFAULT_RETENTION, isPictureLayout, MENTION_SCOPES, parseSearch, PROTOCOL_VERSION, REACTION_RULES } from '@dither-chat/protocol';
 import { activityChart, type Zone } from './activitychart.ts';
 import { binsFor, estimateMessages, snowflakeTime, type ChannelInput } from './msgcount.ts';
 import { Journal } from './journal.ts';
@@ -390,6 +390,7 @@ export class Store {
       this.addColumns('notification', { alert: 'INTEGER', title: 'TEXT', body: 'TEXT', look: 'TEXT', computer_in_use: 'INTEGER' });
       this.addColumns('notification_event', { seen: 'TEXT' });
       this.addColumns('checkin', { expired_at: 'INTEGER' });
+      this.addColumns('send_queue', { files_coming: 'INTEGER NOT NULL DEFAULT 0', cut: 'TEXT' });
       this.addColumns('attn_answer', { parts: 'TEXT', chance: 'REAL' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
       this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT', nickname: 'TEXT' });
@@ -4360,6 +4361,9 @@ export class Store {
   setZonePins = (m: Record<string, string>) => this.setMetaJson('zone_pins', m);
   privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
   setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);
+  /** Settings → Sending → "When a picture is cut off" (sendqueue.ts, files still coming). */
+  cutSettings = (): P.CutSettings => ({ ...CUT_SETTINGS_DEFAULT, ...this.metaJson<P.CutSettings>('cutUploads') });
+  setCutSettings = (c: P.CutSettings) => this.setMetaJson('cutUploads', c);
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);
   quietHeld = () => this.metaJson<{ count: number; conversationId: string; messageId: string }>('quiet_held');
   setQuietHeld = (held: { count: number; conversationId: string; messageId: string } | null) => this.setMetaJson('quiet_held', held);

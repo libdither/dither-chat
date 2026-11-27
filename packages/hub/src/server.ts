@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, CUT_QUALITIES as P_CUT_QUALITIES, CUT_WAITS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { ACCOUNT_COLORS, loudViewOf, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
@@ -553,7 +553,7 @@ export class HubServer {
         return { messages: views, identities: store.identitiesOf(views) };
       },
     });
-    // Files waiting to be sent later stay; a reminder that came due on a network notifies (saved.ts).
+    // Files waiting to be sent later, or for the rest of their bytes, stay; a reminder that came due on a network notifies (saved.ts).
     this.queue = new SendQueue(store, {
       send: (cid, b) => this.sendNow(cid, b),
       watched: (cid) => this.shown(cid),
@@ -562,7 +562,14 @@ export class HubServer {
       dropFiles: (ids) => this.uploads.remove(ids),
       told: (row) => this.heldTold(row),
       clock: opts.clock,
+      upload: (id) => this.uploads.state(id),
+      idle: (id, now) => this.uploads.idle(id, now),
+      cuttable: (id) => this.uploads.cuttable(id),
+      cut: (id) => this.uploads.cut(id),
+      cutSettings: () => store.cutSettings(),
     });
+    this.uploads.onWhole = (id) => this.queue.uploaded(id);
+    this.uploads.sent = (id) => this.queue.sentUpload(id);
     this.uploads.held = () => new Set([...this.sendExtras.later.heldUploads(), ...this.queue.heldUploads()]);
     store.reminderDue = (r) => {
       const w = reminderWords(store.db, r);
@@ -2124,7 +2131,7 @@ export class HubServer {
 
     // Files to send (docs/uploads.md): streamed to disk, whole in one request or a piece at a time at its offset.
     if (path.startsWith('/api/uploads')) {
-      const fail = (e: any) => Response.json({ error: String(e?.message ?? e), ...(e?.received !== undefined ? { received: e.received } : {}) }, { status: e?.status ?? 400 });
+      const fail = (e: any) => Response.json({ error: String(e?.message ?? e), ...(e?.received !== undefined ? { received: e.received } : {}), ...(e?.sent ? { sent: true } : {}) }, { status: e?.status ?? 400 });
       try {
         if (path === '/api/uploads' && method === 'POST') {
           const length = req.headers.get('content-length') ? Number(req.headers.get('content-length')) : undefined;
@@ -2136,7 +2143,10 @@ export class HubServer {
           return ok(this.uploads.start(cleanFileName(typeof b.name === 'string' ? b.name : null, false), String(b.mime ?? ''), Number(b.size)));
         }
         if ((m = path.match(/^\/api\/uploads\/([0-9a-f]{24})$/))) {
-          if (method === 'GET') return this.uploads.state(m[1]) ? ok(this.uploads.state(m[1])) : bad('no such upload: it may have expired', 404);
+          if (method === 'GET') {
+            if (this.uploads.sentAlready(m[1])) return Response.json({ error: 'it was sent as far as it had come', sent: true }, { status: 410 });
+            return this.uploads.state(m[1]) ? ok(this.uploads.state(m[1])) : bad('no such upload: it may have expired', 404);
+          }
           if (method === 'PUT') {
             if (Number(req.headers.get('content-length') ?? 0) > UPLOAD_CHUNK) return bad('piece too large', 413);
             return ok(await this.uploads.write(m[1], num('offset') ?? -1, req.body));
@@ -2273,6 +2283,15 @@ export class HubServer {
         }
       }
       return ok(this.queue.settings());
+    }
+    if (path === '/api/sending/cut') {
+      if (method === 'PUT') {
+        const b = await body<Partial<P.CutSettings>>();
+        if (!CUT_WAITS.includes(b.afterMs as number | null)) return bad(`afterMs: one of ${CUT_WAITS.join(', ')}`);
+        if (!P_CUT_QUALITIES.includes(b.atLeast as P.CutQuality) || b.atLeast === 'full') return bad('atLeast: preview, fair or good');
+        s.setCutSettings({ afterMs: b.afterMs as number | null, atLeast: b.atLeast as P.CutQuality });
+      }
+      return ok(s.cutSettings());
     }
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/forward$/)) && method === 'POST') {
       const b = await body<P.ForwardRequest>();

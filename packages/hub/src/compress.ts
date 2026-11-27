@@ -64,8 +64,11 @@ export async function compress(req: Request, res: Response | undefined): Promise
   return new Response(body, { status: res.status, headers });
 }
 
-/** The web build's text files, by extension: what PackedFiles keeps. Source maps are left to compress(): only DevTools asks. */
-const PACKABLE = /\.(js|mjs|css|html|json|webmanifest|svg|txt|xml)$/;
+/**
+ * The web build's text files, by extension, and its wasm (the photo packer's jpegtran, a fifth of its size packed):
+ * what PackedFiles keeps. Source maps are left to compress(): only DevTools asks.
+ */
+const PACKABLE = /\.(js|mjs|css|html|json|webmanifest|svg|txt|xml|wasm)$/;
 /** zstd's hardest level short of its "ultra" ones: about 300 ms a megabyte here, once a file; the client unpacks it as fast as level 3. */
 const PACK_LEVEL = 19;
 

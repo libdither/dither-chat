@@ -5,13 +5,14 @@
  *
  * The marks:
  * - `device` (a clock): only this device has it. It goes to the hub by itself when the hub is reachable.
- * - `hub` (one tick): the hub has it, kept through any restart; it goes when the sends before it in the chat are through.
+ * - `hub` (one tick): the hub has it, kept through any restart; it goes when the sends before it in the chat are through,
+ *   and its files are in (`filesComing`: this device uploads them on, docs/uploads.md "A send the hub holds").
  * - `network` (two ticks): the network named the message it became. Shown until that message is here.
  * - `held`: the chat moved on while it waited: Send, Edit or Cancel, with the countdown while a device shows the chat.
  * - `unsure`: in doubt: the hub handed it on and no answer said whether it went out. Send again or Discard.
  * - `failed`: not sent: refused. It goes again only on Try again (an error the hub could not read may hide one that
  *   went out, so it never goes by itself). Try again or Discard.
- * A `hub` row behind a held or in-doubt one says so (`behind`): it waits for that one.
+ * A `hub` row behind a held or in-doubt one, or one waiting for its files, says so (`behind`): it waits for that one.
  */
 import type * as P from '@dither-chat/protocol';
 
@@ -45,10 +46,14 @@ export interface ShownSend {
   hold?: P.SendHold;
   /** The countdown's end, by the hub's clock. */
   holdUntil?: number;
-  /** Waits behind this held or in-doubt send. */
+  /** Waits behind this held or in-doubt send, or one waiting for its files. */
   behind?: string;
   /** A sent one whose message is not here: when it stops being shown, by the hub's clock. */
   goneAt?: number;
+  /** The hub has it and waits for its files to finish uploading. */
+  filesComing?: boolean;
+  /** It went with its pictures cut as far as they had come, at this detail. */
+  cut?: P.CutQuality;
   ts: number;
 }
 
@@ -112,7 +117,7 @@ export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows
     if (r.state === 'sent' && ((r.messageId && here(r.messageId)) || hubNow - r.updatedAt > SENT_SHOWN_MS)) continue;
     const mark: SendMark = r.state === 'sent' ? 'network' : r.state === 'held' ? 'held' : r.state === 'unsure' ? 'unsure' : r.state === 'failed' ? 'failed' : 'hub';
     const behind = mark === 'hub' ? blocking.get(r.conversationId) : undefined;
-    if ((mark === 'held' || mark === 'unsure') && !blocking.has(r.conversationId)) blocking.set(r.conversationId, r.clientId);
+    if ((mark === 'held' || mark === 'unsure' || (mark === 'hub' && r.filesComing)) && !blocking.has(r.conversationId)) blocking.set(r.conversationId, r.clientId);
     out.push({
       key: r.clientId,
       conversationId: r.conversationId,
@@ -125,6 +130,8 @@ export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows
       ...(r.holdUntil !== null && mark === 'held' ? { holdUntil: r.holdUntil } : {}),
       ...(behind ? { behind } : {}),
       ...(mark === 'network' ? { goneAt: r.updatedAt + SENT_SHOWN_MS } : {}),
+      ...(r.filesComing && mark === 'hub' ? { filesComing: true } : {}),
+      ...(r.cut ? { cut: r.cut } : {}),
       ts: r.pressedAt,
     });
   }
@@ -142,9 +149,9 @@ export function sendNote(s: ShownSend, hubNow: number): string {
     case 'device':
       return s.uploading ? 'Uploading…' : s.queued ? 'On this device: goes to the hub when it is back' : 'On this device';
     case 'hub':
-      return s.behind ? 'The hub has it · waiting on the message above' : 'The hub has it';
+      return s.behind ? 'The hub has it · waiting on the message above' : s.filesComing ? 'The hub has it, and sends it once the files are in' : 'The hub has it';
     case 'network':
-      return 'Sent';
+      return s.cut ? `Sent as far as it had come (${s.cut})` : 'Sent';
     case 'held': {
       const n = s.hold?.count ?? 0;
       const left = countdownLeft(s.holdUntil, hubNow);

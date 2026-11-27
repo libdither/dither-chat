@@ -1,3 +1,5 @@
+import type { CutQuality } from './jpegscans.ts';
+
 /**
  * The hub's send queue (docs/sync.md "The send queue"): each chat's sends kept in the hub, in order, until the network
  * has them, and held for you when the chat moved on while one waited.
@@ -54,6 +56,13 @@ export interface SendRow {
   holdUntil: number | null;
   /** The order the hub took it in, across devices. */
   seq: number;
+  /**
+   * Its files are still uploading (`waitForFiles`): it goes once they are in, or, the phone having stopped, as far as its
+   * photos came (docs/uploads.md "A send the hub holds"). The sends behind it in its chat wait with it.
+   */
+  filesComing: boolean;
+  /** It went with its pictures cut as far as they had come, at this detail. */
+  cut: CutQuality | null;
 }
 
 /** What a send asks for beyond the message (POST /api/conversations/:id/send). */
@@ -64,6 +73,8 @@ export interface SendQueueFields {
   /** This install of the app (activity.ts deviceId): its own earlier sends in the chat never hold this one. */
   device?: string;
   pressedAt?: number;
+  /** Its files may still be uploading: the hub keeps it at the head of its chat until they are in (docs/uploads.md). */
+  waitForFiles?: boolean;
 }
 
 /** The answer to a send with `ack: 'hub'`. */

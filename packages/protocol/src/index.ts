@@ -39,3 +39,4 @@ export * from './foryou.ts';
 export * from './loudness.ts';
 export * from './matches.ts';
 export * from './catchup.ts';
+export * from './jpegscans.ts';

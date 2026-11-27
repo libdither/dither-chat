@@ -395,6 +395,7 @@ export function SettingsPane() {
         <Later>
           <SendingSettings />
           <PrivacySettings />
+          <SendingSettings />
           <HistorySettings />
           <IndexingSettings />
           <CatchUpLazy />

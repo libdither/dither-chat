@@ -246,7 +246,7 @@ try {
   await Bun.sleep(1000);
   let mine = await sentWith(caption);
   check('exactly one message, with the image', mine.length === 1 && mine[0].attachments?.length === 1 && mine[0].attachments[0].name === 'sunrise.png', mine.map((m) => m.attachments?.map((a: any) => a.name)));
-  check('the composer is empty again', (await page.eval<string>(`document.querySelector('.composer textarea').value`)) === '' && (await count('.composer-file')) === 0);
+  check('the composer is empty again', (await page.eval<string>(`document.querySelector('.composer textarea').value`)) === '' && (await count('.composer-file, .composer-media')) === 0);
 
   // ------------------------------------------------------------------ three photos: the strip, pick, remove, back
 
@@ -265,8 +265,9 @@ try {
   const kept = `two of them ${Date.now().toString(36)}`;
   await typeCaption(kept);
   await tap('.send-screen [data-track=back]');
-  check('× goes back to the composer with the files and the text', !(await has('.send-screen')) && (await count('.composer-file')) === 2 && (await page.eval<string>(`document.querySelector('.composer textarea').value`)) === kept);
-  await page.until(`[...document.querySelectorAll('.composer-file')].every((e) => e.dataset.status === 'done')`, 10_000).catch(() => {});
+  check('× goes back to the composer with the files and the text', !(await has('.send-screen')) && (await count('.composer-media')) === 2 && (await page.eval<string>(`document.querySelector('.composer textarea').value`)) === kept);
+  // Photos are tiles in the row (.composer-media), other files rows (.composer-file).
+  await page.until(`[...document.querySelectorAll('.composer-media')].every((e) => e.dataset.status === 'done')`, 10_000).catch(() => {});
   await tap('.composer-row .send-btn');
   await until(async () => (await sentWith(kept)).length > 0, 15_000, 'the message on the hub').catch(() => {});
   await Bun.sleep(800);
@@ -282,7 +283,7 @@ try {
   const why = await page.eval<string | null>(`document.querySelector('.send-screen .ss-why')?.textContent ?? null`);
   check('a photo over Discord’s limit says so on the send screen', /Over Discord’s 10 MB limit/.test(why ?? ''), why);
   await tap('.send-screen [data-track=back]');
-  await page.eval(`document.querySelector('.composer-file button[aria-label^="Remove"]')?.click()`);
+  await page.eval(`document.querySelector('.composer-file button[aria-label^="Remove"], .composer-media button[aria-label^="Remove"]')?.click()`);
   await Bun.sleep(200);
 
   // ------------------------------------------------------------------ the camera
@@ -368,7 +369,7 @@ try {
       () => check('…whose photo goes to the send screen', false),
     );
     await tap('.send-screen [data-track=back]');
-    await page.eval(`document.querySelector('.composer-file button[aria-label^="Remove"], .composer-file button[aria-label^="Cancel"]')?.click()`);
+    await page.eval(`document.querySelector('.composer-file button[aria-label^="Remove"], .composer-file button[aria-label^="Cancel"], .composer-media button[aria-label^="Remove"], .composer-media button[aria-label^="Cancel"]')?.click()`);
     await Bun.sleep(200);
   }
   // Refused after the tap stopped counting (a prompt answered slowly): a button asks the system camera.

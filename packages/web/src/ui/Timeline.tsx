@@ -102,7 +102,7 @@ import { openViewer, Pictures } from './Pictures.tsx';
 import { heldByPictures, PictureChip } from './PictureSwitch.tsx';
 import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
 import { pictureLayout } from '../arrange.ts';
-import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
+import { AttachedFiles, PendingFiles, useAttached } from './ComposerFiles.tsx';
 import { PendingNote } from './PendingNote.tsx';
 import { shownSends } from '../sendrows.ts';
 import { TypingBar } from './Typing.tsx';
@@ -1556,16 +1556,11 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         {/* Not yet sent: after the newest, so only while the newest is drawn. */}
         {end === all.length &&
           mine.map((p) => (
-            <div key={p.key} class={`msg pending ${p.mark}${p.queued ? ' queued' : ''}${p.behind ? ' behind' : ''}`} data-temp-id={p.key}>
+            <div key={p.key} class={`msg pending ${p.mark}${p.queued ? ' queued' : ''}${p.behind ? ' behind' : ''}${p.files.length ? ' with-files' : ''}`} data-temp-id={p.key}>
               <div class="msg-gutter" />
               <div class="msg-main">
                 <div class="msg-body">{p.body}</div>
-                {p.files.map((name, i) => (
-                  <div key={i} class="pending-file">
-                    <Icon name="paperclip" size={12} /> {name}
-                    {p.uploading && <PendingUpload tempId={p.key} index={i} />}
-                  </div>
-                ))}
+                {p.files.length ? <PendingFiles tempId={p.key} names={p.files} held={p.filesComing} /> : null}
                 <PendingNote s={p} />
               </div>
             </div>

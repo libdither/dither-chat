@@ -8,7 +8,7 @@ import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrive
 import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
 import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
-import { afterFailure, openOutbox, restoredState, type OutboxEntry, type SendMedia } from './outbox.ts';
+import { afterFailure, openOutbox, restoredState, type OutboxEntry, type OutboxFile, type SendMedia } from './outbox.ts';
 import { seenUpTo } from './sendrows.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
@@ -992,6 +992,8 @@ export const startUpload = (f: File) => new UploadJob(f, f.name, f.type || 'appl
 /** The uploads of sends not yet through, by tempId, for their progress on the pending copy. */
 const sendUploads = new Map<string, UploadJob[]>();
 export const uploadsOf = (tempId: string): UploadJob[] => sendUploads.get(tempId) ?? [];
+/** A send's files as kept with it, for its pending copy's tiles; none once it is through. */
+export const filesOf = (tempId: string): OutboxFile[] => outgoing.get(tempId)?.files ?? [];
 
 /** `uploads`: the composer's uploads of `files`, one each, already under way. */
 type SendOpts = { accountId?: string; replyTo?: string; files?: File[]; uploads?: UploadJob[]; media?: SendMedia; /** docs/sending.md */ silent?: boolean; mentionReplied?: boolean };
@@ -1029,8 +1031,9 @@ function thisDevice(): string | undefined {
  */
 function setHubSends(rows: P.SendRow[], hubNow: number) {
   hubSends.value = { rows, offset: hubNow - Date.now() };
-  const known = new Set(rows.map((r) => r.clientId));
-  const through = pending.value.filter((p) => known.has(p.tempId) && !delivering.has(p.tempId));
+  // One whose files are still coming keeps this device's copy: it uploads them on, after a reload too (carryOn).
+  const known = new Set(rows.filter((r) => !r.filesComing).map((r) => r.clientId));
+  const through = pending.value.filter((p) => known.has(p.tempId) && !delivering.has(p.tempId) && !carrying.has(p.tempId));
   for (const p of through) forget(p.tempId);
   if (through.length) pending.value = pending.value.filter((p) => !through.includes(p));
 }
@@ -1122,7 +1125,7 @@ async function deliver(tempId: string) {
   setPending(tempId, { queued: false, failed: undefined });
   // Each file's upload: the composer's, still going or done, or one carrying on from what the hub has. `again`:
   // the hub let them expire, so each begins anew.
-  const uploadAll = async (again = false) => {
+  const jobsFor = (again = false) => {
     const ids = (o.uploads ??= []);
     const had = sendUploads.get(tempId) ?? [];
     const jobs = o.files!.map((f, i) => {
@@ -1131,11 +1134,17 @@ async function deliver(tempId: string) {
       if (prev && j !== prev) prev.cancel();
       ids[i] = j.id;
       j.onId = (id) => ((ids[i] = id), void outbox.put(o));
+      // The progressive photo is what the hub has the bytes of: kept in its place, so a reload carries on the same file.
+      j.onPacked = (b) => ((o.files![i] = { ...o.files![i], blob: b }), void outbox.put(o));
       return j;
     });
     sendUploads.set(tempId, jobs);
     void outbox.put(o);
     if (jobs.some((j) => j.status.value !== 'done')) setPending(tempId, { uploading: true });
+    return jobs;
+  };
+  const uploadAll = async (again = false) => {
+    const jobs = jobsFor(again);
     try {
       o.attachments = (await Promise.all(jobs.map((j) => j.settle()))).map((u) => u.id);
     } finally {
@@ -1143,14 +1152,15 @@ async function deliver(tempId: string) {
     }
     void outbox.put(o);
   };
-  const post = () => {
+  const post = (attachments = o.attachments, waitForFiles = false) => {
     // `ack: 'hub'`: answered as soon as the hub has it in its queue (one tick). The clientId is kept by the hub for
     // good, so going again after a lost answer, or after a reload, is the same send, never a second one.
     const body = {
       body: o.body,
       accountId: o.accountId,
       replyTo: o.replyTo,
-      attachments: o.attachments,
+      attachments,
+      ...(waitForFiles ? { waitForFiles: true } : {}),
       clientId: o.tempId,
       ack: 'hub',
       pressedAt: o.ts,
@@ -1164,20 +1174,33 @@ async function deliver(tempId: string) {
     return api<P.SendAccepted>(`/api/conversations/${o.conversationId}/send`, { body, signal: link.signal });
   };
   try {
-    if (o.files?.length && !o.attachments) await uploadAll();
-    let r: P.SendAccepted;
+    let r: P.SendAccepted | null = null;
+    let jobs: UploadJob[] | null = null;
     try {
-      r = await post();
+      // Its files still uploading: handed to the hub at once (docs/uploads.md "A send the hub holds"), whose row heads
+      // the chat until they are in, or, should this device go away, as far as its photos came. A file that could not
+      // even begin: the old way, all of them uploaded and then the send.
+      if (o.files?.length && !o.attachments) {
+        jobs = jobsFor();
+        const ids = await idsOf(jobs);
+        if (ids) r = await post(ids, true);
+      }
+      if (!r && o.files?.length && !o.attachments) await uploadAll();
+      r ??= await post();
     } catch (e: any) {
       // The hub let the uploads expire while this waited: make them again from the files, once.
       if (e?.status !== 410 || !o.files?.length) throw e;
+      jobs = null;
       await uploadAll(true);
       r = await post();
     }
     // The hub has it: from now on its row is shown, here and on every device.
     if (r?.row) putHubSend(r.row);
-    forget(tempId);
-    pending.value = pending.value.filter((x) => x.tempId !== tempId);
+    if (r?.row?.filesComing && jobs) void carryOn(tempId, jobs);
+    else {
+      forget(tempId);
+      pending.value = pending.value.filter((x) => x.tempId !== tempId);
+    }
   } catch (e: any) {
     // The hub said it has it after all (its list came on the socket meanwhile): nothing to keep.
     if (hubSends.value.rows.some((r) => r.clientId === tempId)) {
@@ -1196,6 +1219,59 @@ async function deliver(tempId: string) {
   } finally {
     delivering.delete(tempId);
   }
+}
+
+/** Every job's hub id, once each has one; null if one ended without (failed or cancelled first). */
+async function idsOf(jobs: UploadJob[]): Promise<string[] | null> {
+  for (const j of jobs) {
+    while (!j.id) {
+      const st = j.status.value;
+      if (st === 'failed' || st === 'cancelled') return null;
+      await new Promise<void>((r) => {
+        const off = j.progress.subscribe(() => (j.id || j.progress.peek().status !== st ? (queueMicrotask(() => off()), r()) : undefined));
+      });
+    }
+  }
+  return jobs.map((j) => j.id!);
+}
+
+/** Sends the hub took with their files still coming, whose files this device uploads on (carryOn). */
+const carrying = new Set<string>();
+/** Once the hub's row for this send no longer waits for its files: sent as far as they came, cancelled, or gone. */
+const rowThrough = (clientId: string) =>
+  new Promise<void>((done) => {
+    const off = hubSends.subscribe((v) => {
+      if (v.rows.some((r) => r.clientId === clientId && r.filesComing)) return;
+      queueMicrotask(() => off());
+      done();
+    });
+  });
+
+/**
+ * A send the hub took with its files still coming: this device uploads them on until they are in, or until the hub's
+ * row no longer waits for them (it cut them, or you cancelled it). Its copy stays, hidden behind the row, so a reload
+ * carries on; a lost link leaves it waiting for the hub, and the next catch-up carries on.
+ */
+async function carryOn(tempId: string, jobs: UploadJob[]) {
+  if (carrying.has(tempId)) return;
+  carrying.add(tempId);
+  let done = false;
+  try {
+    await Promise.race([Promise.all(jobs.map((j) => j.settle())), rowThrough(tempId)]);
+    done = true;
+  } catch {
+    // An upload failed (the link, most likely): the hub keeps the row; this carries on when it is back.
+  } finally {
+    carrying.delete(tempId);
+  }
+  if (!done) {
+    setPending(tempId, { queued: true });
+    return void probe();
+  }
+  for (const j of jobs) j.stop();
+  setPending(tempId, { uploading: false });
+  forget(tempId);
+  pending.value = pending.value.filter((x) => x.tempId !== tempId);
 }
 
 /** A send the hub has: nothing of it is kept on this device any more. */

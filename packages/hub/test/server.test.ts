@@ -417,7 +417,7 @@ describe('sending files', () => {
     for (let i = 0; i < 50 && readdirSync(join(dir, 'files/uploads')).length !== before; i++) await Bun.sleep(20);
     expect(readdirSync(join(dir, 'files/uploads')).length).toBe(before);
   });
-  test('in pieces: offsets, a resumed piece, then sent by id and deleted', async () => {
+  test('in pieces: offsets, a resumed piece, then sent by id, and asked after it is told it went', async () => {
     const put = (id: string, offset: number, b: BodyInit) => fetch(`${url}/api/uploads/${id}?offset=${offset}`, { method: 'PUT', body: b });
     const start = await fetch(`${url}/api/uploads/start`, { method: 'POST', body: JSON.stringify({ name: '50%20off/../q.txt', mime: 'text/plain', size: 10 }) });
     const s = await start.json();
@@ -432,7 +432,44 @@ describe('sending files', () => {
     expect(await (await put(s.id, 5, 'world')).json()).toMatchObject({ received: 10 });
     expect((await send(cid('ff'), { attachments: [s.id] })).status).toBe(200);
     expect(sent.at(-1).seen).toEqual(['helloworld']);
-    expect((await fetch(`${url}/api/uploads/${s.id}`)).status).toBe(404);
+    // Deleted once sent, and the queue's row says it went: a page asking after it ends it as sent.
+    const asked = await fetch(`${url}/api/uploads/${s.id}`);
+    expect(asked.status).toBe(410);
+    expect(await asked.json()).toMatchObject({ sent: true });
+  });
+  test('a send while its file still comes: taken at once, sent when the last piece lands, then its pieces are told it went', async () => {
+    const put = (id: string, offset: number, b: BodyInit) => fetch(`${url}/api/uploads/${id}?offset=${offset}`, { method: 'PUT', body: b });
+    const s = await (await fetch(`${url}/api/uploads/start`, { method: 'POST', body: JSON.stringify({ name: 'h.txt', mime: 'text/plain', size: 10 }) })).json();
+    await put(s.id, 0, 'hello');
+    const before = sent.length;
+    const held = await send(cid('ff'), { body: 'held', attachments: [s.id], clientId: 'held-1', waitForFiles: true, ack: 'hub' });
+    expect(held.status).toBe(200);
+    expect((await held.json()).row).toMatchObject({ state: 'queued', filesComing: true, files: ['h.txt'] });
+    expect(sent.length).toBe(before);
+    expect((await put(s.id, 5, 'world')).status).toBe(200);
+    // The same send again, by a caller that waits for the network's answer: the one row, sent once.
+    const again = await send(cid('ff'), { body: 'held', attachments: [s.id], clientId: 'held-1', waitForFiles: true });
+    expect(again.status).toBe(200);
+    expect(sent.length).toBe(before + 1);
+    expect(sent.at(-1)).toMatchObject({ body: 'held', seen: ['helloworld'] });
+    const late = await put(s.id, 10, 'x');
+    expect(late.status).toBe(410);
+    expect(await late.json()).toMatchObject({ sent: true });
+    // A phone back after a cut asks how much the hub has first: it is told it went, not that the upload is gone.
+    const asked = await fetch(`${url}/api/uploads/${s.id}`);
+    expect(asked.status).toBe(410);
+    expect(await asked.json()).toMatchObject({ sent: true });
+    // Without waitForFiles, a file not all there is still 410, as before.
+    const t = await (await fetch(`${url}/api/uploads/start`, { method: 'POST', body: JSON.stringify({ name: 't', size: 4 }) })).json();
+    expect((await send(cid('ff'), { attachments: [t.id], clientId: 'plain' })).status).toBe(410);
+  });
+  test('the cut setting: read, changed, and refused outside its choices', async () => {
+    const cut = (b?: object) => fetch(`${url}/api/sending/cut`, b ? { method: 'PUT', body: JSON.stringify(b) } : {});
+    expect(await (await cut()).json()).toEqual({ afterMs: 300_000, atLeast: 'fair' });
+    expect(await (await cut({ afterMs: null, atLeast: 'good' })).json()).toEqual({ afterMs: null, atLeast: 'good' });
+    expect((await cut({ afterMs: 7, atLeast: 'good' })).status).toBe(400);
+    expect((await cut({ afterMs: 60_000, atLeast: 'full' })).status).toBe(400);
+    await cut({ afterMs: 300_000, atLeast: 'fair' });
   });
   test('in pieces: refused sizes, an oversized piece, and a cancel', async () => {
     const start = (size: number) => fetch(`${url}/api/uploads/start`, { method: 'POST', body: JSON.stringify({ name: 'x', size }) });
