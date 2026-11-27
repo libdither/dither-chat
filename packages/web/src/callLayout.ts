@@ -68,6 +68,8 @@ export const PAD = { float: { x: 10, top: 10, bottom: 10 }, dock: { x: 16, top: 
 const MIN_FLOAT = { w: 240, h: 150 };
 const MIN_DOCK = 120;
 const INSET_MARGIN = 10;
+/** A tile area narrower than this is a phone's: your inset would cover too much of a shared screen. */
+const NARROW = 420;
 
 /** The tile area inside a window of this size. */
 export function areaOf(place: Place, w: number, h: number): { w: number; h: number } {
@@ -75,14 +77,25 @@ export function areaOf(place: Place, w: number, h: number): { w: number; h: numb
   return { w: Math.max(0, w - 2 * p.x), h: Math.max(0, h - p.top - p.bottom) };
 }
 
-/** Columns and rows that make n tiles of 16:9 the largest in a W×H area. */
+/**
+ * A grid cell's tile: as much of the cell as keeps it between 4:3 and 16:9, so a camera filling its tile (Fill, full
+ * screen) is never cut to a letterbox, nor a tall sliver.
+ */
+export function tileIn(cw: number, ch: number): { w: number; h: number } {
+  const h = Math.min(ch, (cw * 3) / 4);
+  const w = Math.min(cw, (h * 16) / 9);
+  return { w, h };
+}
+
+/** Columns and rows that make n tiles (each between 4:3 and 16:9, tileIn) the largest in a W×H area. */
 export function bestGrid(n: number, W: number, H: number, gap = GAP): { cols: number; rows: number; tw: number; th: number } {
   let best = { cols: 1, rows: Math.max(1, n), tw: W, th: H, s: -1 };
   for (let cols = 1; cols <= Math.max(1, n); cols++) {
     const rows = Math.ceil(n / cols);
     const tw = (W - gap * (cols - 1)) / cols;
     const th = (H - gap * (rows - 1)) / rows;
-    const s = Math.min(tw, (th * 16) / 9);
+    const t = tileIn(tw, th);
+    const s = t.w * t.h;
     if (s > best.s) best = { cols, rows, tw, th, s };
   }
   return { cols: best.cols, rows: best.rows, tw: best.tw, th: best.th };
@@ -137,21 +150,31 @@ export function layoutTiles(input: LayoutInput): Layout {
   const self = inGrid ? undefined : input.tiles.find((t) => t.self);
   let focus: string | null = null;
   let bottom = H;
+  let placedSelf = false;
 
   if (!speakerOn(input) || shown.length <= 1) {
     const n = shown.length;
     const g = bestGrid(n, W, H);
-    shown.forEach((t, i) => {
+    // Every tile the same size, the grid in the middle of the area.
+    const t = tileIn(g.tw, g.th);
+    const top = (H - (g.rows * t.h + (g.rows - 1) * GAP)) / 2;
+    shown.forEach((tile, i) => {
       const col = i % g.cols;
       const row = Math.floor(i / g.cols);
       const inRow = Math.min(g.cols, n - row * g.cols);
-      const off = ((g.cols - inRow) * (g.tw + GAP)) / 2;
-      out.set(t.id, { rect: { x: off + col * (g.tw + GAP), y: row * (g.th + GAP), w: g.tw, h: g.th } });
+      const left = (W - (inRow * t.w + (inRow - 1) * GAP)) / 2;
+      out.set(tile.id, { rect: { x: left + col * (t.w + GAP), y: top + row * (t.h + GAP), w: t.w, h: t.h } });
     });
     if (speakerOn(input)) focus = shown[0]?.id ?? null;
   } else {
     focus = focusOf(shown, input);
     const rest = shown.filter((t) => t.id !== focus);
+    // A shared screen big in a phone-narrow window, where the inset would hide a good part of it: your own tile joins
+    // the strip instead.
+    if (self && input.me === 'corner' && shown.find((t) => t.id === focus)?.share && W < NARROW) {
+      rest.push(self);
+      placedSelf = true;
+    }
     const sh = stripHeight(H, rest.length);
     bottom = H - (sh ? sh + GAP : 0);
     out.set(focus!, { rect: { x: 0, y: 0, w: W, h: bottom } });
@@ -160,7 +183,7 @@ export function layoutTiles(input: LayoutInput): Layout {
     rest.forEach((t, i) => out.set(t.id, { rect: { x: (W - total) / 2 + i * (sw + GAP), y: H - sh, w: sw, h: sh } }));
   }
 
-  if (self) {
+  if (self && !placedSelf) {
     const s = insetSize(W);
     const left = input.corner[1] === 'l';
     const top = input.corner[0] === 't';
@@ -249,11 +272,14 @@ export function clampFloat(r: Rect, b: Bounds): Rect {
   return { x: Math.min(Math.max(b.x, r.x), b.x + b.w - w), y: Math.min(Math.max(b.y, r.y), b.y + b.h - h), w, h };
 }
 
-/** The floating window where it first opens: the lower right, as the old video panel was. */
-export function defaultFloat(b: Bounds): Rect {
+/**
+ * The floating window where it first opens: the upper right, just under `below` (the page's header), over a chat's
+ * older messages and clear of the newest ones and the message box at the foot.
+ */
+export function defaultFloat(b: Bounds, below = b.y): Rect {
   const w = Math.min(560, Math.max(MIN_FLOAT.w, b.w * 0.45));
   const h = Math.round((w - 20) * (9 / 16)) + 20;
-  return clampFloat({ x: b.x + b.w - w - 16, y: b.y + b.h - h - 16, w, h }, b);
+  return clampFloat({ x: b.x + b.w - w - 16, y: Math.max(b.y, below) + 12, w, h }, b);
 }
 
 /** The docked strip's height in a conversation `paneH` tall. */

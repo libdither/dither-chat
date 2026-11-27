@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
-import { type ActiveCall, activeCall, callName, callStatus, canCall, canRing, featuredSpeaker, leaveCall, roomOnPage, startCall } from '../call.ts';
+import { type ActiveCall, activeCall, callOffline, callStatus, canCall, canRing, leaveCall, roomOnPage, startCall } from '../call.ts';
 import { roomCall } from './CallRoomLazy.tsx';
 import { callIn } from '../ringing.ts';
-import { db, metaRev, pref, rev } from '../state.ts';
-import { convTitle } from '../model.ts';
+import { db, metaRev, pref, rev, toast } from '../state.ts';
+import { communitiesOf, convTitle } from '../model.ts';
 import { CallControls } from './CallControls.tsx';
 import { Icon } from './icons.tsx';
 import { BarLayer, CallBar, CallSheet, callOpen } from './CallBar.tsx';
@@ -42,7 +42,19 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
   const ringAccount = voiceAccount ? null : canRing(c);
   const accountId = voiceAccount ?? ringAccount;
   const call = activeCall.value;
-  if (!accountId || roomCall(c)) return null;
+  if (roomCall(c)) return null;
+  if (!accountId) {
+    // An account that could call here is not online: the button stays, greyed, saying why.
+    const off = callOffline(c);
+    if (!off) return null;
+    const why = `${off.join(' and ')} ${off.length === 1 ? 'is' : 'are'} not online: calls need ${off.length === 1 ? 'it' : 'one of them'} connected`;
+    return (
+      <button class="hdr-btn call-join unable" aria-disabled="true" title={why} aria-label={`Call: ${why}`} data-track="call unable" onClick={() => toast({ kind: 'info', title: 'No call from here now', body: why }, 4000)}>
+        <Icon name="phone" size={16} />
+        <span class="hdr-btn-label">{c.variant === 'voice' || c.variant === 'stage' ? 'Join' : 'Call'}</span>
+      </button>
+    );
+  }
   const here = call && call.conversationId === c.id && call.phase !== 'ended';
   const going = !!ringAccount && !!callIn(c.id);
   const ring = !!ringAccount && !going;
@@ -62,8 +74,13 @@ export function JoinCallButton({ c }: { c: P.ConversationView }) {
   );
 }
 
-/** The dock's bar has the round buttons; a stage's Speak and Move to the audience are in its open body. */
-const DOCK_BUTTONS = ['mute', 'deafen', 'camera', 'share', 'hand', 'leave'] as const;
+/** The dock's row of buttons: all but Leave (at its top right) and a stage's words (in its open body). */
+const DOCK_EXCEPT = ['leave', 'speak', 'listen'] as const;
+
+/** What the call is, said as a call panel says it: "Voice connected" in a voice channel or a stage, else "In a call". */
+function callWord(c: P.ConversationView | undefined): string {
+  return c && (c.variant === 'voice' || c.variant === 'stage') ? 'Voice connected' : 'In a call';
+}
 
 /**
  * The call in progress, wherever you are in the app. Tap it for the people in it. `bar`: there's no room for the dock
@@ -112,11 +129,12 @@ function Dock({ call, now, open, Panel, overBar, hidden }: { call: ActiveCall; n
   metaRev.value; // the chat's and people's names change without `call` changing
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
-  // Whoever talks, the featured one (the latest to start, call.ts featuredSpeaker) first.
-  const lead = featuredSpeaker.value;
-  const speaking = call.participants.filter((p) => p.speaking).sort((x, y) => Number(y.id === lead) - Number(x.id === lead));
-  const effect = call.effects.at(-1)?.effect;
+  const space = c && c.shape !== 'direct' ? communitiesOf(c)[0]?.name : undefined;
   const status = callStatus(call, now);
+  const live = status.phase === 'live';
+  const how = call.mode === 'direct' ? 'straight from this device' : "through the account's own app";
+  // The room on screen has the buttons: one set of them at a time.
+  const buttons = roomOnPage.value !== call.conversationId;
   return (
     <section
       class={`call-dock ${open ? 'open' : ''} ${overBar ? 'over-bar' : ''} ${call.phase}`}
@@ -129,24 +147,27 @@ function Dock({ call, now, open, Panel, overBar, hidden }: { call: ActiveCall; n
     >
       {overBar && <BarLayer />}
       <div class="call-dock-bar">
-        <button class="call-dock-title" onClick={() => (callOpen.value = !open)} aria-expanded={open}>
-          <span class={`call-dot ${status.phase === 'reaching' ? 'connecting' : call.phase}`} />
+        <button class="call-dock-title" onClick={() => (callOpen.value = !open)} aria-expanded={open} title={`${title}${space ? ` in ${space}` : ''}: ${live ? `connected ${how}` : status.text}. ${open ? 'Fold' : 'Everyone in the call'}`}>
           <span class="call-dock-text">
-            <b>{title}</b>
+            <b class={`call-dock-state ${status.phase}`}>
+              <span class={`call-dot ${status.phase === 'reaching' ? 'connecting' : call.phase}`} />
+              {live ? callWord(c) : status.text}
+              {live && <span class="call-dock-time">{status.text}</span>}
+            </b>
             <small>
-              {status.text}
-              {call.phase === 'live' && ` · ${call.mode === 'direct' ? 'direct' : 'bridge'}`}
-              {status.hint ? ` · ${status.hint}` : effect ? ` · ${callName(effect.who)}: ${effect.sound ? `${effect.emoji ? `${effect.emoji} ` : '🔊 '}${effect.sound.name}` : effect.emoji}` : speaking.length > 0 && ` · ${speaking.map((p) => callName(p.id)).join(', ')} ${speaking.length === 1 ? 'is' : 'are'} talking`}
+              {title}
+              {space && ` · ${space}`}
             </small>
+            {status.hint && <small class="call-dock-hint">{status.hint}</small>}
           </span>
         </button>
-        {/* The room on screen has the buttons: one set of them at a time. */}
-        {roomOnPage.value !== call.conversationId && (
-          <div class="call-dock-buttons">
-            <CallControls call={call} only={DOCK_BUTTONS} />
-          </div>
-        )}
+        {buttons && <CallControls call={call} only={['leave']} />}
       </div>
+      {buttons && (
+        <div class="call-dock-buttons">
+          <CallControls call={call} except={DOCK_EXCEPT} />
+        </div>
+      )}
       {open && (Panel ? <Panel call={call} /> : <div class="call-dock-body call-empty">Loading…</div>)}
     </section>
   );

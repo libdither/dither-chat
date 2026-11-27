@@ -97,10 +97,8 @@
   object-fit: contain;
   display: block;
 }
-/* Filling a page or the screen: cameras fill their tile; a shared screen is never cropped. */
-.call-video.fill:not(.share) video {
-  object-fit: cover;
-}
+/* A tile is between 4:3 and 16:9 (callLayout.ts tileIn), so a camera shown whole leaves at most a thin bar: no one's
+   picture is cut, in a window, filling a page or the screen. */
 .call-video.mirror video {
   transform: scaleX(-1);
 }
@@ -158,6 +156,13 @@
 .call-video figcaption .call-av-badge {
   position: static;
   box-shadow: none;
+}
+/* A small tile (Speaker's strip): a smaller name, so it does not cover the picture. */
+.call-video.small figcaption {
+  left: 4px;
+  bottom: 4px;
+  padding: 0 5px;
+  font-size: 10px;
 }
 .call-video.inset figcaption {
   left: 6px;

@@ -139,7 +139,7 @@ export function CallSheet({ call, Panel }: { call: ActiveCall; Panel: ((p: { cal
       <div class="call-sheet-back" onClick={fold} aria-hidden="true" />
       <section class="call-sheet" role="dialog" aria-label={`Call in ${title}`}>
         <div class="call-sheet-buttons">
-          <CallControls call={call} track="call sheet" />
+          <CallControls call={call} track="call sheet" words />
         </div>
         <button
           class="chip-btn call-sheet-go"

@@ -217,6 +217,19 @@ export function canRing(c: P.ConversationView): string | null {
   return (able.find((a) => a.id === pref('sendAs')[c.id]) ?? able[0])?.id ?? null;
 }
 
+/**
+ * Why there is no call button where an account could have one: the accounts that could call or ring here but are not
+ * online (their labels), or null when none could. The header shows the button greyed with this as its reason.
+ */
+export function callOffline(c: P.ConversationView): string[] | null {
+  const voice = c.variant === 'voice' || c.variant === 'stage';
+  if (!voice && c.shape !== 'direct' && c.shape !== 'group') return null;
+  const could = c.vantages
+    .map((v) => db.accounts.get(v.accountId))
+    .filter((a): a is P.AccountView => !!a && a.capabilities.includes('calls') && (voice ? c.variant !== 'stage' || a.capabilities.includes('stage') : a.capabilities.includes('ringCalls')));
+  return could.length && could.every((a) => a.status !== 'online') ? could.map((a) => a.label) : null;
+}
+
 /** The microphone this device uses in calls (Settings → Calls), and its handling. */
 function micConstraints(input: P.CallInput): MediaTrackConstraints {
   const id = pref('callMicId');

@@ -9830,8 +9830,8 @@ body.dragging * {
   box-shadow: 0 -6px 18px rgb(0 0 0 / 0.25);
   color: var(--text);
 }
-.app:not(.with-bar):has(.call-dock) > .sidebar {
-  padding-bottom: 60px;
+.app:not(.with-bar):has(.call-dock:not([hidden])) > .sidebar {
+  padding-bottom: 100px;
 }
 /* Expanded from the call bar on a computer: the dock stands on the bar, over the list or the page, until folded. */
 .call-dock.over-bar {
@@ -9842,12 +9842,13 @@ body.dragging * {
   border-radius: 12px 12px 0 0;
   box-shadow: 0 -8px 24px rgb(0 0 0 / 0.3);
 }
+/* Like a call panel at the list's foot: what the call is and Leave on top, the buttons in a row of equal width under
+   it (ui/Call.tsx Dock). */
 .call-dock-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  min-height: 56px;
+  gap: 6px;
+  padding: 6px 8px 4px 6px;
 }
 .call-dock-title {
   flex: 1;
@@ -9884,6 +9885,49 @@ body.dragging * {
   font-size: 12px;
   color: var(--text-dim);
 }
+.call-dock-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px !important;
+  color: var(--good);
+}
+.call-dock-state.connecting,
+.call-dock-state.reaching {
+  color: var(--warn);
+}
+.call-dock-state.ended {
+  color: var(--text-faint);
+}
+.call-dock-state .call-dot {
+  width: 8px;
+  height: 8px;
+}
+.call-dock-time {
+  font-weight: 400;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.call-dock-time::before {
+  content: '·';
+  margin-right: 6px;
+}
+.call-dock-text small.call-dock-hint {
+  color: var(--warn);
+  white-space: normal;
+}
+/* Leave, at the top right: quiet until pointed at, as a panel's disconnect is. */
+.call-dock-bar .call-btn.leave {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: none;
+  color: var(--danger);
+}
+.call-dock-bar .call-btn.leave:hover {
+  background: var(--danger-bg);
+}
 .call-dot {
   flex: none;
   width: 10px;
@@ -9907,8 +9951,20 @@ body.dragging * {
   }
 }
 .call-dock-buttons {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 6px;
+  padding: 0 8px 8px;
+}
+.call-dock-buttons .call-btn {
+  width: 100%;
+  height: 32px;
+  border-radius: 8px;
+}
+.call-dock-buttons .call-btn:not(.off):not(.on):hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 .call-btn {
   width: 38px;
@@ -10009,10 +10065,23 @@ body.dragging * {
 .call-word {
   align-self: center;
 }
-.call-dock:has(.call-btn.on) .call-btn,
-.call-dock-buttons:has(> :nth-child(5)) .call-btn {
-  width: 34px;
-  height: 34px;
+/* A button with its word under it (a phone's call sheet). */
+.call-worded {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 60px;
+}
+.call-word-under {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* The call window is ui/CallWindow.css, loaded with its chunk. Its slot on the call's chat (ui/CallSlot.tsx) is here,
    so the page makes room for it before the chunk comes: docked, a strip under the header; Fill, the whole page. */
@@ -10122,6 +10191,11 @@ body.dragging * {
 .hdr-btn.call-join.on {
   color: var(--danger);
 }
+/* Its account is not online: greyed, and a press says why (ui/Call.tsx JoinCallButton). */
+.hdr-btn.call-join.unable {
+  opacity: 0.45;
+  cursor: help;
+}
 .live-tag {
   font-size: 9px;
   font-weight: 700;
@@ -10151,10 +10225,18 @@ body.dragging * {
     bottom: auto;
     top: calc(env(safe-area-inset-top) + 6px);
   }
-  .app.phone:not(.tabs):has(.call-dock) > .center {
-    padding-top: 68px;
+  .app.phone:not(.tabs):has(.call-dock:not([hidden])) > .center {
+    padding-top: 108px;
   }
   .call-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .call-dock-buttons .call-btn {
+    height: 44px;
+    border-radius: 12px;
+  }
+  .call-dock-bar .call-btn.leave {
     width: 44px;
     height: 44px;
   }
@@ -17877,34 +17959,43 @@ button.pair-last:hover {
   opacity: 0.6;
 }
 
-/* Calls ringing you (ui/Ringing.tsx): over everything, top right on a desktop, across the top on a phone. */
+/* Calls ringing you (ui/Ringing.tsx): over everything, at the top in the middle under the title bar, clear of the
+   header's buttons; across the top on a phone. The caller's picture pulses while it rings. */
 .ring-cards {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: calc(var(--titlebar-h) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 60;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(360px, calc(100vw - 32px));
+  width: min(420px, calc(100vw - 32px));
 }
 .ring-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
   background: var(--bg-raised);
   border: 1px solid var(--bg-active);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.3);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.4);
   color: var(--text);
+  animation: ring-in 0.22s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+@keyframes ring-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
 }
 .ring-who {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   background: none;
   border: 0;
   color: inherit;
@@ -17912,27 +18003,77 @@ button.pair-last:hover {
   cursor: pointer;
   padding: 0;
 }
+.ring-face {
+  position: relative;
+  flex: none;
+  display: grid;
+}
+.ring-face::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid var(--ring-answer);
+  animation: ring-pulse 1.5s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes ring-pulse {
+  from {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ring-face::after,
+  .ring-card {
+    animation: none;
+  }
+}
 .ring-text {
   display: flex;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
+}
+.ring-text b {
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ring-text small {
   color: var(--text-muted);
 }
 .ring-buttons {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+}
+.ring-buttons .call-btn {
+  width: 46px;
+  height: 46px;
+}
+:root {
+  --ring-answer: #2f9e58;
 }
 .call-btn.answer {
-  background: #2f9e58;
+  background: var(--ring-answer);
   color: #fff;
+}
+.call-btn.answer:hover {
+  background: color-mix(in oklab, var(--ring-answer) 85%, white);
 }
 @media (max-width: 720px) {
   .ring-cards {
-    left: 16px;
-    right: 16px;
-    width: auto;
+    top: calc(env(safe-area-inset-top) + 8px);
+    width: calc(100vw - 24px);
+  }
+  .ring-buttons .call-btn {
+    width: 52px;
+    height: 52px;
   }
 }
 /* Who is in a voice channel, on its row and its page. */

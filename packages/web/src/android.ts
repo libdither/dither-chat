@@ -14,6 +14,7 @@ import { addArrived, onArrivedDone } from './arrived.ts';
 import { db, go, parseHash, pref } from './state.ts';
 import { onceListed } from './versions.ts';
 import { answerable } from './ringing.ts';
+import type { AudioRoute } from './callmarks.ts';
 import { api } from './api.ts';
 import type * as P from '@dither-chat/protocol';
 import { onIme, keepKeyboardRoom } from './phone.ts';
@@ -25,13 +26,6 @@ interface Port {
 }
 
 const port: Port | null = (globalThis as any).DitherAndroid ?? null;
-
-interface AudioRoute {
-  id: number;
-  /** speaker, earpiece, bluetooth, wired, usb, other */
-  kind: string;
-  name: string;
-}
 
 interface NativePush {
   endpoint: string;

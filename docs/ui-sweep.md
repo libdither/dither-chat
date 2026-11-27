@@ -61,7 +61,7 @@ No console errors or warnings on any route at any size (the only errors were the
 | The open folder's tint spans the whole rail width; Discord's is a narrower pill around the icons | Narrowing it would move the unread pills of the items inside off the rail's edge. Not worth a structural change |
 | Mini icons in a closed folder show clipped initials ("RP", "CC") | 16 px tiles; Discord's minis are the same size and use pictures. Servers with icons look right |
 | The digest icon is shown on every channel left at Digest | It is the "muted" marker; a server defaulting to Digest marks all its channels. Correct, if busy |
-| Voice channels say "Voice isn't relayed" and the call dock could not be exercised | Demo accounts have no call capability; calls are covered by `scripts/verify-call.ts` against a real setup (docs/calls.md) |
+| Voice channels say "No account here can join its voice" and the call dock could not be exercised | Demo accounts have no call capability; calls are covered by `scripts/verify-call.ts` against a real setup (docs/calls.md) |
 | WhatsApp's link card (QR / pairing code) | Only shown for a real, unlinked account; a demo hub refuses to add accounts, and starting the real bridge contacts WhatsApp. The Matrix error, "Needs attention" and Encryption section were checked on a throwaway non-demo hub instead |
 | Phone sheets put icons on the left, desktop menus on the right | That is Discord's own split between its apps |
 | Very long code lines scroll inside their block; long words and URLs wrap anywhere | As intended |

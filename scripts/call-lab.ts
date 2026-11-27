@@ -328,7 +328,7 @@ async function deviceScenario(mode: 'bridge' | 'direct') {
     await page.until(`document.querySelector('[data-call-phase]')?.dataset.callPhase !== 'connecting'`, 60_000);
     const joinMs = Date.now() - t0;
     const phase = await page.eval<string>(`document.querySelector('[data-call-phase]')?.dataset.callPhase`);
-    if (phase !== 'live') return { error: `phase ${phase}: ${await page.eval(`document.querySelector('.call-dock-text small')?.textContent`)}` };
+    if (phase !== 'live') return { error: `phase ${phase}: ${await page.eval(`document.querySelector('.call-dock-text')?.textContent`)}` };
     await Bun.sleep(1500);
     const devSpeech = await page.eval(`window.__probe.useSpeech(Uint8Array.from(atob(${JSON.stringify(SPEECH_B64)}), c => c.charCodeAt(0)).buffer)`);
     await Bun.sleep(8000);

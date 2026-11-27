@@ -91,6 +91,7 @@ import { markChanged } from '../wordDiff.ts';
 import { detailsShown, showDetails, swipeReply } from './Pager.ts';
 import { openConv } from '../opening.ts';
 import { JoinCallButton } from './Call.tsx';
+import { canCall } from '../call.ts';
 import { EmojiComplete, insertAtCaret } from './EmojiComplete.tsx';
 import { SlashCommandsLazy } from './apps/lazy.tsx';
 import { claimSend } from '../apps.ts';
@@ -2429,7 +2430,8 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
         <ForumLazy key={c.id} c={c} />
       ) : (
         <>
-          {voice && !room && <div class="voice-note"><Icon name="voice" size={14} /> Voice isn't relayed. This shows the channel's text chat.</div>}
+          {/* Only where no account of yours can join its voice: where one can, the header has Join, and the dock the call. */}
+          {voice && !room && !canCall(c) && <div class="voice-note"><Icon name="voice" size={14} /> No account here can join its voice. This is the channel's text chat.</div>}
           {voice && <VoicePeople conversationId={c.id} size={22} names class="voice-here" />}
           <NotStartedNote c={c} />
           <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />

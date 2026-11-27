@@ -71,8 +71,13 @@ function freeBounds(): Bounds {
   return { x: 0, y: top, w: vw, h: Math.max(0, bottom - top) };
 }
 
-/** The window's buttons on a phone: the dock's, with the round ones only. */
-const WIN_BUTTONS = ['mute', 'deafen', 'camera', 'share', 'hand', 'leave'] as const;
+/** Where the page's header ends (a chat's, or any page's): the floating window first opens under it. */
+function headerBottom(): number {
+  return document.querySelector('.center .conv-head, .center .page-head')?.getBoundingClientRect().bottom ?? 0;
+}
+
+/** The window's buttons on a phone: the dock's, without a stage's words. */
+const WIN_EXCEPT = ['speak', 'listen'] as const;
 const STEP = 24;
 
 /** A drag just ended: the click that follows its release is not a click on a tile. */
@@ -209,7 +214,7 @@ export function CallWindow({ call }: { call: ActiveCall }) {
   }, [buttons, isPhone]);
 
   // Where the window is.
-  const float = clampFloat(liveFloat ?? saved.float ?? defaultFloat(bounds), bounds);
+  const float = clampFloat(liveFloat ?? saved.float ?? defaultFloat(bounds, headerBottom()), bounds);
   const padPlace: Place = full ? 'fill' : (place ?? 'float');
   const pad = PAD[padPlace];
   const W = size?.w ?? 0;
@@ -516,7 +521,7 @@ export function CallWindow({ call }: { call: ActiveCall }) {
         </div>
         {buttons && (
           <div class="call-win-controls">
-            <CallControls call={call} only={WIN_BUTTONS} />
+            <CallControls call={call} except={WIN_EXCEPT} />
             {isPhone && (
               <button class="call-btn" aria-label="The call's people and settings" aria-expanded={callOpen.value} data-track="call window: people" onClick={() => (callOpen.value = !callOpen.value)}>
                 <Icon name="users" size={18} />
@@ -612,7 +617,7 @@ function Tile(props: TileProps) {
   const speaking = !tile.share && !!marks?.speaking;
   // The picture above the name: sized to what the caption leaves.
   const face = Math.round(Math.max(20, Math.min(128, Math.min(rect.w * 0.5, (rect.h - 30) * 0.75))));
-  const cls = ['call-video', tile.stream && 'speak-ring', tile.stream && speaking && 'speaking', tile.stream && tile.self && 'mirror', tile.self && 'self', tile.share && 'share', !tile.stream && 'face', props.inset && 'inset', props.hidden && 'hidden', props.big && 'pinned', props.fill && 'fill', props.dragging && 'dragging']
+  const cls = ['call-video', tile.stream && 'speak-ring', tile.stream && speaking && 'speaking', tile.stream && tile.self && 'mirror', tile.self && 'self', tile.share && 'share', !tile.stream && 'face', props.inset && 'inset', props.hidden && 'hidden', props.big && 'pinned', props.fill && 'fill', props.dragging && 'dragging', rect.h < 90 && 'small']
     .filter(Boolean)
     .join(' ');
   const words = [tile.label, props.role?.toLowerCase(), speaking ? 'speaking' : '', marks?.badge ? BADGE_WORDS[marks.badge] : '', props.big ? 'shown big' : ''].filter(Boolean).join(', ');

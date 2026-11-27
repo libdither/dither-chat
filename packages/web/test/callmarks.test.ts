@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { badgeSize, callBadge, callTime, type Clock, controlsFor, FEATURE_KEEP_MS, FEATURE_TAKE_MS, featuredPicker, MUTED_TALK, SPEAKING_HOLD_MS, speakingHold, stageCan, statusFor, talkGate } from '../src/callmarks.ts';
+import { audioControl, badgeSize, callBadge, callTime, type Clock, controlsFor, FEATURE_KEEP_MS, FEATURE_TAKE_MS, featuredPicker, MUTED_TALK, SPEAKING_HOLD_MS, speakingHold, stageCan, statusFor, talkGate } from '../src/callmarks.ts';
 
 /** A clock the test moves by hand: timers fire only when it is advanced past them. */
 function fakeClock() {
@@ -333,5 +333,28 @@ describe('controlsFor', () => {
     expect(controlsFor({ ...call, muted: true, listenOnly: true }, can)[0]).toMatchObject({ label: 'Unmute', off: true, disabled: true, title: 'No microphone: listening only' });
     expect(controlsFor({ ...call, self: { connected: true, muted: true } }, can)[0]).toMatchObject({ label: 'Mute', title: 'The account is still muted: tap to try again' });
     expect(controlsFor({ ...call, phase: 'ended' }, can).every((c) => c.disabled)).toBe(true);
+  });
+});
+
+describe('audioControl (the speaker button, in the Android app)', () => {
+  const ear = { id: -1, kind: 'earpiece', name: 'Phone' };
+  const spk = { id: -2, kind: 'speaker', name: 'Speaker' };
+  const bt = { id: 7, kind: 'bluetooth', name: 'Earbuds' };
+  test('none with fewer than two outputs, or once the call is over', () => {
+    expect(audioControl(null, false)).toBeNull();
+    expect(audioControl({ routes: [spk], current: -2 }, false)).toBeNull();
+    expect(audioControl({ routes: [ear, spk], current: -1 }, true)).toBeNull();
+  });
+  test('earpiece and loudspeaker: a tap switches, lit on the loudspeaker', () => {
+    const c = audioControl({ routes: [ear, spk], current: -1 }, false)!;
+    expect(c).toMatchObject({ kind: 'speaker', on: false, label: 'Switch to Speaker' });
+    expect(c.audio?.next).toEqual(spk);
+    expect(audioControl({ routes: [ear, spk], current: -2 }, false)).toMatchObject({ on: true, label: 'Switch to Phone' });
+  });
+  test('a headset too: a tap asks which', () => {
+    const c = audioControl({ routes: [ear, spk, bt], current: 7 }, false)!;
+    expect(c.audio?.next).toBeNull();
+    expect(c.audio?.current).toEqual(bt);
+    expect(c.title).toBe('Sound: Earbuds');
   });
 });

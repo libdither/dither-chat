@@ -243,10 +243,13 @@ try {
 
   // ------------------------------------------------------------ moving, resizing, the menu's side
   const f0 = await win(p);
-  await dragMouse(p, f0.x + 40, f0.y + 40, f0.x - 200, f0.y - 100);
+  // It first opens at the top right, under the chat's header (callLayout.ts defaultFloat).
+  const head0 = (await rectOf(p, '.conv-head'))!;
+  check(f0.y >= head0.y + head0.h && f0.y <= head0.y + head0.h + 24 && f0.x + f0.w >= 1400 - 40, 'the window first opens at the top right, under the header, clear of the newest messages', { f0, head0 });
+  await dragMouse(p, f0.x + 40, f0.y + 40, f0.x - 200, f0.y + 140);
   await rects(p);
   const f1 = await win(p);
-  check(Math.abs(f1.x - (f0.x - 240)) <= 2 && Math.abs(f1.y - (f0.y - 140)) <= 2, 'dragging the window moves it', { f0, f1 });
+  check(Math.abs(f1.x - (f0.x - 240)) <= 2 && Math.abs(f1.y - (f0.y + 100)) <= 2, 'dragging the window moves it', { f0, f1 });
   await dragMouse(p, f1.x + 40, f1.y + 40, 1399, 899);
   await rects(p);
   const f2 = await win(p);
@@ -310,7 +313,10 @@ try {
   const fill = await win(p);
   const pane = (await rectOf(p, '.app > .center'))!;
   check(fill.place === 'fill' && fill.h > pane.h - head1.h - 40 && (await p.eval(`!document.querySelector('.pane .composer, .pane textarea')`)), "Fill takes the chat's page under its header", { fill, pane });
-  check(await p.eval(`[...document.querySelectorAll('.call-video video')].every((v) => getComputedStyle(v).objectFit === (v.closest('.share') ? 'contain' : 'cover'))`), 'Fill crops cameras to their tiles and never a screen');
+  check(
+    await p.eval(`[...document.querySelectorAll('.call-video:not(.inset)')].every((f) => { const v = f.querySelector('video'); const r = f.getBoundingClientRect(); return (!v || getComputedStyle(v).objectFit === 'contain') && r.width / r.height <= 16 / 9 + 0.01 && r.width / r.height >= 4 / 3 - 0.01; })`),
+    'Fill crops no picture: every tile between 4:3 and 16:9, its video shown whole',
+  );
   check(await tilesInside(p), 'filling, every tile is inside the window');
   await shoot(p, 'fill');
   await pick(p, 'dock');

@@ -274,7 +274,8 @@ no answer) and how long it lasted where the network says.
 
 - **A ring alerts once.** A call that rings you is an alert on every device (the highest tier), titled "Ann is
   calling", with Answer where the account can join calls from here and Decline where it can stop the ringing. Open
-  pages show a ring card instead (`ui/Ringing.tsx`): a computer's service worker closes the notification while a page
+  pages show a ring card instead (`ui/Ringing.tsx`: the caller's picture pulsing, their name, "Incoming Discord call",
+  and round Decline and Answer buttons, at the top in the middle under the title bar, clear of the header's buttons): a computer's service worker closes the notification while a page
   is in front, and the Android app skips it while it is on screen, so the page in sight rings aloud itself
   (`ringtone.ts`, loaded with the first such call) while this device is in no call. A mute on the chat, the caller,
   the account, the network or everything, quiet hours, and a device's own rules keep it off devices and keep the page
@@ -342,8 +343,23 @@ sent.
 
 ## The call bar
 
-One call has several sizes, smallest first: a mark on its chat row, the bar, the dock, the video window. The dock (the
-call's name, its buttons, and when open its people; `CallDock` in `ui/Call.tsx`) is the call while you chat beside it.
+One call has several sizes, smallest first: a mark on its chat row, the bar, the dock, the video window. The dock
+(`CallDock` in `ui/Call.tsx`) is the call while you chat beside it, laid out as a call panel at the list's foot: "Voice
+connected" (or "In a call", or Connecting…) in green with how long it has gone, the call and its server under it, and
+Leave at its top right, quiet until pointed at; under that a row of equal buttons (mute, deafen, the speaker in the
+Android app, camera, screen, a hand). Whether the call goes through the account's own app or straight from this device
+is in its tooltip, not its words. Open, it has the call's people too.
+
+- **The speaker button** (Android app only, `audioControl` in callmarks.ts): the phone's sound outputs as the app
+  reports them (`audio.get`, and again whenever the call service changes them). Between the earpiece and the
+  loudspeaker a tap switches, lit on the loudspeaker; with a headset or Bluetooth as well, a tap opens a menu of them.
+  It is in the dock, the window's buttons and the call sheet, after deafen.
+- **The call sheet** (a phone, from the bar) puts a word under each round button (Mute, Deafen, Speaker, Camera,
+  Share, Leave), three to a row when there are six or more.
+- **No account online.** Where an account of yours could call or ring in a chat but none is online, the header keeps
+  its Call (or Join) button greyed; a press says which account is not online. Where none could, there is no button.
+  A voice channel says "No account here can join its voice" only then.
+
 The bar (`ui/CallBar.tsx`, its choices in `callbar.ts`) is the call while you look at something else, like a music
 player: a slim row with whoever is talking (call.ts `featuredSpeaker`, drawn with `CallAvatar` and the shared speaking
 ring), how long the call has gone (`callStatus`, so also Connecting to Discord… and the still-muted hint), and at most
@@ -605,15 +621,18 @@ It has no title bar. Its buttons sit at its top right, shown on hover (always on
 takes the arrow keys), Full screen, and the layout menu, which opens upward when there is no room below it. The menu
 has three rows of radios (one tab stop a row, the arrow keys move through it):
 
-- **Arrange**: Auto, Grid (everyone the same size, in the columns that make them largest) or Speaker (one fills the
+- **Arrange**: Auto, Grid (everyone the same size, each between 4:3 and 16:9, in the columns that make them largest,
+  the grid in the middle; `tileIn`) or Speaker (one fills the
   window, the rest in a strip below). Speaker's big tile is someone else's shared screen, else whom the call features
   (`featuredSpeaker`, call.ts: the latest to start talking, never you, kept at least 1.5 s, and while they still talk
   someone else takes over only after a second of talking), else the one it showed last, else the first that isn't
   yours. Auto is Grid, or Speaker while someone shares a screen, and on a phone.
 - **Your camera**: your tile like the others, a small inset in a corner (drag it; it settles in the nearest corner), or
-  hidden. When it is the only tile, it is shown whatever the choice.
-- **Place**: Floating over the app (drag it anywhere on it; resize from its lower right corner, or by the arrow keys on
-  that corner; it stays on screen and never covers the call bar), Above chat, or Fill. Above chat and Fill apply on the
+  hidden. When it is the only tile, it is shown whatever the choice. In a window narrower than a phone's (420 px of
+  tiles), with a shared screen big, the inset joins the strip instead of covering the screen.
+- **Place**: Floating over the app (it first opens at the top right under the page's header, over older messages and
+  clear of the newest ones and the message box; drag it anywhere on it; resize from its lower right corner, or by the
+  arrow keys on that corner; it stays on screen and never covers the call bar), Above chat, or Fill. Above chat and Fill apply on the
   call's own chat only: there the page has a slot under its header (`ui/CallSlot.tsx`), and the window moves into it,
   animating from where it was. Above chat is a strip in the chat's flow, the header and its buttons above it and the
   messages below, with a divider at its foot (a separator in the tab order that takes the arrow keys) for its height.
@@ -626,10 +645,11 @@ A click on a tile (or Enter on it) shows it big, as Speaker, and another puts it
 and its name says "shown big". That is never kept as a choice: Arrange stays what you picked. F on a tile, or the
 Full screen button, puts the whole window full screen, with its captions, your inset and the call's buttons. A resize
 or a divider drag ends with the height that fits the tiles with no bars around them (of the heights that do, the
-nearest). Filling a page or the screen, cameras are cropped to fill their tiles; a shared screen never is.
+nearest). No picture is ever cropped: a tile is between 4:3 and 16:9, so a camera shown whole leaves at most a thin
+bar. A tile in Speaker's strip has a smaller name.
 
 On a phone the window carries the call's buttons (`CallControls`) and a button for the call's people and settings, so
-the dock's strip steps aside while it shows. A phone starts as Speaker, docked under the chat's header, you in the
+the dock's strip steps aside while it shows (and leaves no room for itself at the top of the page). A phone starts as Speaker, docked under the chat's header, you in the
 corner.
 
 Every change moves the same tile elements to their new places with a transition, so a switch morphs rather than
