@@ -567,7 +567,7 @@ async function sendReply(n, conv, text, replyTo) {
   }
   if (held) {
     const k = held.hold?.count ?? 0;
-    const why = held.state === 'held' ? `${k} new message${k === 1 ? '' : 's'} came in` : 'It waits behind an earlier message of yours that is held';
+    const why = held.state === 'held' ? `${k} new message${k === 1 ? '' : 's'} came in` : 'It waits behind an earlier message of yours that is held or may not have gone out';
     await outcome(n.data, 'replied');
     await self.registration.showNotification('Reply waiting', { body: `${why}. Open the chat to send it, edit it or cancel it. You wrote: ${text}`.slice(0, 1000), tag: n.tag, renotify: true, requireInteraction: true, icon: '/icon-192.png', badge: '/icon-192.png', data: { conversationId: conv, keep: true } });
     return;

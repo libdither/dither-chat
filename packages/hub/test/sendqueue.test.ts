@@ -465,20 +465,22 @@ describe('the countdown', () => {
     expect(w.told.length).toBe(1);
   });
 
-  test('survives a restart, and goes at the same time once a device shows the chat again', async () => {
+  test('survives a restart, starting again from the start; a device back in time sees it go', async () => {
     const w = fresh();
     const page = await w.socket();
     await page.watch([w.conv]);
     const started = page.frame((rows) => byId(rows, 'h')?.holdUntil != null);
     await held(w, 'h');
-    const until = byId(await started, 'h')!.holdUntil!;
-    await w.clock.advance(4_000);
+    await started;
+    await w.clock.advance(9_000);
     w.restart();
+    const until = w.clock.now() + 10_000;
     expect(w.row('h')).toMatchObject({ state: 'held', holdUntil: until });
     const again = await w.socket();
-    // The page says again what it shows; the countdown is the one from before, not a new one.
+    // The page says again what it shows; the countdown is the one the restart started, not another.
     await again.watch([w.conv]);
     expect(w.row('h').holdUntil).toBe(until);
+    expect(w.told).toEqual([]);
     await w.clock.advance(until - w.clock.now() - 1);
     expect(w.row('h').state).toBe('held');
     await w.clock.advance(1);

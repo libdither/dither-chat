@@ -1006,7 +1006,7 @@ class ReplyReceiver : BroadcastReceiver() {
                     val held = runCatching { JSONObject(res).optJSONObject("row") }.getOrNull()
                     Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
                     val n = held?.optJSONObject("hold")?.optInt("count") ?: 0
-                    val why = if (held?.optString("state") == "held") "$n new message${if (n == 1) "" else "s"} came in" else "It waits behind an earlier message of yours that is held"
+                    val why = if (held?.optString("state") == "held") "$n new message${if (n == 1) "" else "s"} came in" else "It waits behind an earlier message of yours that is held or may not have gone out"
                     Notifications.post(c, conv, "Reply waiting", "$why. Open the chat to send it, edit it or cancel it. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
                 } else if (code in 200..299) {
                     Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")

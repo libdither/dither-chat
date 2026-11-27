@@ -9,7 +9,8 @@
  * - `network` (two ticks): the network named the message it became. Shown until that message is here.
  * - `held`: the chat moved on while it waited: Send, Edit or Cancel, with the countdown while a device shows the chat.
  * - `unsure`: in doubt: the hub handed it on and no answer said whether it went out. Send again or Discard.
- * - `failed`: not sent: refused, nothing went out. Try again or Discard.
+ * - `failed`: not sent: refused. It goes again only on Try again (an error the hub could not read may hide one that
+ *   went out, so it never goes by itself). Try again or Discard.
  * A `hub` row behind a held or in-doubt one says so (`behind`): it waits for that one.
  */
 import type * as P from '@dither-chat/protocol';
@@ -106,8 +107,9 @@ export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows
   const blocking = new Map<string, string>();
   for (const r of [...rows].sort((a, b) => a.seq - b.seq)) {
     if (!convs.has(r.conversationId) || r.state === 'cancelled') continue;
-    if (r.state === 'sent' && ((r.messageId && here(r.messageId)) || hubNow - r.updatedAt > SENT_SHOWN_MS)) continue;
+    // Its echo is claimed first, even by a row no longer shown, so a later send of the same text cannot take it.
     if (echoed(r)) continue;
+    if (r.state === 'sent' && ((r.messageId && here(r.messageId)) || hubNow - r.updatedAt > SENT_SHOWN_MS)) continue;
     const mark: SendMark = r.state === 'sent' ? 'network' : r.state === 'held' ? 'held' : r.state === 'unsure' ? 'unsure' : r.state === 'failed' ? 'failed' : 'hub';
     const behind = mark === 'hub' ? blocking.get(r.conversationId) : undefined;
     if ((mark === 'held' || mark === 'unsure') && !blocking.has(r.conversationId)) blocking.set(r.conversationId, r.clientId);

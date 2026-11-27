@@ -15,8 +15,7 @@
  *   (`hold_until`, the setting's seconds) and goes by itself at the end; nobody watching, no countdown, and you are
  *   told. Nothing held goes out unwatched.
  * - A restart: a row left `sending` may be out, so it is in doubt (`unsure`), never sent again by itself; `queued`
- *   ones go; a countdown carries on from its `hold_until`, and one that ran out while the hub was down starts again,
- *   so a device that comes back can see it go. Every sync answer carries the list (sync.ts), so a page back after a
+ *   ones go; a countdown starts again from the start, so a device that comes back can see it go. Every sync answer carries the list (sync.ts), so a page back after a
  *   restart, or opened from its kept copy, has the rows as they are now.
  */
 import type * as P from '@dither-chat/protocol';
@@ -93,12 +92,13 @@ export class SendQueue {
     this.stopped = false;
     const now = this.clock.now();
     const s = this.settings().holdSeconds;
-    for (const r of this.db.query(`SELECT client_id, hold_until FROM send_queue WHERE state = 'held' AND hold_until IS NOT NULL`).all() as Row[]) {
-      // Ran out while the hub was down, before any device is back to show it: it counts down again from the start.
-      if (r.hold_until <= now && s > 0) {
+    for (const r of this.db.query(`SELECT client_id FROM send_queue WHERE state = 'held' AND hold_until IS NOT NULL`).all() as Row[]) {
+      // The devices that watched it are reconnecting: it counts down again from the start, so one back by then sees it
+      // go, and nobody is told that it waits while they are on their way back.
+      if (s > 0) {
         this.set(r.client_id, 'hold_until = ?', now + s * 1000);
         this.arm(r.client_id, now + s * 1000);
-      } else this.arm(r.client_id, r.hold_until);
+      } else this.set(r.client_id, 'hold_until = NULL');
     }
     for (const r of this.db.query(`SELECT DISTINCT conversation_id FROM send_queue WHERE state = 'queued'`).all() as Row[]) this.kick(r.conversation_id);
   }

@@ -196,7 +196,7 @@ a slow send) can land after what made it wrong.
   read may hide a send that went out. A send refused at once (no account, the account not allowed there, empty, an
   upload gone) makes no row.
 - **One worker per chat** sends only the head of its queue. A held or in-doubt head blocks the rows behind it; a
-  failed one does not (nothing went out). The account's own call and its timeouts are as before: the network's answer
+  failed one does not (the account refused it). The account's own call and its timeouts are as before: the network's answer
   makes it `sent`, a refusal `failed`, an unknown outcome (`outcome.ts unknownOutcome`: its adapter timed out or
   dropped mid-command; the accounts manager's client gave up waiting, its connection dropped mid-call, or it was
   closed with the call waiting; the manager gave up on the account or lost it while it had the call) `unsure`.
@@ -204,8 +204,9 @@ a slow send) can land after what made it wrong.
   again. An answer the account gives while the hub is stopping is kept, so a send that went out is not put in doubt.
 - Every change goes out on the socket (the `sends` event: the open rows, and those sent in the last 2 minutes, with
   the hub's clock) and is journaled (list `sends`). The bootstrap, and every sync answer while there are rows, carry
-  the list whether or not it changed: a restart puts rows in doubt before any socket is open, a deleted chat takes its rows with it, and a
-  page's kept copy holds no rows, so a page back from any of these has them as they are now.
+  the list whether or not it changed: a restart puts rows in doubt before any socket is open, and a page's kept
+  copy holds no rows, so a page back from either has them as they are now. (A deleted chat takes its rows with it;
+  a page draws none for a chat that is gone.)
 
 | State | Mark | Means | What you can do |
 |---|---|---|---|
@@ -215,7 +216,7 @@ a slow send) can land after what made it wrong.
 | `sent` | two ticks | the network named the message it became | then the message's own receipts |
 | `held` | pause | the chat moved on while it waited | Send, Edit, Cancel; a countdown while watched |
 | `unsure` | alert | in doubt: handed on, no answer said whether it went | Send again, Discard |
-| `failed` | alert | refused, nothing went out | Try again, Discard |
+| `failed` | alert | refused; goes again only when you say | Try again, Discard |
 | `cancelled` | (gone) | taken back before it went | |
 
 A queued row behind a held or in-doubt one says "The hub has it · waiting on the message above".
@@ -239,8 +240,8 @@ with a bar at their side, and it has:
 every 30 s), a held send counts down and goes by itself at the end, by the hub's clock (`holdUntil`). When no device
 shows it any more, the countdown stops, nothing goes, and you are told once: a notification "Your message to … is
 waiting" (the hub's push, under quiet hours' rules), and the row in the chat says "It waits for you". It survives a
-restart: the end is kept, and goes once a device shows the chat again; one that ran out while the hub was down counts
-down again from the start, so a device that comes back sees it go, and nobody is told before then. Settings → Sending sets its length
+restart, starting again from the start: a device that comes back by its end sees it go, and nobody is told that it
+waits before then. Settings → Sending sets its length
 (`GET`/`PUT /api/send-settings`, kept on the hub): 0 to 120 seconds, default 10; 0 means no countdown, it always waits
 for you.
 

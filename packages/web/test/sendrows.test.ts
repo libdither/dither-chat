@@ -50,6 +50,8 @@ test('an echo that comes before the account answers is not shown twice, nor one 
   expect(marks(shownSends(['cnv_a'], [], [row('t1', { state: 'sending', pressedAt: 100_000 })], nothingHere, 200_000, [echo]))).toEqual(['t1:hub']);
   expect(marks(shownSends(['cnv_a'], [], [row('t1', { state: 'sending', body: 'other' })], nothingHere, 5000, [echo]))).toEqual(['t1:hub']);
   expect(marks(shownSends(['cnv_a'], [], [row('t0', { state: 'sent', messageId: 'msg_e' }), row('t1', { state: 'sending' })], nothingHere, 5000, [echo]))).toEqual(['t0:network', 't1:hub']);
+  // A sent one no longer shown still keeps its echo: the next send of the same text waits for its own.
+  expect(marks(shownSends(['cnv_a'], [], [row('t0', { state: 'sent', updatedAt: 1000 }), row('t1', { state: 'sending' })], nothingHere, 1000 + SENT_SHOWN_MS + 1, [echo]))).toEqual(['t1:hub']);
 });
 
 test('a sent one says when it stops being shown, so the chat is drawn again then', () => {
