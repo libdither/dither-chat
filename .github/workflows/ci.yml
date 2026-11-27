@@ -10,7 +10,7 @@
 # bun scripts/verify-presence.ts, bun scripts/verify-video.ts, bun scripts/verify-calibration.ts, bun scripts/verify-edit.ts, bun scripts/verify-sidebar-counts.ts,
 # bun scripts/verify-pictures.ts, bun scripts/verify-their-time.ts,
 # bun scripts/verify-back.ts, bun scripts/verify-response.ts,
-# bun scripts/verify-memory.ts, bun scripts/verify-perf.ts --ci.
+# bun scripts/verify-memory.ts, bun scripts/verify-perf.ts --ci, bun scripts/verify-scroll-up.ts --ci.
 name: CI
 
 on:
@@ -282,6 +282,8 @@ jobs:
         run: bun install --frozen-lockfile
       - if: steps.changes.outputs.code == 'true'
         run: bun scripts/verify-perf.ts --ci
+      - if: steps.changes.outputs.code == 'true'
+        run: bun scripts/verify-scroll-up.ts --ci
 
   # Branch protection requires this job by name. It passes only when every job passed, or was skipped because
   # `changes` said the pull request does not need it. It runs on failure and cancellation too, so it never reads as

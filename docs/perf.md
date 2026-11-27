@@ -1732,6 +1732,59 @@ JIT warming up), and a quarter the tables of perf.ts's own WeakMap and WeakSet t
 620 KB), the response bodies DevTools keeps for the check's own `Network.enable` (160 KB), and the browser's
 performance entries (long animation frames, paints, events). No object of the app's grew in number.
 
+## Scrolling up (2026-11-27)
+
+`scripts/verify-scroll-up.ts` measures sustained upward scrolling in the biggest channel under four device resource
+profiles, reusing `scripts/browser.ts`, `scripts/perf-world.ts` and `scripts/slowlink.ts`:
+
+- `desktop`: 1280 × 800, 1× CPU, loopback, mouse scroll
+- `laptop`: 1280 × 800, 4× CPU, 40 ms RTT / 50/20 Mbit/s, mouse scroll
+- `phone`: 390 × 844 mobile, 4× CPU, 80 ms RTT / 20/10 Mbit/s
+- `lowend`: 390 × 844 mobile, 6× CPU, 300 ms RTT / 1.6/0.75 Mbit/s
+
+Each profile performs eight upward scroll gestures alternating rapid flicks and reading pauses, recording per-frame
+timing (`frameP95`, `frameMax`, `jankFrames` > 33 ms, `slowFrames` > 50 ms), visual discontinuities on the message at
+the middle of the viewport (`snapBacks`, `pauseJumps`), top-edge stalls (`wallHits`, `wallStallMs`, `spinnerShows`),
+render counts (`messageRenders`, `redundantRenders`, `timelineRenders`), `layouts`, `longestTask`, and `busyMs`.
+
+```sh
+bun scripts/verify-scroll-up.ts                                          # all four profiles (0.1 scale)
+bun scripts/verify-scroll-up.ts --ab /tmp/ab/base,/tmp/ab/cand --runs 2  # interleaved A/B on one hub
+bun scripts/verify-scroll-up.ts --ci                                     # structural/count checks only
+bun scripts/verify-scroll-up.ts --out out/scroll-up.json                 # perf-trend.ts compatible output
+```
+
+What caused upward scroll jitter and what changed:
+
+- **Stale async scroll anchors.** `Timeline.tsx` captured an anchor message's position before starting an async
+  `loadTimeline(tkey, true)` fetch and applied `el.scrollTop += moved` once the page arrived 100–500 ms later, snapping
+  the viewport back by 120–569 px while the user kept scrolling. Anchoring is now captured synchronously right before
+  DOM commit (binary-searching visible `.msg` rows and holding `bottom`) and skipped altogether when prepending far
+  above the viewport (`ANCHOR_EDGE_PX`), where `column-reverse` already holds the view still with zero forced layouts.
+- **Late 400 px fetch trigger and spinner churn.** Waiting until 400 px from the top edge meant fast scrolls hit the
+  top wall on constrained links (`wallStallMs` 550–1,750 ms) and flashed `<Loading inline />`. `packages/web/src/scrollStream.ts`
+  decouples network prefetching (`loadTimeline(key, true, { prefetch: true })`, velocity-scaled runway into RAM with no
+  spinner unless the user actually reaches the top edge) from rAF-paced DOM streaming (`STREAM_SLICE = 15` messages per
+  frame).
+- **`metaRev` re-render storm on older pages.** Brand-new author identities arriving in older pages called
+  `putIdentity`, moving `metaRev` and re-rendering every mounted `MessageItem` and sidebar row mid-scroll (181–963
+  redundant message renders). Older pages now insert previously unseen identities quietly like glances, merge pages in
+  one `O(N + K)` pass (`mergeMessages`), skip mid-scroll snapshot saves, and key `.day-sep` / `.new-sep` /
+  `.arrived-sep` nodes.
+- **Forced layouts on mobile scroll.** `onScroll` read `el.scrollHeight` on every scroll event, and `.msg` had
+  `content-visibility: auto` on narrow viewports, triggering a layout invalidation on nearly every scroll frame
+  (203–237 layouts on phone/low-end). `onScroll` now reads cached `ResizeObserver` heights when scrolled up, and `.msg`
+  drops `content-visibility: auto` since `Slices` and `ScrollStream` already mount messages incrementally.
+
+Interleaved A/B medians (2 runs each, 0.1 scale, 8 gestures):
+
+| profile | snapBacks (max px) | wallStallMs | spinnerShows | redundantRenders | layouts | frameP95 | slowFrames |
+|---|---|---|---|---|---|---|---|
+| `desktop` | 3 (307 px) → **0** | 159 → **0** | 4 → **0** | 963 → **0** | 43 → **20** | 17 → **17 ms** | 6 → **1** |
+| `laptop` | 2 (569 px) → **0** | 1,750 → **0** | 3 → **0** | 744 → **0** | 24 → **18** | 117 → **50 ms** | 38 → **25** |
+| `phone` | 4 (120 px) → **0** | 0 → **0** | 4 → **0** | 421 → **0** | 237 → **14** | 59 → **33 ms** | 45 → **15** |
+| `lowend` | 3 (427 px) → **0** | 550 → **0** | 3 → **0** | 181 → **0** | 203 → **20** | 75 → **33 ms** | 77 → **19** |
+
 ## Next
 
 What these numbers point at, not done yet:

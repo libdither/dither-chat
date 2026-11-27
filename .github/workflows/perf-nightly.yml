@@ -67,6 +67,16 @@ jobs:
           GITHUB_STEP_SUMMARY= bun scripts/verify-memory.ts --scale "$SCALE" --cpu 4 --cycles 10 --phone-cycles 10 --out out/memory.json \
             || echo "::warning::verify-memory exited $? (a count grew past what it may; its numbers are recorded all the same)"
           test -s out/memory.json
+      # Upward chat scroll smoothness across desktop, laptop, phone and low-end profiles (docs/perf.md, "Scrolling up"),
+      # charted night to night as scroll-up.<profile>.<metric>.
+      - name: verify-scroll-up across device profiles
+        if: ${{ !cancelled() }}
+        env:
+          SCALE: ${{ inputs.scale || '1' }}
+        run: |
+          GITHUB_STEP_SUMMARY= bun scripts/verify-scroll-up.ts --scale "$SCALE" --runs 3 --profiles desktop,laptop,phone,lowend --out out/scroll-up.json \
+            || echo "::warning::verify-scroll-up exited $? (its numbers are recorded all the same)"
+          test -s out/scroll-up.json
       - name: The night as one line
         if: always()
         env:
