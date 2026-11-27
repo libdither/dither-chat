@@ -104,7 +104,16 @@ export async function readPage(store: Store, pager: Pager, o: { accountId: strin
     if (!held) addSpan(store, o.cid, 0, o.beforeTs);
     return { kind: 'page', count, fresh, end: held ? 'empty' : 'start', oldest: null };
   }
-  if (!r || !count) return { kind: 'page', count, fresh, end: 'empty', oldest: null };
+  if (!r || !count) {
+    // A page of things that are not this chat's messages (reactions, edits, thread replies kept in their threads) says
+    // where it reached: nothing was missed down to there, and the walk goes on below it. Without that, the network
+    // sent nothing more.
+    if (r && oldest !== null && oldest < o.beforeTs) {
+      addSpan(store, o.cid, oldest, o.beforeTs);
+      return { kind: 'page', count, fresh, end: null, oldest, ...(typeof r.next === 'string' && r.next ? { next: r.next } : {}) };
+    }
+    return { kind: 'page', count, fresh, end: 'empty', oldest: null };
+  }
   addSpan(store, o.cid, oldest!, o.beforeTs);
   return { kind: 'page', count, fresh, end: null, oldest, ...(typeof r.next === 'string' && r.next ? { next: r.next } : {}) };
 }
