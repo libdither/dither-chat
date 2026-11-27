@@ -276,6 +276,14 @@ try {
   const trAsked = ((await action('translateLog')).result?.translated ?? []) as { post: string }[];
   check('X was asked once for each, nothing for English', trAsked.length === 2, trAsked);
 
+  // A post's thread opens under any list, as under the inbox: a space's, a folder's, search's (App.tsx placePane).
+  const space = (boot.spaces as any[])[0]?.id;
+  for (const at of [`#/s/${space}/c/pst_x_${routing}`, `#/search/c/pst_x_${routing}?q=routing`]) {
+    await load(at);
+    await page.until(`/Greedy routing/.test(document.querySelector('.thread-pane .thread-focal')?.textContent ?? '') || /Conversation not found/.test(document.body.textContent)`, 20000);
+    check(`a post's thread opens under ${at.split('/')[1] === 's' ? 'a space' : 'search'}, never "Conversation not found"`, !/Conversation not found/.test(await page.eval<string>('document.body.textContent')) && (await page.eval<string>(`document.querySelector('.thread-pane .conv-head h2')?.textContent ?? ''`)).endsWith('post'), at);
+  }
+
   // In place: the translation stands in, Show original swaps back.
   await trSettings({ show: 'replace' });
   await load(`#/inbox/c/pst_x_${routing}`);

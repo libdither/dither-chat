@@ -364,7 +364,12 @@ the post's own can, and a press that ends a selection opens nothing.
 **The page** (`ui/feed/Thread.tsx`, in the feed's chunk): what the post answers, oldest first, each joined to the next
 by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies** as a
 comment section; **Show more replies** while X has more, and not once every reply X counts under the post is shown
-(a page read ahead that brings nothing new ends it at once). The header says whose post it is.
+(a page read ahead that brings nothing new ends it at once). The head is the one every place has
+([places.md](places.md#the-head)): the author's picture with the network's badge (it opens their profile), whose
+post it is, "On X" (or "As the hub logged it"), then Follow replies, the bell of a followed post's chat, Details (the
+post's panel: its author, counts, who liked and reposted it, and what the follow says; not on the Feed page) and ⋯
+(Open on X, Copy link to the post, Stop following or Follow again). A post's thread opens under a space, a folder or
+search as it does under the inbox.
 
 **Check for new replies** (↻ beside Replies) asks X again: what came goes in its place marked **new**, and a toast
 says how many ("2 new replies", "No new replies").
@@ -521,10 +526,11 @@ of it (a search hit, a profile's Between you) opens its thread (`GET /api/messag
 
 ## Following a post
 
-**The bell.** A thread's head has **Follow replies** (a bell, beside Open on X; a phone shows the bell alone). Pressed,
-it says **Following replies** and a toast says "New replies will come to your inbox", its View opening the chat.
-Pressed again it stops following, and the chat stays. The chat's row in the inbox has **Stop Following** in its menu
-(**Follow Again** once stopped).
+**The bell.** A thread's head has **Follow replies** (a bell; a phone shows the bell alone). Pressed, it says
+**Following replies** and a toast says "New replies will come to your inbox", its View opening the chat. Pressed again
+it stops following, and the chat stays. The chat's row in the inbox and the head's ⋯ have **Stop Following**
+(**Follow Again** once stopped). Once followed, the head also has the chat's notification bell, the same one a chat's
+head has, setting the rule on the follow chat; on a phone it is under ⋯.
 
 **A chat for the post** (`follows.ts`). Following makes a conversation for the account that reads the post: native id
 `follow:<post id>` (protocol `followNativeId`), variant **`follow`**, a channel named for the post ("Replies to your
@@ -615,7 +621,8 @@ count X's own.
 - `scripts/verify-x-threads.ts`: in a real browser on a fresh demo hub, desktop and phone: links in bios, a feed card,
   a profile's post and a search hit opening their threads, the replies as a tree, hidden branches and the next page
   read ahead while scrolling, a ten-turn back-and-forth as one run, folding, the Compact, Flat and Chains styles, a
-  reply opened as its own thread and Back to where you were (two deep), a reply with what it answers,
+  reply opened as its own thread and Back to where you were (two deep), a reply with what it answers, a thread opened
+  under a space's and search's address,
   the logged branches coming back, the posts conversation out of the inbox, nothing sent to X but the reads. With
   `--shots`, a tour (`tour-01` … `tour-09`).
 - `packages/protocol/test/mix.test.ts`: each order: Newest first stopping where a timeline with more runs out,
@@ -653,7 +660,9 @@ count X's own.
 - `scripts/verify-follow-post.ts`: in a real browser on a fresh demo hub: the bell on a thread from the Feed page,
   the toast and its View, the chat in the inbox, a reply written later found and unread with its row saying so,
   opening it with the reply marked New and the chat read, Stop Following from the row's menu (no Index there), the
-  note, Follow again, and the bell as an icon on a phone. `--shots <dir>` keeps screenshots.
+  note, Follow again, the head's notification bell setting the follow chat's rule, Details (the post's panel, who
+  liked it), and on a phone the bell as an icon with the rules, Details and Stop following under ⋯. `--shots <dir>`
+  keeps screenshots.
 - `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`, and the branches logged
   before coming back with a thread (also from the two-minute read).
 - `packages/protocol/test/compose.test.ts`: X's count (CJK, emoji sequences, links), its counter (the ring, 20 left,

@@ -960,6 +960,8 @@ export function effectiveLevel(c: P.ConversationView): Effective {
     const set = (level: Level, source: string, explicit: boolean, scope: Effective['scope']): Effective => ({ level, rule: level, source, explicit, scope });
     let l: Level | undefined;
     if ((l = hit('conversation', c.id))) return set(l, 'this conversation', true, 'conversation');
+    // Mail reads only a thread's own rule and people's Always alert (hub mail/triage.ts, docs/mail.md slice 9).
+    if (c.network === 'email') return { level: 'digest', rule: null, source: 'mail is on the list by its importance; only someone set to always alert sounds', explicit: false, scope: 'default' };
     const parent = c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : undefined;
     if (parent && (l = hit('conversation', parent.id))) return set(l, convLabel(parent), true, 'conversation');
     // Breadth-first over containing spaces.

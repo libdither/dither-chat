@@ -36,8 +36,8 @@
     "sync.missed.events": { "measured": 3, "budget": 3, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" }
   },
   "web": {
-    "startup.bytes": { "measured": 962105, "budget": 981347, "reason": "The tidier profile (docs/profile.md \"A person\"): its rules for Between you, accounts with their connections, People in common and the one-column order are in styles.css, which the first screen loads" },
-    "startup.gzip": { "measured": 288187, "budget": 293950, "reason": "Loading said plainly (docs/sync.md \"What the inbox says\", \"Opening a chat\"): the status beside \"Inbox\" (InboxStatus.tsx, statusline.ts), the first start's orb filling with its bytes (firstload.ts) and the line over the message box while a chat opens (OpenBar.tsx, waits.ts), all drawn from the first screen" },
+    "startup.bytes": { "measured": 981874, "budget": 983500, "reason": "One head for every place (ui/PlaceHead.tsx, docs/places.md \"The head\"): the head and the notification rules' menu moved into the start so chats, mail threads and posts' threads share them (the Timeline chunk is 3.6 KB smaller), and the details panel for a mail thread and a post" },
+    "startup.gzip": { "measured": 295147, "budget": 295700, "reason": "One head for every place (ui/PlaceHead.tsx, docs/places.md \"The head\"): the head and the notification rules' menu moved into the start so chats, mail threads and posts' threads share them (the Timeline chunk is 3.6 KB smaller), and the details panel for a mail thread and a post" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 8020, "budget": 8181, "reason": "index.html's socket asks from the snapshot's journal position (read from localStorage), so the hub's catch-up comes as the socket's first frame (docs/sync.md, On the socket)" },
     "html/index.html.gzip": { "measured": 3149, "budget": 3208 },
@@ -143,8 +143,8 @@
     "js/shared/scorecard.gzip": { "measured": 2981, "budget": 3041, "reason": "The loudness scale (docs/notifications.md): six scorecard charts for its check-ins and its comparison with the tiers; and its own chunk (ui/Loudness.tsx) for the Why sheet, the follow-up, the check-in card and its settings" },
     "js/shared/selfparts.bytes": { "measured": 602, "budget": 615 },
     "js/shared/selfparts.gzip": { "measured": 416, "budget": 425 },
-    "js/shared/startup.bytes": { "measured": 682156, "budget": 695800, "reason": "Loading said plainly (docs/sync.md \"What the inbox says\", \"Opening a chat\"): the status beside \"Inbox\" (InboxStatus.tsx, statusline.ts), the first start's orb filling with its bytes (firstload.ts) and the line over the message box while a chat opens (OpenBar.tsx, waits.ts), all drawn from the first screen" },
-    "js/shared/startup.gzip": { "measured": 234679, "budget": 239400, "reason": "Loading said plainly (docs/sync.md \"What the inbox says\", \"Opening a chat\"): the status beside \"Inbox\" (InboxStatus.tsx, statusline.ts), the first start's orb filling with its bytes (firstload.ts) and the line over the message box while a chat opens (OpenBar.tsx, waits.ts), all drawn from the first screen" },
+    "js/shared/startup.bytes": { "measured": 699564, "budget": 701200, "reason": "One head for every place (ui/PlaceHead.tsx, docs/places.md \"The head\"): the head and the notification rules' menu moved into the start so chats, mail threads and posts' threads share them (the Timeline chunk is 3.6 KB smaller), and the details panel for a mail thread and a post" },
+    "js/shared/startup.gzip": { "measured": 240810, "budget": 241400, "reason": "One head for every place (ui/PlaceHead.tsx, docs/places.md \"The head\"): the head and the notification rules' menu moved into the start so chats, mail threads and posts' threads share them (the Timeline chunk is 3.6 KB smaller), and the details panel for a mail thread and a post" },
     "js/shared/text.bytes": { "measured": 2494, "budget": 2544 },
     "js/shared/text.gzip": { "measured": 1142, "budget": 1165 },
     "js/shared/TextView.bytes": { "measured": 8500, "budget": 8670 },
@@ -187,8 +187,8 @@
     "js/src/ui/Directory.tsx.gzip": { "measured": 3969, "budget": 3983 },
     "js/src/ui/events/Event.tsx.bytes": { "measured": 9363, "budget": 9551 },
     "js/src/ui/events/Event.tsx.gzip": { "measured": 3569, "budget": 3630 },
-    "js/src/ui/feed/FeedView.tsx.bytes": { "measured": 94966, "budget": 96854 },
-    "js/src/ui/feed/FeedView.tsx.gzip": { "measured": 31587, "budget": 31650, "reason": "The startup chunk's exports renamed by the inbox filtering change (inboxfilter.ts): the feed chunk imports the same things under longer minified names, +32 gzip bytes and no code of its own; before that, a long-form post's whole body in its thread (docs/feed.md \"One card for every network\")" },
+    "js/src/ui/feed/FeedView.tsx.bytes": { "measured": 98913, "budget": 100900, "reason": "One head for every place (docs/places.md \"The head\"): a post's head through PlaceHead with its ⋯ (Open on X, Copy link, Stop following), and the post's details panel (feed/PostDetails.tsx: author, counts, who liked and reposted, the follow)" },
+    "js/src/ui/feed/FeedView.tsx.gzip": { "measured": 32660, "budget": 33300, "reason": "One head for every place (docs/places.md \"The head\"): a post's head through PlaceHead with its ⋯ (Open on X, Copy link, Stop following), and the post's details panel (feed/PostDetails.tsx: author, counts, who liked and reposted, the follow)" },
     "js/src/ui/files/ArchiveView.tsx.bytes": { "measured": 1059, "budget": 1078 },
     "js/src/ui/files/ArchiveView.tsx.gzip": { "measured": 556, "budget": 560 },
     "js/src/ui/files/JsonView.tsx.bytes": { "measured": 2537, "budget": 2588 },
@@ -288,6 +288,8 @@
     "css/ZoneMap.css.bytes": { "measured": 1402, "budget": 1431, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
     "css/ZoneMap.css.gzip": { "measured": 606, "budget": 619, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
     "js/src/ui/ZoneMap.tsx.bytes": { "measured": 30192, "budget": 30796, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
-    "js/src/ui/ZoneMap.tsx.gzip": { "measured": 10885, "budget": 11103, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" }
+    "js/src/ui/ZoneMap.tsx.gzip": { "measured": 10885, "budget": 11103, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
+    "js/src/ui/MailDetails.tsx.bytes": { "measured": 3433, "budget": 3500, "reason": "A mail thread's details panel (ui/MailDetails.tsx, docs/places.md \"The head\"), a chunk of its own" },
+    "js/src/ui/MailDetails.tsx.gzip": { "measured": 1463, "budget": 1500, "reason": "A mail thread's details panel (ui/MailDetails.tsx, docs/places.md \"The head\"), a chunk of its own" }
   }
 }

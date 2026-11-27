@@ -20,7 +20,7 @@ import { Counts } from './Post.tsx';
 import { heldThread, readThread, seedPost } from './threadcache.ts';
 
 /** The post a panel is about: by its key, or a followed post's conversation. */
-export function postOfPlace(id: string, kit: Kit): { network: P.Network; post: string; conv: P.ConversationView | null } | null {
+function postOfPlace(id: string, kit: Kit): { network: P.Network; post: string; conv: P.ConversationView | null } | null {
   const src = kit.feed.parsePostKey(id);
   if (src && 'post' in src) return { network: src.network, post: src.post, conv: null };
   const c = db.conversations.get(id);

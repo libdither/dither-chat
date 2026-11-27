@@ -165,7 +165,8 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: Detail } {
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
     case 'feed':
-      return { pane: <FeedPaneLazy source={r.source} post={r.post} onBack={back} />, ...(r.post ? { detail: { kind: 'post', id: r.post } as Detail } : {}) };
+      // No details panel beside the Feed page's list and thread: three columns are its width already.
+      return { pane: <FeedPaneLazy source={r.source} post={r.post} onBack={back} /> };
   }
 }
 

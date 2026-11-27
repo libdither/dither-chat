@@ -7,6 +7,7 @@
  */
 import { h } from 'preact';
 import type * as P from '@dither-chat/protocol';
+import { followedPostOf } from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
 import { signal } from '@preact/signals';
 import { api, db, go, rev } from '../../state.ts';
@@ -34,8 +35,12 @@ const pressed = signal<ReadonlyMap<string, P.PostFollow>>(new Map());
 
 /** What a thread's follow is now: what a press answered, else what devices heard since, through its chat. */
 export function followOf(t: P.PostThreadView | null): P.PostFollow | null {
-  const known = (t && pressed.value.get(`${t.network}:${t.post}`)) ?? t?.follow ?? null;
-  return (known && db.conversations.get(known.conversationId)?.follow) ?? known;
+  if (!t) return null;
+  const known = pressed.value.get(`${t.network}:${t.post}`) ?? t.follow ?? null;
+  if (known) return db.conversations.get(known.conversationId)?.follow ?? known;
+  // Followed since the thread was read (on another device, or from another page): its conversation says so.
+  for (const c of db.conversations.values()) if (c.variant === 'follow' && c.network === t.network && c.follow && followedPostOf(c.nativeId) === t.post) return c.follow;
+  return null;
 }
 
 export function FollowButton({ t, kit }: { t: P.PostThreadView | null; kit: Kit }) {

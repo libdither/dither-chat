@@ -20,7 +20,7 @@ import { HeadOrb } from './Offline.tsx';
 import { detailsShown, showDetails } from './Pager.ts';
 import { groups, openMenu, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 
-export interface PlaceHeadProps {
+interface PlaceHeadProps {
   /** Back, where the page has one (a phone, a thread opened from another). */
   back?: () => void;
   backLabel?: string;
@@ -60,7 +60,7 @@ export function PlaceHead(p: PlaceHeadProps) {
   const openMore = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const onPhone = phone.value;
-    const det: MenuEntry | false = !!p.details && { label: 'Details', icon: 'panel', track: 'details', checked: detailsShown(), run: () => showDetails(!detailsShown()) };
+    const det: MenuEntry | false = !!p.details && { label: 'Details', icon: 'panel', track: 'details', run: () => showDetails(!detailsShown()) };
     const items = groups(
       p.more?.() ?? [],
       onPhone ? [...(p.phoneItems?.() ?? []), det] : [],
