@@ -5,7 +5,8 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { bareSubject } from '@dither-chat/protocol';
-import { useEffect } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { archivedInAll } from '../../mail/filing.ts';
 import { canWrite, destination, move, moveKind, star } from '../../mail/ops.ts';
 import { db, mailRev, toast } from '../../state.ts';
@@ -47,7 +48,7 @@ function asMailMessage(m: P.MessageView): P.MailMessageView {
  * `show`: 'words' its words, for a message the hub had no body for (drawn by `words`, the chat's letter); 'quote' the text with its quote open; 'sent' the mail as it was sent (its HTML where it has one); 'files'
  * only its files (a message with attachments shows them under its words without being opened).
  */
-export function ChatMailBody({ m, show, words }: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files'; words?: (text: string, quoted: boolean) => preact.JSX.Element }) {
+export function ChatMailBody({ m, show, words, cap }: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files'; words?: (text: string, quoted: boolean, blocks?: P.MailBlock[]) => preact.JSX.Element; cap?: boolean }) {
   mailRev.value;
   useEffect(() => void loadBody(m.id), [m.id]);
   const body = bodies.get(m.id);
@@ -67,14 +68,53 @@ export function ChatMailBody({ m, show, words }: { m: P.MessageView; show: 'word
   const account = db.mail.accounts.get(message.accountId);
   if (show === 'files') return <MailFiles body={body} />;
   // Words the hub did not hold yet (mail you sent from elsewhere has no body until asked): up to its quote.
-  if (show === 'words' && words && body.text) return words(body.text.slice(0, body.quoteAt ?? undefined).trimEnd(), !!body.quoteAt);
+  if (show === 'words' && words && (body.text || body.blocks)) return words((body.text ?? '').slice(0, body.quoteAt ?? undefined).trimEnd(), !!body.quoteAt, body.blocks);
   if (show === 'words') return body.text ? <TextBody message={message} account={account} body={{ ...body, text: body.text.slice(0, body.quoteAt ?? undefined).trimEnd(), quoteAt: null }} /> : <div class="msg-body chat-mail-empty">No text</div>;
   if (show === 'quote' && body.text) return <div class="chat-mail-quote"><QuoteOpen body={body} message={message} account={account} /></div>;
   for (const r of BODY_RENDERERS) {
     const out = r({ message, body, account });
-    if (out !== null && out !== undefined) return <div class="chat-mail-sent">{out}</div>;
+    if (out !== null && out !== undefined) return cap ? <Capped>{out}</Capped> : <div class="chat-mail-sent">{out}</div>;
   }
   return null;
+}
+
+/**
+ * A mail shown as sent in place in a chat: no taller than about 60% of the pane, with a fade and "Show all" when it is
+ * taller, so a long newsletter does not fill the thread.
+ */
+function Capped({ children }: { children: ComponentChildren }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [max, setMax] = useState(0);
+  const [over, setOver] = useState(false);
+  const [all, setAll] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const inner = el.firstElementChild as HTMLElement | null;
+    const measure = () => {
+      const pane = el.closest('.pane') ?? document.documentElement;
+      const m = Math.max(240, Math.round(pane.clientHeight * 0.6));
+      setMax(m);
+      setOver((inner?.offsetHeight ?? 0) > m + 24);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (inner) ro.observe(inner);
+    return () => ro.disconnect();
+  }, []);
+  const capped = over && !all;
+  return (
+    <div class={`chat-mail-sent chat-mail-framed ${capped ? 'capped' : ''}`}>
+      <div ref={box} class="chat-mail-cap" style={capped ? { maxHeight: `${max}px` } : undefined}>
+        <div>{children}</div>
+      </div>
+      {over && (
+        <button class="mail-open-chip chat-mail-all" data-track="mail show all" aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? 'Show less' : 'Show all'}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** The quoted text under the words, open (the chat shows the words itself). */

@@ -18,7 +18,7 @@
  * serves it with a CSP that also forbids script and loads nothing but its own images (routes in parts.ts).
  */
 
-import { hostsDiffer, shownHost } from '@dither-chat/protocol';
+import { hostsDiffer, linkIsAddress, shownHost } from '@dither-chat/protocol';
 
 /** Bump when the output changes: cached copies made by an older pass are made again. */
 export const SANITIZE_VERSION = 4;
@@ -147,8 +147,11 @@ const ATTRS: Record<string, string[]> = {
 
 /** What a plain mail (Sanitized.plain) is made of. `meta` and `title` show nothing, so they do not count. */
 const PLAIN_TAGS = new Set('html head body meta title p div span br wbr a b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr ul ol li blockquote table thead tbody tr th td'.split(' '));
-/** Plain tags whose looks a text part loses: a mail with one reads as its HTML, in the app's theme. */
-const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr table'.split(' '));
+/**
+ * Plain tags whose looks a text part loses: a mail with one reads as its HTML, in the app's theme. Lists count, and so
+ * does a link with words of its own (its text part has the address, or the words without it).
+ */
+const FORMAT_TAGS = new Set('b strong i em u s del strike code pre h1 h2 h3 h4 h5 h6 hr table ul ol'.split(' '));
 /** The attributes a plain mail's elements may keep; `style` only as plainStyle allows. */
 const PLAIN_ATTRS = new Set(['href', 'class', 'id', 'dir', 'lang', 'title', 'role', 'type', 'start', 'value', 'reversed']);
 /** Style that changes no looks: spacing, how lines wrap, the direction. */
@@ -212,6 +215,7 @@ const attr = (v: string) => v.replace(/&/g, '&amp;');
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // ------------------------------------------------------------------ URLs
+
 
 /** A URL as the browser reads it: no tabs or newlines anywhere, no control characters or spaces at the ends. */
 function cleanUrl(raw: string): string {
@@ -491,6 +495,7 @@ export function sanitizeMail(input: string, o: SanitizeOpts): Sanitized {
               const shown = shownHost(current.text);
               const goes = new URL(current.href).hostname;
               if (shown && hostsDiffer(shown, goes) && out.mismatched.length < 20) out.mismatched.push({ shown, goes });
+              if (current.text.trim() && !linkIsAddress(current.href, decodeEntities(current.text))) out.formatted = true;
               if (link === current) link = null;
             });
           }

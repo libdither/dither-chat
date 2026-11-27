@@ -201,6 +201,33 @@ export interface MailTriagePage {
   items: MailTriageItem[];
 }
 
+/**
+ * A mail's words with their formatting, as a small tree the chat draws itself (docs/mail.md "A mail as a chat
+ * message"): made by the hub from the sanitised HTML (hub mail/blocks.ts), up to where the quoted mail starts. Text is
+ * text (never markup), and a link's href is http(s) or mailto only.
+ */
+export type MailInline =
+  /** Text. */
+  | string
+  /** Bold, italic, underlined, struck through, inline code. */
+  | { t: 'b' | 'i' | 'u' | 's' | 'code'; c: MailInline[] }
+  /** A link: http(s) or mailto. */
+  | { t: 'a'; href: string; c: MailInline[] }
+  /** A line break. */
+  | { t: 'br' };
+
+export type MailBlock =
+  /** A paragraph: its lines are split by `br`. */
+  | { t: 'p'; c: MailInline[] }
+  | { t: 'h'; level: 1 | 2 | 3 | 4 | 5 | 6; c: MailInline[] }
+  /** A list; each item is its own blocks. `start` on an ordered list that does not start at 1. */
+  | { t: 'list'; ordered: boolean; start?: number; items: MailBlock[][] }
+  | { t: 'quote'; c: MailBlock[] }
+  /** A code block, its text as written. */
+  | { t: 'pre'; text: string }
+  /** A rule. */
+  | { t: 'hr' };
+
 export interface MailBodyView {
   messageId: string;
   /** The text part, or text made from the HTML when there is none. */
@@ -220,6 +247,14 @@ export interface MailBodyView {
    * two bodies, `files` its attachments together.
    */
   sizes?: { raw: number | null; text: number; html: number; files: number };
+  /**
+   * The words above the quote as a tree with their formatting (MailBlock), when the HTML's words can be told that way
+   * and say more than `text` does (hub mail/blocks.ts). Absent for a text-only mail, a designed one (tables, pictures,
+   * colours) and one past the size cap.
+   */
+  blocks?: MailBlock[];
+  /** `blocks` show all the HTML shows above its quote: "Show as sent" would add nothing. */
+  blocksWhole?: true;
   bcc: MailAddressView[];
   replyTo: MailAddressView[];
   /** Slice 3. */
@@ -819,6 +854,19 @@ export function hostsDiffer(shown: string, goes: string): boolean {
   return a !== b && !b.endsWith('.' + a);
 }
 
+/** A link's text that is only its own address (the chat then shows the address shortened) ("https://x.example/a", "x.example/a", "sam@x.example"). */
+export function linkIsAddress(href: string, text: string): boolean {
+  const bareUrl = (s: string) =>
+    s
+      .trim()
+      .replace(/^mailto:/i, '')
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .replace(/\/$/, '')
+      .toLowerCase();
+  return bareUrl(href) === bareUrl(text);
+}
+
 // ------------------------------------------------------------------ mail as chats (docs/mail.md "Mail as chats")
 
 /**
@@ -855,8 +903,13 @@ export interface MessageMailView {
   hasAttachments: boolean;
   /** The body here: `MessageView.body` holds its text (the words above the quote) when it is 'cached', else the preview. */
   bodyState: 'cached' | 'none' | 'loading' | 'failed';
-  /** It has HTML that plain text would lose (styles, pictures, tables): the chat shows it framed. */
+  /**
+   * It has HTML that its words would lose (styles, pictures, tables). Without `blocks` the chat shows it framed, as
+   * sent; with them, "Show as sent" is behind its ….
+   */
   rich: boolean;
+  /** Its words with their formatting (MailBodyView.blocks): drawn instead of `MessageView.body`, which stays the plain text. */
+  blocks?: MailBlock[];
   /** The text under the words: the quoted mail it answers, folded in the chat. */
   quoted: boolean;
   /** The first message of its thread here: the chat shows the subject on it. */
