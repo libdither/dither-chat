@@ -50,7 +50,15 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
 
 const { page: p, close } = await launch();
 const shot = async (name: string) => shots && (await p.shot(`${shots}/${name}.png`));
+/**
+ * Where to press `sel`: its middle, once it is wholly on screen and nothing covers it there (a notice coming in, a
+ * toast). A press on whatever covered it would be a press on something else.
+ */
 const at = async (sel: string, pick = '') => {
+  const uncovered = `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => { const b = x.getBoundingClientRect(); return b.width > 0 && b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth && x.innerText.includes(${JSON.stringify(pick)}); }); if (!e) return false; const b = e.getBoundingClientRect(); return e.contains(document.elementFromPoint(b.x + Math.min(b.width / 2, 40), b.y + Math.min(b.height / 2, 30))); })()`;
+  await p.until(uncovered, 8000).catch(() => {
+    throw new Error(`${sel} ${pick}: not on screen, or something covers it`);
+  });
   const r = await p.eval<{ x: number; y: number } | null>(
     `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => { const b = x.getBoundingClientRect(); return b.width > 0 && b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth && x.innerText.includes(${JSON.stringify(pick)}); }); if (!e) return null; const b = e.getBoundingClientRect(); return { x: b.x + Math.min(b.width / 2, 40), y: b.y + Math.min(b.height / 2, 30) }; })()`,
   );
@@ -89,6 +97,12 @@ const scrollTop = () => p.eval<number>(`document.querySelector('[data-person-pos
 const authors = () => p.eval<string[]>(`[...document.querySelectorAll('[data-person-posts] .thread-chain > .thread-post .thread-head .post-who b')].map((b) => b.textContent)`);
 const composer = () => p.eval<boolean>(`[...document.querySelectorAll('.pane .composer')].some((c) => c.getBoundingClientRect().width > 0)`);
 const hash = () => p.eval<string>('location.hash');
+/** The person's page in place, its left edge at the window's or the list's, and no post's page on screen (a phone slides between them). */
+const home = () =>
+  p.until(
+    `(() => { const t = document.querySelector('.pane .person-tabs [role=tab]'); if (!t) return false; const pane = t.closest('.pane').getBoundingClientRect(); const posts = [...document.querySelectorAll('.pane [data-focal]')].some((f) => { const b = f.closest('.pane').getBoundingClientRect(); return b.right > 1 && b.left < innerWidth - 1; }); return !posts && pane.right <= innerWidth + 0.5 && document.getAnimations().every((a) => !(a instanceof CSSTransition) || a.playState !== 'running'); })()`,
+    8000,
+  );
 const ids = all.map((v) => v.post.id);
 
 const open = async (hashTo: string) => {
@@ -118,7 +132,7 @@ async function pass(phone: boolean) {
   await p.until(`location.hash.includes('pst_x_')`, 8000);
   check((await hash()).endsWith(`pst_x_${pub[0]?.id}`), 'Answer there opens that post', await hash());
   await p.eval('history.back()');
-  await p.until(`!!document.querySelector('.pane .person-tabs [role=tab]')`, 8000);
+  await home();
   check((await chosen()) === 'all', 'and Back comes to All again', await chosen());
 
   // The Posts tab.
@@ -162,6 +176,7 @@ async function pass(phone: boolean) {
     if (how === 'Back') await shot(name('person-post-open'));
     if (how === 'Back') await p.eval('history.back()');
     else await key('Escape', 'Escape', 27);
+    await home();
     await p.until(`document.querySelectorAll('[data-person-posts] [data-person-post]').length > 0`, 8000);
     const back = await scrollTop();
     check((await chosen()) === 'posts' && (await rows()).join() === everything.join() && Math.abs(back - before) <= 2, `${how} returns to the Posts tab, the same rows, scrolled where it was`, { tab: await chosen(), rows: (await rows()).length, before, back });
