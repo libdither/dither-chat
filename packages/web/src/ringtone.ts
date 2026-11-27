@@ -17,7 +17,7 @@ const PERIOD_MS = 3000;
 const visible = signal(typeof document === 'undefined' || document.visibilityState === 'visible');
 
 /** For the integration tests: whether the page rings now, and how many rings it played. */
-export const ringtone = { on: false, rings: 0, blocked: false };
+const ringtone = { on: false, rings: 0, blocked: false };
 
 let ctx: AudioContext | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
