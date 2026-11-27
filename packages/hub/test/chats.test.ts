@@ -310,6 +310,24 @@ describe('faces: one account shows them, its name and its picture', () => {
     expect(kitRow()).toMatchObject({ name: 'Kit', face_id: exe, face_pinned: 0, avatar_url: 'https://cdn.example/exe2.png' });
   });
 
+  test('a name of your choosing: one account’s nickname, display name or handle, checked whole before it is saved', async () => {
+    const before = kitRow();
+    // Not theirs, a field that is not a name, a name the account lacks (kit.exe has no nickname): refused, nothing saved.
+    expect((await call('PATCH', `/api/persons/${kit}`, { picture: work, nameFrom: { identityId: idn('discord', 'solo'), field: 'handle' } })).status).toBe(400);
+    expect((await call('PATCH', `/api/persons/${kit}`, { nameFrom: { identityId: work, field: 'avatar' } })).status).toBe(400);
+    expect((await call('PATCH', `/api/persons/${kit}`, { nameFrom: { identityId: exe, field: 'nickname' } })).status).toBe(400);
+    expect((await call('PATCH', `/api/persons/${kit}`, { nameFrom: 'kit.work' })).status).toBe(400);
+    expect(kitRow()).toEqual(before);
+    // Another account's handle names them; their face and picture stay.
+    expect((await call('PATCH', `/api/persons/${kit}`, { nameFrom: { identityId: work, field: 'handle' } })).status).toBe(200);
+    expect(kitRow()).toMatchObject({ name: 'kit.work', face_id: exe, avatar_url: before.avatar_url });
+    expect(store.personView(store.one('SELECT * FROM person WHERE id = ?', kit)!).nameFrom).toEqual({ identityId: work, field: 'handle' });
+    // Null: the face's name again.
+    expect((await call('PATCH', `/api/persons/${kit}`, { nameFrom: null })).status).toBe(200);
+    expect(kitRow()).toEqual(before);
+    expect(store.personView(store.one('SELECT * FROM person WHERE id = ?', kit)!).nameFrom).toBeUndefined();
+  });
+
   test('splitting off their face: another of theirs shows them, with its own picture', () => {
     store.ingest(main, { t: 'identity', identity: { nativeId: 'k-solo', handle: 'kit.solo', displayName: 'Kit Solo', avatarUrl: 'https://cdn.example/solo.png' } });
     const solo = idn('discord', 'k-solo');
@@ -450,6 +468,55 @@ test('a picture account: their picture from one account, their name from their f
     s.splitIdentity(r1);
     expect(s.one('SELECT picture_identity_id FROM person WHERE id = ?', pid)).toEqual({ picture_identity_id: null });
     expect(row()).toEqual({ name: 'Rowan K', avatar_url: 'https://pics.example/r2b.png' });
+    s.db.close();
+  } finally {
+    rmSync(d2, { recursive: true, force: true });
+  }
+});
+
+test('a chosen name follows its account, gives way to the face’s while the account lacks it, and goes when split off', () => {
+  const d2 = mkdtempSync(join(tmpdir(), 'dither-name-'));
+  try {
+    const s = new Store(join(d2, 'hub.sqlite'), mediaSigner('s'));
+    const a = s.createAccount({ network: 'discord', label: 'x', color: '#000', adapter: 'discord' });
+    const acc = () => s.account(a.id)!;
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'm1', handle: 'mira.j', displayName: 'Mira' } });
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'm2', handle: 'mjay', displayName: 'mira jay' } });
+    const [m1, m2] = [hubId('idn', 'discord', 'm1'), hubId('idn', 'discord', 'm2')];
+    const name = (pid: string) => (s.one<{ name: string }>('SELECT name FROM person WHERE id = ?', pid)!).name;
+
+    // One account: your nickname names them, until you choose its display name or its handle.
+    const solo = s.ensurePerson(m1);
+    s.setIdentityNickname(m1, 'Mimi');
+    expect(name(solo)).toBe('Mimi');
+    expect(s.setPersonName(solo, { identityId: m1, field: 'display' })).toBe(true);
+    expect(name(solo)).toBe('Mira');
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'm1', handle: 'mira.j', displayName: 'Mira J' } });
+    expect(name(solo)).toBe('Mira J');
+    s.setPersonName(solo, { identityId: m1, field: 'handle' });
+    expect(name(solo)).toBe('mira.j');
+    expect(s.setPersonName(solo, null)).toBe(true);
+    expect(name(solo)).toBe('Mimi');
+
+    // Several: another account's name, whatever the face; while it lacks that name, the face's shows.
+    const pid = solo;
+    s.mergePersons(pid, s.ensurePerson(m2));
+    s.setPersonFace(pid, m1);
+    expect(s.setPersonName(pid, { identityId: m2, field: 'nickname' })).toBe(false);
+    s.setIdentityNickname(m2, 'MJ');
+    expect(s.setPersonName(pid, { identityId: m2, field: 'nickname' })).toBe(true);
+    expect(name(pid)).toBe('MJ');
+    s.setIdentityNickname(m2, null);
+    expect(name(pid)).toBe('Mimi');
+    s.setIdentityNickname(m2, 'MJ');
+    expect(name(pid)).toBe('MJ');
+
+    // Not theirs: refused. Split off: the choice goes with it.
+    s.ingest(acc(), { t: 'identity', identity: { nativeId: 'z9', handle: 'z9', displayName: 'Zed' } });
+    expect(s.setPersonName(pid, { identityId: hubId('idn', 'discord', 'z9'), field: 'display' })).toBe(false);
+    s.splitIdentity(m2);
+    expect(s.one('SELECT name_identity_id, name_field FROM person WHERE id = ?', pid)).toEqual({ name_identity_id: null, name_field: null });
+    expect(name(pid)).toBe('Mimi');
     s.db.close();
   } finally {
     rmSync(d2, { recursive: true, force: true });
