@@ -98,10 +98,13 @@ export async function readPage(store: Store, pager: Pager, o: { accountId: strin
   }
   if (count > 0 && (oldest === null || oldest >= o.beforeTs)) return { kind: 'failed', count, fresh, error: 'The network sent newer messages than asked for: it cannot fetch by time here' };
   if (r?.done) {
-    // The chat's start: whole below the cursor, unless the network says there is nothing where the hub holds messages
-    // (it could not read the chat, and said so as an empty last page).
-    const held = !count && !!store.one<Row>('SELECT 1 FROM message WHERE conversation_id = ? AND ts < ? LIMIT 1', o.cid, o.beforeTs);
+    // The chat's start: whole below the cursor, unless the hub holds messages older than all the page brought (the
+    // network could not read that far back, as a phone that no longer has them answers empty, and called it the start).
+    // Then only the page's own stretch is whole, and the walk ends there.
+    const floor = below.length ? below[below.length - 1] : o.beforeTs;
+    const held = !!store.one<Row>('SELECT 1 FROM message WHERE conversation_id = ? AND ts < ? AND deleted = 0 LIMIT 1', o.cid, floor);
     if (!held) addSpan(store, o.cid, 0, o.beforeTs);
+    else if (floor < o.beforeTs) addSpan(store, o.cid, floor, o.beforeTs);
     return { kind: 'page', count, fresh, end: held ? 'empty' : 'start', oldest: null };
   }
   if (!r || !count) {
