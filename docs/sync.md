@@ -146,27 +146,24 @@ adapter announcing the same things again, and a send retried after a lost answer
   opens a new socket at once rather than at the end of the backoff (`ui/Offline.tsx`). Nothing covers anything, and
   all of it goes the moment the hub answers. The inbox says it too ([below](#what-the-inbox-says)), and its list goes
   a shade quieter. The loading screen is only for a first start with nothing kept.
-- **Sends** without the hub wait, marked "Waiting for the hub, sends when it is back", and go out when the sync after
-  reconnecting is done. Each carries a `clientId`; the hub answers a repeat of one it is sending or sent in the last
-  15 minutes with the first answer, so a send whose answer was lost goes out once. Until the hub has taken it, a send
-  is kept on the device (IndexedDB, with its files, `outbox.ts`): after a reload or the system closing the app it is
-  shown again and goes out after the first sync, under the same `clientId`. One the hub refused stays, with the
-  reason, to try again or discard. Its files upload as they are attached, a piece at a time ([uploads.md](uploads.md)):
-  a send waits for the ones still uploading, an upload carries on after a reload, and the hub keeps them across its
-  own restart.
-- **The pending copy** of a send goes when its message is here. The hub's answer carries `messageId`, the hub id of the
-  message the network says it sent (ids are derived from the network's, so it is known before the message is stored),
-  and the copy goes when that message arrives, live, in a sync or in a page, or at once if it is already here. Only an
-  answer without an id (a network that did not say) falls back to the text, matched to the oldest message of ours
-  there with the same text that no other copy took.
-- **Before the answer.** On a slow link the message comes back on the socket before the answer to the POST, and both
-  used to show until the answer came. Now the copy gives way as soon as its message is here: the hub says on the
-  socket which message a send became (`sent`, with the send's `clientId`, not journaled) as soon as the network names
-  it, and without that the page matches by itself, in send order, a copy that went to the hub to a message of ours
-  that came on the socket after it, from the same account, with exactly its text and number of files, no other copy
-  took. The copy is hidden, and its outbox entry kept, until the answer comes. If the answer is a failure but the
-  message came, it went out: no failed copy is shown, and nothing is kept to retry. Only a refusal (4xx: the hub
-  never handed it on) shows the copy again as failed. A copy whose message never comes keeps the 30 s rule.
+- **Sends** go to the hub's queue for their chat ([The send queue](#the-send-queue)), which answers as soon as it
+  has them. Until then a send is kept on the device (IndexedDB, with its files, `outbox.ts`), marked with a clock:
+  without the hub it waits ("On this device: goes to the hub when it is back") and goes after the sync on
+  reconnecting; after a reload or the system closing the app it is shown again and goes the same way. Each carries a
+  `clientId` the hub keeps for good, so sending it again is always safe: a repeat is answered with the row the first
+  one made, never sent twice. A device copy is never in doubt for that reason; only the hub can say a send may have
+  gone out. One the hub refused (a 4xx: nothing went out) stays, with the reason, to try again or discard. A device
+  sends one chat's copies one after the other, in the order they were written. Its files upload as they are attached,
+  a piece at a time ([uploads.md](uploads.md)): a send waits for the ones still uploading, an upload carries on after
+  a reload, and the hub keeps them across its own restart.
+- **The hub's rows** (bootstrap `sends`, the `sends` event): every device shows the same rows of a chat's queue under
+  its last message once the hub has them, with one tick, two once the network named the message it became, until
+  that message is here (or 30 s, for a network that never echoes it; the chat is drawn again then). A row still being
+  sent, or sent by a network that named no message, is not shown once a message of yours with its text came after you
+  pressed Send: that is its echo, come before the account's answer. The device copy goes as soon as the hub's row
+  is there. A device copy waits behind an older one of its chat that could not reach the hub, so the hub takes them
+  in the order they were written. The hub's row carries `messageId`, the hub id of the message the network says it sent (ids are derived
+  from the network's, so it is known before the message is stored).
 - **Restarts**: a hub that is stopping (SIGTERM, which is how the deployer restarts it) says so to every socket first,
   `{ t: 'stopping', usualMs }`, not journaled, and keeps when it stopped in its data dir (`restarts.json`,
   `packages/hub/src/restarts.ts`); the next start counts the time from that stop to answering, and `usualMs` is the
@@ -176,6 +173,81 @@ adapter announcing the same things again, and a send retried after a lost answer
   or "Hub restarted". A restart not back within two minutes (or four usual ones) is the hub out of reach as any other.
 - `pwa.ts` used to fetch `sw.js` on every return. It now checks when the hub process changed (the sync says which
   process answered), at most every 10 minutes on a return, and hourly.
+
+### The send queue
+
+The hub keeps each chat's sends in a queue (`packages/hub/src/sendqueue.ts`, table `send_queue`, protocol
+`sendqueue.ts`) and sends them one at a time, in order. Why: a send handed to an account that stopped answering may be
+out or not, and the hub used to keep only 15 minutes of answers in memory, so a restart forgot what it had sent and a
+retry could send twice. And a message written to a chat that has moved on while it waited (on a slow link, or behind
+a slow send) can land after what made it wrong.
+
+- **One row per send**, under its `clientId` (the hub makes one, `hub-…`, for a caller that gives none), kept for
+  good. It holds the chat, the account, the body and every field `POST /send` takes (reply, files, sticker, voice,
+  GIF, view once, silent, ping on reply), what the sender could see (`seen_ts`, `seen_id`), when Send was pressed,
+  and its state, error, tries, why it is held and the countdown's end.
+- **`POST /api/conversations/:id/send`** writes the row in one transaction. With `ack: 'hub'` (the app) it answers at
+  once with the row (`SendAccepted`, 200). Without it (the notification reply in the browser and the Android app,
+  older callers) the answer comes after the network's, as before: 200 with `messageId`, a refusal's status, 504
+  `SendUnsure`, or 202 with the row when it is held or waits behind one that is. Those callers say "Reply waiting"
+  themselves on a 202, so the hub sends no "is waiting" notification of its own for their rows. A repeat of a
+  `clientId` is answered with the row as it is now and never sends again by itself, a `failed` one too: that goes
+  again only when you press Try again (`POST /api/sends/:clientId` `{ action: 'send' }`), since an error the hub cannot
+  read may hide a send that went out. A send refused at once (no account, the account not allowed there, empty, an
+  upload gone) makes no row.
+- **One worker per chat** sends only the head of its queue. A held or in-doubt head blocks the rows behind it; a
+  failed one does not (the account refused it). The account's own call and its timeouts are as before: the network's answer
+  makes it `sent`, a refusal `failed`, an unknown outcome (`outcome.ts unknownOutcome`: its adapter timed out or
+  dropped mid-command; the accounts manager's client gave up waiting, its connection dropped mid-call, or it was
+  closed with the call waiting; the manager gave up on the account or lost it while it had the call) `unsure`.
+- **A restart**: rows left `sending` become `unsure` ("The hub restarted while sending it"), and `queued` rows go
+  again. An answer the account gives while the hub is stopping is kept, so a send that went out is not put in doubt.
+- Every change goes out on the socket (the `sends` event: the open rows, and those sent in the last 2 minutes, with
+  the hub's clock) and is journaled (list `sends`). The bootstrap, and every sync answer while there are rows, carry
+  the list whether or not it changed: a restart puts rows in doubt before any socket is open, and a page's kept
+  copy holds no rows, so a page back from either has them as they are now. (A deleted chat takes its rows with it;
+  a page draws none for a chat that is gone.)
+
+| State | Mark | Means | What you can do |
+|---|---|---|---|
+| (device copy) | clock | only this device has it; goes when the hub is reachable | wait; Discard if it was refused |
+| `queued` | one tick | the hub has it; goes when the ones before it in the chat are through | |
+| `sending` | one tick | handed to the account now | |
+| `sent` | two ticks | the network named the message it became | then the message's own receipts |
+| `held` | pause | the chat moved on while it waited | Send, Edit, Cancel; a countdown while watched |
+| `unsure` | alert | in doubt: handed on, no answer said whether it went | Send again, Discard |
+| `failed` | alert | refused; goes again only when you say | Try again, Discard |
+| `cancelled` | (gone) | taken back before it went | |
+
+A queued row behind a held or in-doubt one says "The hub has it · waiting on the message above".
+
+**Held when the chat moved on.** The app sends `seenUpTo` (the id and time of the newest message the chat showed when
+Send was pressed) with each send; a reply from a notification sends the id of the message it answers, and the hub
+takes its time. At accept and again right before sending, the hub looks for messages in the chat after that one: newer
+by time, and stored after it (a demo world re-dated at start, or a message given a later time, is not news). Expected
+are only the messages this device's earlier sends in the queue became (by `messageId`, or by text for a row whose
+network named no message). Everything else counts: someone else's message, your own from another device or from the
+network's own app, and another dither-chat device's send through the hub. No grace time and no age rule. A send without
+`seenUpTo` is never held. A held send says "N new messages came in since you wrote this", those messages are marked
+with a bar at their side, and it has:
+
+- **Send**: it goes as it is (and is not checked again).
+- **Edit**: it is cancelled and its text goes back into the box, after what is there; its files do not (a tooltip says
+  so), so attach them again.
+- **Cancel**.
+
+**The countdown.** While any device shows the chat (a computer or a phone: the `watching` the app says on its socket
+every 30 s), a held send counts down and goes by itself at the end, by the hub's clock (`holdUntil`). When no device
+shows it any more, the countdown stops, nothing goes, and you are told once: a notification "Your message to … is
+waiting" (the hub's push, under quiet hours' rules), and the row in the chat says "It waits for you". It survives a
+restart, starting again from the start: a device that comes back by its end sees it go, and nobody is told that it
+waits before then. Settings → Sending sets its length
+(`GET`/`PUT /api/send-settings`, kept on the hub): 0 to 120 seconds, default 10; 0 means no countdown, it always waits
+for you.
+
+**Not covered yet:** the account (dither-accounts) does not take the `clientId` as its own idempotency key, so an
+`unsure` row is still the person's call; send later and Forward do not go through the queue; two tabs of the same
+browser each keep their own device copy until the hub has it.
 
 ## What the inbox says
 
@@ -240,9 +312,10 @@ So:
   a dead one swallows it without a word. Each try takes another connection. On a link that is only slow the first try
   answers first and the rest are given up; the hub answers a catch-up from the journal, so asking twice costs nothing
   else.
-- **Sends** are given up with their socket too, and go out again after the next catch-up under the same `clientId`,
-  which the hub answers with the first one's answer: once, either way. A send has no quiet timeout of its own: the hub
-  waits for the network for up to 3 minutes with files, and says 504 itself.
+- **Sends** are given up with their socket too, and go again under the same `clientId` after the next catch-up:
+  the hub answers a repeat with the row the first made ([The send queue](#the-send-queue)). A send has no quiet
+  timeout of its own: the hub's queue waits for the network for up to 3 minutes with files, and makes the row
+  `unsure` itself.
 - **A late pong is not a dead socket**: the race described under Heartbeat above. A fixed wait cannot tell a socket
   that is dead from one whose pong is behind 4 s of someone else's bytes; a new socket asked for at the same moment
   can, because it waits in the same queue.
@@ -339,10 +412,14 @@ position from before them, and checks each one caught up from where it was kept 
   send without the hub waits and goes out once; a cold start from the snapshot resumes with a delta; pages opened before
   it are kept, open without the hub at once, and are caught up with a delta when it is back; and a restarted hub is
   caught up from its journal.
-- `bun scripts/verify-sends.ts <demo hub> --stop "<cmd>" --start "<cmd>"`: one send is one message after its echo,
-  two identical sends stay two; with the answer to a send held back 3 s (the socket not), never two on screen, by the
-  hub's `sent` event and by the page alone, for two identical quick sends too, and a 504 whose message came shows no
-  failed copy; and a send made with the hub stopped survives a reload and goes out once when it is back. `bun test packages/web/test/outbox.test.ts` for the outbox and the matching.
+- `bun scripts/verify-sends.ts <demo hub> --stop "<cmd>" --start "<cmd>"`: the hub answers a send with its row at
+  once, and the row names the message; one send is one message, two identical sends stay two; with the answers held
+  back on a slow link, never two on screen; and a send made with the hub stopped survives a reload and goes out once
+  when it is back. `bun test packages/hub/test/sendqueue.test.ts` for [the send queue](#the-send-queue) (order behind a
+  slow send, repeats across a restart, a restart mid-send, blocking heads, holds, the countdown under a fake clock,
+  older callers); `bun test packages/hub/test/hardening.test.ts` for each way an outcome is lost (504 `unsure`, never
+  sent twice); `bun test packages/web/test/sendrows.test.ts packages/web/test/outbox.test.ts` for the marks, the
+  handover from device copy to hub row, the held line and its countdown, and what a failed POST becomes.
 - `bun scripts/measure-sync.ts <hub> [--open N]` for the table above.
 - `bun scripts/verify-link.ts` for [a bad link](#a-bad-link): starts its own demo hub and proxy, and prints the numbers
   in that section's table. `bun test packages/web/test/hedged.test.ts` for giving up and asking again.

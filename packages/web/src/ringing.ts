@@ -52,6 +52,11 @@ export function ringingCalls(): P.CallView[] {
   return [...calls.value.values()].filter((c) => c.ringing).sort((a, b) => b.startedAt - a.startedAt);
 }
 
+/** Every call the page knows of that has not ended (voicenow.ts: who is in a call now). */
+export function liveCalls(): P.CallView[] {
+  return [...calls.value.values()].filter((c) => c.state !== 'ended');
+}
+
 /** The call going on or ringing in a conversation, if any. */
 export function callIn(conversationId: string): P.CallView | null {
   return [...calls.value.values()].find((c) => c.conversationId === conversationId && c.state !== 'ended') ?? null;

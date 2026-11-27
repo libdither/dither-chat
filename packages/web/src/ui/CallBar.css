@@ -185,6 +185,17 @@
   vertical-align: middle;
   color: var(--text-dim);
 }
+/* A person in a call or voice channel now (VoiceNowMark): the same small sign's place, a speaker. */
+.voice-now-mark {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  vertical-align: middle;
+  color: var(--good);
+}
 .call-mark.mine {
   color: var(--good);
 }

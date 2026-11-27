@@ -86,7 +86,7 @@ import { convKind, rowTrack } from '../clicks.ts';
 import { useShown } from './more.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { MailListChips, MailTile } from './MailLists.tsx';
-import { CallMark } from './CallBar.tsx';
+import { CallMark, VoiceNowMark } from './CallBar.tsx';
 
 // ------------------------------------------------------------------ navigation helpers
 
@@ -244,6 +244,13 @@ const ConvRow = memo(function ConvRow({
             {isChannel ? convTitle(c) : convLabel(c)}
           </span>
           <CallMark convIds={chat ? chat.routes.map((r) => r.id) : [c.id]} />
+          {chat ? (
+            <VoiceNowMark person={chat.person.id} convIds={chat.routes.map((r) => r.id)} />
+          ) : c.shape === 'direct' ? (
+            <VoiceNowMark person={c.peerPersonId} convIds={[c.id]} />
+          ) : c.variant === 'voice' || c.variant === 'stage' ? (
+            <VoiceNowMark channel={c.id} />
+          ) : null}
           {c.encrypted && <Icon name="lock" size={11} class="row-lock" />}
           <span class="row-time">
             <Ago ts={c.lastMessageAt} />
@@ -372,6 +379,7 @@ const ChannelInboxRow = memo(function ChannelInboxRow({ c, rowKey, parts, unread
             {title}
           </span>
           <CallMark convIds={parts.map((p) => p.id)} />
+          {channel && (c.variant === 'voice' || c.variant === 'stage') && <VoiceNowMark channel={c.id} />}
           {c.encrypted && <Icon name="lock" size={11} class="row-lock" />}
           <span class="row-time">
             <Ago ts={latest.lastMessageAt} />
@@ -843,6 +851,7 @@ const PersonRow = memo(function PersonRow({ person, directs, active, onClick }: 
             {person.name}
           </span>
           <CallMark convIds={directs.map((d) => d.id)} />
+          <VoiceNowMark person={person.id} convIds={directs.map((d) => d.id)} />
           <span class="row-nets">
             {directs.map((d) => (
               <span class="row-net" title={`${netName(d.network)}${d.vantages.length ? ' · ' + d.vantages.map((v) => db.accounts.get(v.accountId)?.label).join(', ') : ''}`}>

@@ -411,7 +411,7 @@ object Notifications {
             newest(d)?.let { putLong(TS, it) }
             putBoolean(KEEP, d.optBoolean("keep"))
         })
-        actions(c, b, conv, nid, device, marks, canReply, replyTo, list = false)
+        actions(c, b, conv, nid, device, marks, canReply, replyTo, list = false, seen = d.optString("messageId").ifEmpty { null })
         nm(c).notify(conv, ID, b.build())
         foldShade(c, added = conv.takeIf { tier == "quiet" }, removed = conv.takeIf { tier != "quiet" }, title = chat.name)
     }
@@ -648,14 +648,14 @@ object Notifications {
     }
 
     /** The delete intent, Reply and the marks. */
-    private fun actions(c: Context, b: Notification.Builder, tag: String, nid: String?, device: String?, marks: Marks?, canReply: Boolean, replyTo: String?, list: Boolean) {
+    private fun actions(c: Context, b: Notification.Builder, tag: String, nid: String?, device: String?, marks: Marks?, canReply: Boolean, replyTo: String?, list: Boolean, seen: String? = null) {
         // A swipe is reported, and a list row's also brings the summary up to date.
         if (nid != null || list) {
             val gone = Intent(c, DismissReceiver::class.java).putExtra("nid", nid).putExtra("device", device).putExtra("tag", if (list) tag else null)
             b.setDeleteIntent(PendingIntent.getBroadcast(c, tag.hashCode(), gone, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
         }
         if (canReply) {
-            val intent = Intent(c, ReplyReceiver::class.java).putExtra("conversation", tag).putExtra("replyTo", replyTo).putExtra("nid", nid).putExtra("device", device)
+            val intent = Intent(c, ReplyReceiver::class.java).putExtra("conversation", tag).putExtra("replyTo", replyTo).putExtra("seen", seen).putExtra("nid", nid).putExtra("device", device)
             // Mutable: the system writes the typed text into it.
             val pi = PendingIntent.getBroadcast(c, tag.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
             b.addAction(Notification.Action.Builder(null, "Reply", pi).addRemoteInput(RemoteInput.Builder(REPLY).setLabel("Message").build()).build())
@@ -984,8 +984,9 @@ object Looks {
 
 /**
  * A reply typed into a notification goes through the hub's ordinary send, which decides whether it may go out at
- * all, as sw.js does in a browser. Sent, it joins the conversation's notification; on failure what was typed stays
- * readable in the notification.
+ * all, as sw.js does in a browser. It names the message it answers, so the hub holds it if more came into the chat
+ * since (docs/sync.md "The send queue"). Sent, it joins the conversation's notification; held or failed, what was
+ * typed stays readable in the notification.
  */
 class ReplyReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, intent: Intent) {
@@ -998,8 +999,16 @@ class ReplyReceiver : BroadcastReceiver() {
             try {
                 val body = JSONObject().put("body", text)
                 if (replyTo != null) body.put("replyTo", replyTo)
+                intent.getStringExtra("seen")?.let { body.put("seenUpTo", JSONObject().put("id", it)) }
                 val (code, res) = runCatching { Hub.request(c, "POST", "/api/conversations/$conv/send", body, 60_000) }.getOrElse { 0 to "" }
-                if (code in 200..299) {
+                // 202: the hub has it and it waits for you, held itself or behind an earlier send of the chat that is.
+                if (code == 202) {
+                    val held = runCatching { JSONObject(res).optJSONObject("row") }.getOrNull()
+                    Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
+                    val n = held?.optJSONObject("hold")?.optInt("count") ?: 0
+                    val why = if (held?.optString("state") == "held") "$n new message${if (n == 1) "" else "s"} came in" else "It waits behind an earlier message of yours that is held or may not have gone out"
+                    Notifications.post(c, conv, "Reply waiting", "$why. Open the chat to send it, edit it or cancel it. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
+                } else if (code in 200..299) {
                     Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
                     Notifications.replied(c, conv, text)
                 } else {

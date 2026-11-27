@@ -49,13 +49,30 @@ const labels = () =>
     time: h.querySelector('.msg-time')?.textContent ?? '',
     theirs: h.querySelector('.msg-their-time')?.textContent ?? null,
   }))`);
-/** Point at an element (by selector) the way a mouse does, so the page sees pointerenter. */
+/**
+ * Point at an element (by selector) the way a mouse does, so the page sees pointerenter. The chat may put its view
+ * back at the newest message when its height changes in the same frame as the scroll that brought the element into
+ * view (Timeline.tsx: following the newest), so the element is only pointed at once it is still under the spot a
+ * frame later; otherwise it is scrolled to again.
+ */
 async function point(sel: string) {
-  const r = await p.eval<{ x: number; y: number } | null>(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
-  if (!r) throw new Error(`nothing at ${sel}`);
-  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
-  await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y });
-  return r;
+  for (let tries = 0; tries < 5; tries++) {
+    const r = await p.eval<{ x: number; y: number; under: boolean } | null>(`(async () => {
+      const e = document.querySelector(${JSON.stringify(sel)});
+      if (!e) return null;
+      e.scrollIntoView({ block: 'center' });
+      await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const b = e.getBoundingClientRect();
+      const x = b.left + b.width / 2, y = b.top + b.height / 2;
+      return { x, y, under: e.contains(document.elementFromPoint(x, y)) };
+    })()`);
+    if (!r) throw new Error(`nothing at ${sel}`);
+    if (!r.under) continue;
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+    await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y });
+    return { x: r.x, y: r.y };
+  }
+  throw new Error(`${sel} did not stay in view to be pointed at`);
 }
 async function click(x: number, y: number) {
   await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });

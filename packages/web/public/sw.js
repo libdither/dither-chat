@@ -552,11 +552,25 @@ self.addEventListener('pushsubscriptionchange', (e) => {
  */
 async function sendReply(n, conv, text, replyTo) {
   let error = null;
+  let held = null;
+  // It names the message it answers, so the hub holds it if more came into the chat since (docs/sync.md "The send
+  // queue").
+  const seen = typeof n.data?.messageId === 'string' ? { seenUpTo: { id: n.data.messageId } } : {};
   try {
-    const res = await fetch(`/api/conversations/${conv}/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: text, replyTo }), signal: AbortSignal.timeout(60_000) });
-    if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The hub answered ${res.status}`;
+    const res = await fetch(`/api/conversations/${conv}/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body: text, replyTo, ...seen }), signal: AbortSignal.timeout(60_000) });
+    const answer = await res.json().catch(() => null);
+    if (!res.ok) error = answer?.error ?? `The hub answered ${res.status}`;
+    // 202: the hub has it and it waits for you, held itself or behind an earlier send of the chat that is.
+    else if (res.status === 202) held = answer?.row ?? {};
   } catch (err) {
     error = err?.name === 'TimeoutError' ? 'The hub did not answer in time, so it may or may not have gone out' : 'Could not reach the hub';
+  }
+  if (held) {
+    const k = held.hold?.count ?? 0;
+    const why = held.state === 'held' ? `${k} new message${k === 1 ? '' : 's'} came in` : 'It waits behind an earlier message of yours that is held or may not have gone out';
+    await outcome(n.data, 'replied');
+    await self.registration.showNotification('Reply waiting', { body: `${why}. Open the chat to send it, edit it or cancel it. You wrote: ${text}`.slice(0, 1000), tag: n.tag, renotify: true, requireInteraction: true, icon: '/icon-192.png', badge: '/icon-192.png', data: { conversationId: conv, keep: true } });
+    return;
   }
   if (!error) {
     await outcome(n.data, 'replied');

@@ -14,6 +14,7 @@ import type * as P from '@dither-chat/protocol';
 import { composeState, followNativeId, isPostId, NETWORK_META, placeName, POST_ACTS, postFieldsProblem, postIdOf, postNativeId, postRulesFor, rulesForReply, withoutHiddenGuests } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { recordEvents } from './eventseen.ts';
+import { unknownOutcome } from './outcome.ts';
 import { postAuthors, postView } from './feed.ts';
 import { rankReactors, type ReactorIn } from './reactors.ts';
 import type { AccountRow, Store } from './store.ts';
@@ -91,8 +92,6 @@ const PUBLISH_DEDUPE_MS = 10 * 60_000;
 /** Who reacted is asked again after this long (a like or repost of yours clears it at once). */
 const REACTORS_CACHE_MS = 5 * 60_000;
 
-/** The network may have done it: the adapter stopped answering, not refused (as server.ts unknownOutcome). */
-const unknownOutcome = (e: unknown) => /timed out|disconnected mid/i.test(String((e as Error)?.message ?? e));
 
 /** What a publish asks for (the route's body, the Feed page's destinations). */
 interface PublishIn {

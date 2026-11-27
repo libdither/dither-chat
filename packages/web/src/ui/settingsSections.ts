@@ -7,6 +7,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Each device', 'phone', 'set-devices'],
   ['Keywords', 'at', 'set-keywords'],
   ['Your rules', 'layers', 'set-overrides'],
+  ['Sending', 'send', 'set-sending'],
   ['Privacy', 'lock', 'set-privacy'],
   ['Message history', 'clock', 'set-history'],
   ['Indexing', 'archive', 'set-indexing'],

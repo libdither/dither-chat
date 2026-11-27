@@ -1319,3 +1319,41 @@ CREATE TABLE IF NOT EXISTS cal_item (
 );
 CREATE INDEX IF NOT EXISTS cal_item_drawn ON cal_item(drawn_at);
 CREATE INDEX IF NOT EXISTS cal_item_ts ON cal_item(message_ts);
+
+-- The send queue (sendqueue.ts, docs/sync.md "The send queue"): every chat send from the app, by the app's id for it,
+-- kept for good so a repeat of that id from any tab or device is the same send. One worker per conversation sends
+-- the oldest open one and nothing behind it until it is sent, failed or cancelled.
+CREATE TABLE IF NOT EXISTS send_queue (
+  client_id       TEXT PRIMARY KEY,
+  seq             INTEGER NOT NULL,             -- the order the hub took it in
+  conversation_id TEXT NOT NULL REFERENCES conversation(id) ON DELETE CASCADE,
+  account_id      TEXT,                         -- the account asked for, if any
+  device          TEXT,                         -- the app install that sent it (its own earlier sends never hold it)
+  body            TEXT NOT NULL DEFAULT '',
+  reply_to        TEXT,
+  attachments     TEXT NOT NULL DEFAULT '[]',   -- upload ids
+  files           TEXT NOT NULL DEFAULT '[]',   -- their names
+  sticker         TEXT,
+  voice           TEXT,                         -- JSON VoiceOut
+  gif             INTEGER NOT NULL DEFAULT 0,
+  view_once       INTEGER NOT NULL DEFAULT 0,
+  silent          INTEGER NOT NULL DEFAULT 0,
+  mention_replied INTEGER,                      -- 0: a reply without a ping; null: as the network does
+  seen_ts         INTEGER,                      -- the newest message you could see when you pressed Send
+  seen_id         TEXT,
+  pressed_at      INTEGER NOT NULL,
+  state           TEXT NOT NULL CHECK (state IN ('queued', 'sending', 'sent', 'held', 'unsure', 'failed', 'cancelled')),
+  sent_by         TEXT,                         -- the account that sent it
+  native_id       TEXT,
+  message_id      TEXT,
+  error           TEXT,
+  status          INTEGER,                      -- the HTTP status of a refusal, for callers that wait for it
+  tries           INTEGER NOT NULL DEFAULT 0,
+  hold_reason     TEXT,                         -- JSON SendHold
+  hold_until      INTEGER,                      -- the countdown, by the hub's clock
+  confirmed       INTEGER NOT NULL DEFAULT 0,   -- you pressed Send on it: no hold check on its next try
+  told            INTEGER NOT NULL DEFAULT 0,   -- you were notified that it waits
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS send_queue_open ON send_queue(conversation_id, seq) WHERE state NOT IN ('sent', 'cancelled');
+CREATE INDEX IF NOT EXISTS send_queue_state ON send_queue(state, updated_at);

@@ -138,6 +138,7 @@ export function StreamPane({ c, onBack, focus }: { c: P.ConversationView; onBack
       <Composer
         targets={{ convId: newName === null && to ? to.id : c.id }}
         draft={`stream:${c.id}`}
+        also={ids}
         placeholder={`Message ${convLabel(c)}${where ? ` › ${where}` : ''}`}
         reply={reply}
         clearReply={() => setReply(null)}

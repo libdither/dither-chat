@@ -150,6 +150,23 @@ Chromium. Not run against a live account.
   click. The hub's network search keeps asking each DM on its own ([indexing.md](indexing.md)).
 - Smart search, synced recent searches: not built (gated, server-side; dither keeps its own).
 
+## Ticks and held sends
+
+Every send goes through the hub's queue for its chat ([sync.md](sync.md#the-send-queue)), and shows how far it got
+under the chat's last message: a clock while only this device has it, one tick once the hub has it, two once the
+network named the message, then the message's own receipts.
+
+A send is **held** when anything came into its chat after what you could see as you pressed Send (someone else's
+message, or your own from another device or app): "N new messages came in since you wrote this", with those messages
+marked, and **Send**, **Edit** (it is cancelled and its text goes back into the box; attach its files again) and
+**Cancel**. The sends behind it in the chat wait with it. A reply from a notification is held the same way when more
+came after the message it answers, and the notification says "Reply waiting".
+
+**Settings → Sending**: how long a held send counts down before it goes by itself, from 0 to 120 seconds, default 10
+(kept on the hub, the same on every device). It counts only while one of your devices shows the chat; with nobody
+looking it waits, and you are told. 0: no countdown, it always waits for you. Send later keeps its own hold (above),
+and does not go through the queue yet.
+
 ## Not built
 
 - **Channel summaries** (Discord's topic summaries of busy channels): they come only when a channel is opened in

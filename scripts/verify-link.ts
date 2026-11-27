@@ -14,7 +14,9 @@
  *      replaces the socket, and the catch-up, put on one of the browser's dead idle connections, is asked again on
  *      another;
  *   3. a flapping link: every connection cut as soon as the page has opened its socket again, several times over, a
- *      send made in the middle of it. Reconnects stay one per cut, the send goes out once, nothing shows twice;
+ *      send made in the middle of it. Reconnects stay one per cut, the send goes out once, nothing shows twice: a send
+ *      cut off on its way to the hub goes to it again under the same id, which the hub keeps (docs/sync.md "The send
+ *      queue"), and one the hub holds because a message came in after what the page showed goes when Send is pressed;
  *   4. a saturated slow link: 1.5 Mbit/s with a router's queue of 1 s and of 4 s, filled by a big download, and a
  *      probe: the pong waits behind the queue, past PONG_WAIT at 4 s. The new socket that races it waits in the same
  *      queue, so the pong wins and the socket stays, with no notice.
@@ -140,7 +142,14 @@ const probe = () => p.eval(`window.dispatchEvent(new Event('focus')), 0`);
 const runHeld = () => p.eval<number>(`(() => { const fs = [...__link.held.values()]; __link.held.clear(); fs.forEach((f) => f()); return fs.length; })()`);
 const orb = () => p.eval<boolean>(`!!document.querySelector('.offline-orb')`);
 const shownCount = (text: string) => p.eval<number>(`[...document.querySelectorAll('.timeline-scroll .msg-body')].filter((e) => e.textContent.includes(${JSON.stringify(text)})).length`);
-const untilShown = (text: string, ms = 15_000) => p.until(`[...document.querySelectorAll('.timeline-scroll .msg-body')].some((e) => e.textContent.includes(${JSON.stringify(text)}))`, ms).then(() => true, () => false);
+/** The message itself is here (not a send's pending row). */
+const untilShown = (text: string, ms = 15_000) => p.until(`[...document.querySelectorAll('.timeline-scroll .msg:not(.pending) .msg-body')].some((e) => e.textContent.includes(${JSON.stringify(text)}))`, ms).then(() => true, () => false);
+/**
+ * A send of this page's that the hub held (a message came in after what the page showed when it was sent): Send.
+ * Whether it was held; it may also have gone already, by the countdown while the page watched the chat.
+ */
+const sendHeld = (text: string) =>
+  p.eval<boolean>(`(() => { const e = [...document.querySelectorAll('.timeline-scroll .msg.pending.held')].find((e) => e.textContent.includes(${JSON.stringify(text)})); if (!e) return false; e.querySelector('.pending-actions button').click(); return true; })()`);
 /** Watches for the notice while a case runs: whether it ever showed. */
 const watchOrb = () => {
   let seen = false;
@@ -241,8 +250,13 @@ try {
     check(fired > 0, `the catch-up has a quiet timeout (SYNC_QUIET, ${SYNC_QUIET} ms with nothing coming)`, { held: fired });
     const caught = await untilShown(meanwhile);
     check(caught, '…given up, and tried again: the held message shows', `${Date.now() - tQuiet} ms after the timeout`);
+    // The message from elsewhere came in after what the page showed as it sent: the hub holds the send for the page.
+    const heldOn = await p.until(`[...document.querySelectorAll('.timeline-scroll .msg.pending.held, .timeline-scroll .msg:not(.pending)')].some((e) => e.textContent.includes(${JSON.stringify(queued)}))`, 15_000).then(() => true, () => false);
+    const wasHeld = await sendHeld(queued);
+    check(heldOn, 'a send made meanwhile, with a message from elsewhere it had not shown: held by the hub (or gone by its countdown)', { held: wasHeld });
     const out = await p.until(`!document.querySelector('.msg.pending')`, 15_000).then(() => true, () => false);
-    check(out && (await stored(queued)) === 1 && (await shownCount(queued)) === 1, 'a send made meanwhile went out once, and shows once', { out, onHub: await stored(queued), shown: await shownCount(queued) });
+    await untilShown(queued);
+    check(out && (await stored(queued)) === 1 && (await shownCount(queued)) === 1, '…then it went out once, and shows once', { out, onHub: await stored(queued), shown: await shownCount(queued) });
     const syncs = await fetches(t0, SYNC);
     note(`catch-ups: ${syncs.length} (${syncs.map((f) => (f.end ? `${f.error || f.status} after ${f.end - f.at} ms` : 'open')).join(', ')}), sockets: ${(await sockets()).length - before}`);
     check(!(await fetches(t0, BOOT)).length, '…without a bootstrap');
@@ -292,10 +306,15 @@ try {
     }
     const tStop = Date.now();
     await settled();
-    const ok = (await untilShown(from)) && (await p.until(`!document.querySelector('.msg.pending')`, 15_000).then(() => true, () => false));
+    // The send reaches the hub: on the first try, or again under the same id after a cut, which the hub answers with
+    // what it has. Whether the hub holds it (the message from elsewhere came in after what the page showed) depends on
+    // where the cuts fell; then Send sends it.
+    const reached = await p.until(`(() => { const t = ${JSON.stringify(mine)}; return ![...document.querySelectorAll('.timeline-scroll .msg.pending.device')].some((e) => e.textContent.includes(t)); })()`, 20_000).then(() => true, () => false);
+    const wasHeld = await sendHeld(mine);
+    const ok = (await untilShown(from)) && (await untilShown(mine)) && (await p.until(`!document.querySelector('.msg.pending')`, 15_000).then(() => true, () => false));
     const s = (await sockets()).slice(before);
     const gaps = s.slice(1).map((x, i) => x.at - (s[i].close || s[i].dropped || s[i].at));
-    check(ok, 'after it, the message from elsewhere and the send are both there', `${Date.now() - tStop} ms after the last cut`);
+    check(reached && ok, 'after it, the message from elsewhere is there, and the send reached the hub and went out', { ms: Date.now() - tStop, held: wasHeld });
     check(s.length <= CUTS + 2, 'one new socket per cut', { sockets: s.length, cuts: CUTS, msBetween: gaps });
     check((await stored(mine)) === 1, 'the send went out once', { onHub: await stored(mine) });
     check((await shownCount(mine)) === 1 && (await shownCount(from)) === 1, 'nothing shows twice', { mine: await shownCount(mine), from: await shownCount(from) });

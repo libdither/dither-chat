@@ -3476,24 +3476,53 @@ button.inbox-status:hover {
 .pending {
   opacity: 0.6;
 }
-.pending.failed {
+/* What waits for you is not faded: it asks for something (docs/sync.md "The send queue"). */
+.pending.failed,
+.pending.unsure,
+.pending.held {
   opacity: 1;
+}
+.pending-line {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 .pending-note {
   font-size: 11px;
   color: var(--text-faint);
 }
-.pending.failed .pending-note {
+/* The send's mark (PendingNote.tsx): a clock on this device, one tick at the hub, two at the network. */
+.send-mark {
+  display: inline-flex;
+  color: var(--text-faint);
+}
+.send-mark.network {
+  color: var(--accent);
+}
+.pending.failed .pending-note,
+.pending.failed .send-mark {
   color: var(--danger);
 }
-.pending.queued .msg-body {
+.pending.unsure .pending-note,
+.pending.unsure .send-mark,
+.pending.held .pending-note,
+.pending.held .send-mark {
+  color: var(--warn);
+}
+.pending.unsure .msg-body,
+.pending.queued .msg-body,
+.pending.behind .msg-body {
   opacity: 0.7;
 }
 .pending-actions {
   display: inline-flex;
   gap: 4px;
-  margin-left: 8px;
-  vertical-align: middle;
+  margin-left: 4px;
+}
+/* A message that came in after what you saw when you wrote a held send. */
+.msg.came-since {
+  box-shadow: inset 2px 0 0 var(--warn);
 }
 /* ---------------------------------------------------------------- composer */
 
