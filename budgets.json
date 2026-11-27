@@ -100,7 +100,7 @@
     "js/@novnc/novnc/core/rfb.js.bytes": { "measured": 187418, "budget": 191167 },
     "js/@novnc/novnc/core/rfb.js.gzip": { "measured": 56562, "budget": 57694 },
     "js/entry.bytes": { "measured": 1424, "budget": 1446, "reason": "The login's sign-in screen (docs/login.md) and a push's copy of its message (arrived.ts): main.tsx checks the session and reads what the service worker kept, opening the layer once the snapshot is shown (docs/notifications.md, \"A copy in the push\")" },
-    "js/entry.gzip": { "measured": 820, "budget": 831, "reason": "The login's sign-in screen (docs/login.md) and a push's copy of its message (arrived.ts): main.tsx checks the session and reads what the service worker kept, opening the layer once the snapshot is shown (docs/notifications.md, \"A copy in the push\")" },
+    "js/entry.gzip": { "measured": 832, "budget": 840, "reason": "One head for every place (docs/places.md \"The head\"): the entry names one more lazy chunk, a mail thread's details panel (ui/MailDetails.tsx)" },
     "js/jsqr/dist/jsQR.js.bytes": { "measured": 130028, "budget": 132629 },
     "js/jsqr/dist/jsQR.js.gzip": { "measured": 47559, "budget": 48511 },
     "js/lottie-web/build/player/lottie_light.js.bytes": { "measured": 169025, "budget": 172406 },

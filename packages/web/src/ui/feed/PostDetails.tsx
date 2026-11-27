@@ -117,7 +117,7 @@ export function PostDetails({ id, kit }: { id: string; kit: Kit }) {
                   {f.checked !== null && (
                     <>
                       <dt>Last checked</dt>
-                      <dd>{kit.ago(f.checked)} ago</dd>
+                      <dd>{kit.ago(f.checked) === 'now' ? 'just now' : `${kit.ago(f.checked)} ago`}</dd>
                     </>
                   )}
                   <dt>Next check</dt>

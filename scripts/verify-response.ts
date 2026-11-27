@@ -183,6 +183,9 @@ const dmConv = boot.conversations.find((c: any) => c.id === bigDm.id);
 const person = dmConv?.peerPersonId ?? boot.persons.find((p: any) => p.id !== boot.selfPersonId)?.id;
 const folder = boot.folders.find((f: any) => f.items.some((i: any) => i.kind === 'conversation'));
 const account = boot.accounts[0];
+// Every place's head (ui/PlaceHead.tsx): a mail thread's and a post's, where the world has them.
+const mailThread = (boot.mail?.threads ?? []).find((t: any) => t.count > 1)?.id ?? boot.mail?.threads?.[0]?.id;
+const postsConv = boot.conversations.find((c: any) => c.variant === 'posts');
 
 interface PageCase {
   name: string;
@@ -214,6 +217,13 @@ const PAGES: PageCase[] = [
   { name: 'Settings', at: '#/settings' },
   { name: 'the directory', at: '#/directory' },
   { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
+  ...(mailThread
+    ? [
+        { name: 'a mail thread', at: `#/inbox/c/${mailThread}` },
+        { name: 'a mail thread, details open', at: `#/inbox/c/${mailThread}`, prefs: { details: true } },
+      ]
+    : []),
+  ...(postsConv ? [{ name: 'the posts the hub logged', at: `#/inbox/c/${postsConv.id}` }] : []),
   { name: 'Feed', at: '#/feed' },
   { name: 'Notification calibration', at: '#/calibration' },
 ];
