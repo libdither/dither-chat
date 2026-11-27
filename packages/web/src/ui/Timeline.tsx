@@ -131,7 +131,9 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar, RequestSentMark, RequestSentNote } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, RouteTag, SendAsLead, SendLine, setView, viewOf } from './Pairs.tsx';
+import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, PersonTabs, RouteTag, SameLine, SendAsLead, SendLine, setView, tabRoute, viewOf } from './Pairs.tsx';
+import { netTab, tabNetwork } from '../chattabs.ts';
+import { TAB_KEYS } from '../tabkeys.ts';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
@@ -1050,7 +1052,7 @@ let lastShown = '';
  * carry the network's badge; `onFocus`, a route tag's click; `onMissing`, a message linked to (`focus`) that paging
  * back through the chat did not reach. `stream`: a channel's stream (StreamPane), a header where the thread changes.
  */
-export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, stream }: { tkey: string; convIds: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts }) {
+export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, chat, stream }: { tkey: string; convIds: string[]; only?: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -1105,7 +1107,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     flashIt(focus);
   });
 
-  const msgs = t?.messages ?? [];
+  // `only`: a person's timeline showing some of their routes (one network's of several, PersonChat).
+  const msgs = only ? (t?.messages ?? []).filter((m) => only.includes(m.conversationId)) : (t?.messages ?? []);
   const off = offline.value;
   // Settings → Adversarial features, or the chat's own say: kept deleted and disappeared messages not shown at all.
   const r = retention.value;
@@ -2513,7 +2516,7 @@ export function ViewSwitch({ c, shows }: { c: P.ConversationView; shows: Channel
   const vs = channelViews(c);
   if (!vs) return null;
   const many = threadWords(c).many;
-  return <PlaceTabs tabs={vs.map((v) => ({ id: v, label: viewLabel(c, v, many) }))} value={shows} onPick={(v) => setChannelView(c.id, v)} label="Show" track="channel view" />;
+  return <PlaceTabs tabs={vs.map((v) => ({ id: v, label: viewLabel(c, v, many), title: `${viewLabel(c, v, many)} (${TAB_KEYS} move between tabs)` }))} value={shows} onPick={(v) => setChannelView(c.id, v)} label="Show" track="channel view" />;
 }
 
 /** A person's page: the chat with them. One conversation is that conversation's page; several are one chat over them. */
@@ -2540,38 +2543,60 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   const unreadAt = useMemo(() => firstUnread(directs), [person.id]);
   useEffect(() => setReply(null), [person.id]);
   useEffect(() => void loadChat(person.id), [person.id]);
-  // Where a message goes: the route of the message you are editing or replying to, else the route in use (Pairs.tsx).
+  // What the page shows (Pairs.tsx viewOf): every route, one network's (the switch row), or one route's (the list).
+  const chosen = viewOf(person.id, directs);
+  const net = tabNetwork(chosen);
+  // Where a message goes: the route of the message you are editing or replying to, else the route in use (Pairs.tsx);
+  // with a network's tab chosen, a route on that network (the one in use if it is on it, else its latest).
   const ed = editing.value;
-  const focus = (ed && directs.find((d) => d.id === ed.conversationId)) || (reply && directs.find((d) => d.id === reply.conversationId)) || focusedPair(person.id, directs, at?.id);
+  const inUse = focusedPair(person.id, directs, at?.id);
+  const focus = (ed && directs.find((d) => d.id === ed.conversationId)) || (reply && directs.find((d) => d.id === reply.conversationId)) || (net !== null && tabRoute(chosen, inUse, directs)) || inUse;
   useEffect(() => void (!isMailPlace(focus.id) && reactionContext(focus.id)), [focus.id]);
   // Showing one route's history follows the route you send through, so switching it in the message box switches both.
-  const view = viewOf(person.id, directs) !== 'all' ? focus.id : 'all';
-  const shown = view === 'all' ? directs : [focus];
-  const tkey = view === 'all' ? timelineKey('p', person.id) : timelineKey('c', view);
+  const view = chosen === 'all' || net !== null ? chosen : focus.id;
+  const shown = view === 'all' ? directs : net !== null ? directs.filter((d) => d.network === net) : [focus];
+  // One network of one route is that route's own timeline; of several, the person's, showing only theirs.
+  const tkey = view === 'all' || shown.length > 1 ? timelineKey('p', person.id) : timelineKey('c', shown[0].id);
+  const only = view !== 'all' && shown.length > 1 ? shown.map((d) => d.id) : undefined;
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
     focusPair(person.id, focus.id, id, at?.id);
+    // A network's tab moves with the route you send through (docs/chats.md "The page").
+    const to = directs.find((d) => d.id === id);
+    if (net !== null && to && to.network !== net) setView(person.id, netTab(to.network));
   };
   const onView = (v: string) => {
     setView(person.id, v);
-    if (v !== 'all') onFocus(v);
+    if (v !== 'all' && tabNetwork(v) === null) onFocus(v);
+  };
+  // A network's tab sends through that network; All leaves the send route as it is.
+  const onTab = (t: string) => {
+    setView(person.id, t);
+    const r = tabRoute(t, focus, directs);
+    if (r && r.id !== focus.id) {
+      if (reply && reply.conversationId !== r.id) setReply(null);
+      focusPair(person.id, focus.id, r.id, at?.id);
+    }
   };
   // A message too far back to page to: its route alone (the list under the name says so; one pick returns to all).
   const onMissing = () => at && onView(at.id);
   const held = heldRequest(db.requests, focus.id);
   return (
     <section class="pane">
-      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all', onView }} />
+      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all' || net !== null, onView }} />
+      <PersonTabs person={person} directs={directs} view={view} onTab={onTab} />
+      <SameLine person={person} />
       {!held && shown.filter((d) => d.pending).map((d) => <LinkBanner key={d.id} c={d} />)}
       <NotStartedNote c={focus} />
       <Timeline
         key={view}
         tkey={tkey}
+        only={only}
         convIds={shown.map((d) => d.id)}
         onReply={setReply}
         firstUnreadTs={unreadAt}
         focus={msg}
-        chat={{ badge: view === 'all' && badgeShows(directs), onFocus, onMissing }}
+        chat={{ badge: shown.length > 1 && badgeShows(shown), onFocus, onMissing }}
       />
       {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
       <TypingBar

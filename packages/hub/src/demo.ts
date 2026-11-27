@@ -3475,6 +3475,12 @@ export function applyDemoOverlay(store: Store) {
   }
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
+  // Their mail is part of their chat (docs/mail.md "Mail as chats"): the address seedDemoMail writes from is theirs,
+  // whichever comes first, this or the mail (MailPeople.place reuses the identity and its person). Mom and Jo Park
+  // stay apart, so the Same person? flow has someone to show (scripts/verify-profile.ts).
+  const mailOf = (address: string, name: string) => store.ensurePerson(store.emailIdentity(address, name));
+  store.mergePersons(alice, mailOf('alice.chen@example.org', 'Alice Chen'));
+  store.mergePersons(sam, mailOf('sam@rivera.example', 'Sam Rivera'));
   merge('Theo', ['signal', S.theo], ['discord', D.theo]);
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
   if (MULTI_ACCOUNT) merge('Mo', ['discord', MO.main], ['discord', MO.art]);

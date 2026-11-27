@@ -338,7 +338,9 @@ async function phone(themeName: string, first: boolean) {
     check(`${tag}: the subject tag opens the thread's card, with Archive and Star`, card.includes('3 mails · with Sam Rivera') && card.includes('Archive') && card.includes('Star'), card);
     await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
     await holds(`!document.querySelector('.cm-sheet, .cm')`);
-    // Read here after a second in view: the hub has it read.
+    // Read here after a second in view at the newest end: the hub has it read. Sam's chat holds his Signal and Matrix
+    // messages too, so the tag, where the thread starts, is above the newest: back down to it first.
+    await page.eval(`document.querySelector('${PANE} .timeline-scroll').scrollTop = 0`);
     const t = await settles(async () => (await page1('v:inbox:*')).find((x: any) => x.id === dinner.id), (x) => x?.unread === 0);
     check(`${tag}: read here after a second in view`, t?.unread === 0, t?.unread);
   }

@@ -633,7 +633,9 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   if (older && !t.hasMore) return;
   t.loading = true;
   t.older = older;
-  const [kind, id] = key.split(':') as ['c' | 'p' | 'k', string];
+  // Only the first ':' parts the key: an email route's id has its own (`c:email:<account>:<address>`).
+  const kind = key.slice(0, key.indexOf(':')) as 'c' | 'p' | 'k';
+  const id = key.slice(key.indexOf(':') + 1);
   // Opening it, step by step, for the bar over the message box (waits.ts): the hub, then the network's latest where
   // the hub asks it. A look ahead (a glance) or older messages are not an open.
   const opening = !older && !o.glance;

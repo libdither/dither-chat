@@ -582,6 +582,41 @@
   "a person / held: the app's clocks": [
    "Ago"
   ],
+  "a person on several networks / Profile of Alice Chen": [
+   "CallMark",
+   "Count",
+   "PersonRow",
+   "RowTyping"
+  ],
+  "a person on several networks / elsewhere close": [
+   "AccountDots",
+   "Attachments",
+   "Avatar",
+   "Body",
+   "CallMark",
+   "ContactCards",
+   "Count",
+   "DisappearsMark",
+   "Embeds",
+   "Icon",
+   "InviteCards",
+   "M$1",
+   "Marks",
+   "MessageItem",
+   "MissingFiles",
+   "PersonRow",
+   "ReactionBar",
+   "RichHead",
+   "RichMarks",
+   "RouteTag",
+   "RowTyping",
+   "SendFailures",
+   "StoryReplyLine",
+   "TriageNote"
+  ],
+  "a person on several networks / held: the app's clocks": [
+   "Ago"
+  ],
   "a person's profile / Message": [
    "Icon",
    "M$1"

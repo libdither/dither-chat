@@ -35,11 +35,36 @@ A row wider than the page scrolls sideways, as on a phone with someone on six ne
 picture before its name (a network's glyph) and how many are unread there.
 
 What the row switches is never where you are, only how the place shows: the address stays, Back is not changed by it,
-and the box keeps what you were writing.
+and the box keeps what you were writing. **Ctrl+Shift+]** and **Ctrl+Shift+[** move to the next and the previous tab
+of the open page's row from anywhere on it, the message box included, which keeps its focus (`tabkeys.ts`;
+docs/desktop.md says why those keys). On a phone a sideways drag on a row wider than the page scrolls it, at its ends
+too, and is never the page's swipe back (`ui/Pager.ts`).
 
 ## A person's networks
 
-*(Written with the tabs: `ui/Pairs.tsx`, `chatroutes.ts`.)*
+Someone you reach on several networks (docs/chats.md) has the row under their head: **All**, then a tab for each
+network you reach them on, its glyph and name ("Signal", "Discord", "Email") and how many are unread there. A person
+on one network by several routes (three Discord accounts) gets All and Discord. The networks go by their names, mail
+last, so a tab never moves as messages come in and your eyes and keys find it where they left it. The tabs are made by
+one function, `personTabs` in `chattabs.ts`, which takes tabs to add after the networks (their posts, next).
+
+- **A network's tab** shows every route on that network together, interleaved as All shows everything, and your
+  next message goes through that network: its route of the latest message, unless the route in use is already on
+  it. A network of one route shows that conversation's own timeline; one of several, the person's timeline with only
+  those routes' messages in it. Reading reads what is shown.
+- **All** shows everything again and leaves where your message goes as it was.
+- **Switching the route in the message box's line** to another network, with a network's tab chosen, moves the tab
+  to that network. A message that comes in on another network does not: the tab stays, and so does the route.
+- **The list of routes** (their account, yours, unread, when last active, "➤ sending") opens from the line under the
+  name, which says where your message goes. Picking one route there shows that route alone: the row has its
+  network's tab chosen, and the line says `only this ✕`. Until 2026-11-26 the networks were only in that list,
+  behind a small pill after the line (`+4 ▾`, and only `+4 ▾` on a phone).
+- What the page shows is kept per person for the session (`viewing` in `ui/Pairs.tsx`: `all`, `net:<network>` or a
+  route's id), never in the address. Where a message goes is kept by the hub, an email route too
+  (`PATCH /api/chats/person:<id>`), so after a reload the page shows All and still sends where you left it.
+- When the Same person? suggester is sure (`MATCH_STRONG` or over) that someone else is them, one slim line under
+  the row says so: "Also Mom on Signal · Same person? Join · Not them" (`SameLine`). Join merges the two, Not them
+  says they are not; nothing is ever joined without you.
 
 ## A thread as a chat or a tree
 

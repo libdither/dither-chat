@@ -175,7 +175,7 @@ once (meta `name_source_set`, MIGRATIONS 2 → 3): a name one of their accounts 
 | call | does |
 | --- | --- |
 | `GET /api/chats/:id` | `ChatView`: name, `nameSource`, `routes` (each with their identity, yours, last message time, unread), `route` (the default route, with `why: 'chosen' \| 'latest'`) |
-| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). `name` is refused (400): a nickname is an account's |
+| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). An email route is chosen the same way, `{ conversationId: 'email:<account>:<address>', accountId: <mail account> }`, and gives way by the same rule; a chat send without a route still never goes by mail. `name` is refused (400): a nickname is an account's |
 | `PATCH /api/identities/:id` | `{ nickname: string \| null }` gives one account your nickname, or takes it away (null or empty); answers `{ identity }`, and other open views hear of it as an `identity` event (and a `person` event when their name follows). 400 for your own accounts, 404 for an unknown one |
 | `GET /api/chats/:id/messages?before=<ts>:<id>&limit=` | every route's messages as one timeline, newest page first |
 | `POST /api/chats/:id/messages` | sends. The route is the one in `route` if given (409 if it is not this chat's), else the route of the message in `replyTo`, else the default route. Otherwise it behaves like `POST /api/conversations/:id/send`: the same body, the same `clientId` retry handling |
@@ -244,11 +244,14 @@ What it adds to a conversation's page:
   group how many people are in it (`6 people`). Until 2026-11-20 that line was `Discord › Groups › <the name again>
   via ● account`, the network's name spelled out and the account only where you had more than one, and the
   picture and name had a button's padding, so the name started 6 px right of the line under it; now they line up.
-  **A chat of several routes adds one control after the line**, a pill of the other
-  routes' networks (their icons, at most three, left out on a phone) and how many routes more: `+7 ▾`. The whole line
-  opens the list: press and drag down to a row and let go, click and click again, or Enter (or ↓) then the arrows,
-  Enter and Escape. Picking a route shows its history alone and sends through it, without leaving the address; the
-  line then says that route and the pill becomes `only this ✕`, whose ✕ returns to all chats together.
+  **In a chat of several routes the whole line opens the list** (a small ▾ after it says so): press and drag down
+  to a row and let go, click and click again, or Enter (or ↓) then the arrows, Enter and Escape. Picking a route
+  shows its history alone and sends through it, without leaving the address; the line then says that route,
+  `only this ✕` follows it, whose ✕ returns to all chats together, and the switch row has its network chosen.
+  Until 2026-11-26 a pill after the line (`+7 ▾`) was the only way to the other networks.
+- **The switch row** under the head: All, then each network they are on, with its unread, so one network's routes can
+  be read together and sent through in one click; Ctrl+Shift+] and [ move along it from the message box
+  (docs/places.md "A person's networks").
 - **The list** is a card: their picture, name and what they come to ("7 accounts · 8 chats · 4 networks", leaving out
   a count of one), with All, which shows every route together. Then the routes. A network with two or more routes
   has a small heading in its colour (Discord, Matrix) over them; routes alone on their network come after those,
@@ -316,8 +319,8 @@ anchoring scrolls by whole pixels. A message you send goes to the newest end fro
 
 - **Groups as one chat.** The same group on two networks (every member on both) needs a stored link, `group_link`,
   that you make. `chatRef` would then accept a group id.
-- **Read state per route.** Reading the chat reads every route. Reading with one route picked reads that conversation only,
-  as before.
+- **Read state per route.** Reading the chat reads every route. Reading with one network's tab or one route picked
+  reads only what is shown.
 - **Mute.** Muting a person is already a person rule, so it covers routes that come later. A mute on one conversation
   stays on that conversation.
 - **A route choice reaching other devices live.** Another device sees it the next time it opens the page, not at once.

@@ -80,7 +80,8 @@ The people you write to by mail join the people the hub already knows (`hub/src/
   behind each address (`MailAddressView.identityId`, `personId`; `MailThreadView.personIds`).
 - **When an account's mail is deleted** (24 h after access ended), the identities and persons only it held go too;
   a person you merged or named keeps its address.
-- Email-only people are not in the People list (it lists people you have chats with) or in the graph.
+- Someone you have mail with alone is in the People list, as anyone with a chat is: their mail is a route of their
+  chat (above). Someone only ever Cc'd with others has no route, so no row, and is not in the graph.
 
 How: `mail_party` (`schema-people.sql`) holds who is on each thread and how (sent, written to, in a thread you wrote
 in, the name used), kept by `MailStore.recompute`'s hook in the same transaction, so `mailPeople(hub).sender(address)`
