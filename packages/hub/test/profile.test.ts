@@ -83,3 +83,18 @@ test('nobody is null', () => {
   expect(store.profile({ personId: 'per_nope' })).toBeNull();
   expect(store.profile({ identityId: 'idn_nope' })).toBeNull();
 });
+
+test('someone you DM a lot still shows their newest messages in groups', () => {
+  const t = store.createAccount({ network: 'signal', label: 't', color: '#222', adapter: 'signal' });
+  store.ingest(t, { t: 'identity', identity: { nativeId: '+9', displayName: 'Bea', contact: true } });
+  store.ingest(t, { t: 'conversation', conversation: { nativeId: 'bdm', shape: 'direct', participants: ['+9'] } });
+  store.ingest(t, { t: 'conversation', conversation: { nativeId: 'bgrp', shape: 'group', name: 'Trains', participants: ['+9', 'me'] } });
+  store.ingest(t, { t: 'message', message: { nativeId: 'g1', conversation: 'bgrp', author: '+9', ts: 1_000, body: 'in the group' } });
+  for (let n = 0; n < 40; n++) store.ingest(t, { t: 'message', message: { nativeId: `d${n}`, conversation: 'bdm', author: '+9', ts: 2_000 + n, body: 'direct' } });
+  const p = store.profile({ identityId: idn(t, '+9') })!;
+  // 15 of the 40 direct ones, and the group one below them though it is older: newest first.
+  expect(p.recent.length).toBe(16);
+  expect(p.recent.at(-1)!.nativeId).toBe('g1');
+  expect(p.recent.slice(0, 15).every((m) => m.conversationId === hubId('cnv', 'signal', 'bdm'))).toBe(true);
+  expect(p.recent[0].nativeId).toBe('d39');
+});

@@ -1278,6 +1278,7 @@ export interface ProfileView {
   identities: IdentityView[];
   /** Places they have posted in or are listed as a member of, most recent first. */
   conversations: { id: string; messages: number; lastTs: number | null }[];
+  /** Their newest messages: up to 15 in direct chats and up to 15 elsewhere (groups, servers, feeds), newest first. */
   recent: MessageView[];
   /** Everyone else named in those messages. */
   mentioned: IdentityView[];
