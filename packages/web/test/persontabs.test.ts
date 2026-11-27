@@ -4,7 +4,7 @@
  * page's row (tabkeys.ts). The page itself is checked in a browser by scripts/verify-chat-header.ts.
  */
 import { expect, test } from 'bun:test';
-import { netTab, personTabs, routeForTab, tabNetwork, tabOf, viewIn } from '../src/chattabs.ts';
+import { netTab, personTabs, POSTS_TAB, postNetworks, routeForTab, tabNetwork, tabOf, viewIn } from '../src/chattabs.ts';
 import { tabStep } from '../src/tabkeys.ts';
 
 const NAMES: Record<string, string> = { signal: 'Signal', discord: 'Discord', matrix: 'Matrix', telegram: 'Telegram', whatsapp: 'WhatsApp', email: 'Email' };
@@ -45,6 +45,30 @@ test('tabs added after the networks (a person\'s posts), also for a person of on
   const posts = { id: 'posts', network: null, unread: 0 };
   expect(personTabs([route('s', 'signal'), route('m', 'email')], name, [posts]).map((t) => t.id)).toEqual(['all', 'net:signal', 'net:email', 'posts']);
   expect(personTabs([route('m', 'email')], name, [posts]).map((t) => t.id)).toEqual(['all', 'net:email', 'posts']);
+});
+
+test('the Posts tab: last after the networks, with the one network they post on, its id kept by viewIn and tabOf', () => {
+  const posts = { id: POSTS_TAB, network: 'x', unread: 0 };
+  const tabs = personTabs([route('s', 'signal', 1)], name, [posts]);
+  expect(tabs.map((t) => t.id)).toEqual(['all', 'net:signal', POSTS_TAB]);
+  expect(tabs.at(-1)).toEqual(posts);
+  // All counts what is unread in their chats; Posts adds nothing to it.
+  expect(tabs[0].unread).toBe(1);
+  expect(viewIn(POSTS_TAB, ALICE, [POSTS_TAB])).toBe(POSTS_TAB);
+  expect(tabOf(POSTS_TAB, ALICE, [POSTS_TAB])).toBe(POSTS_TAB);
+  // Without the tab (they no longer post anywhere you read): All again.
+  expect(viewIn(POSTS_TAB, ALICE)).toBe('all');
+  expect(tabOf(POSTS_TAB, ALICE)).toBe('all');
+});
+
+test('which networks of posts give the tab: theirs that one of your accounts reads, once each, in order', () => {
+  const OF_POSTS = ['x', 'mastodon', 'reddit', 'bluesky'];
+  expect(postNetworks(['signal', 'x', 'discord', 'x'], ['signal', 'x', 'discord'], OF_POSTS)).toEqual(['x']);
+  expect(postNetworks(['x', 'mastodon', 'reddit'], ['reddit', 'x', 'mastodon'], OF_POSTS)).toEqual(['mastodon', 'reddit', 'x']);
+  // Posting where no account of yours reads: nothing could have been logged.
+  expect(postNetworks(['bluesky', 'signal'], ['signal', 'x'], OF_POSTS)).toEqual([]);
+  // Chat networks only: no tab.
+  expect(postNetworks(['signal', 'discord'], ['signal', 'discord', 'x'], OF_POSTS)).toEqual([]);
 });
 
 test('a view that no longer fits their routes is All again', () => {

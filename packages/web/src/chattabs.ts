@@ -35,20 +35,32 @@ export function personTabs<N extends string>(routes: readonly { network: N; unre
   return [{ id: 'all', network: null, unread: all }, ...order.map((n): PersonTab<N> => ({ id: netTab(n), network: n, unread: nets.get(n)! })), ...extra];
 }
 
+/** The tab of their public posts, last in the row (ui/feed/PersonPosts.tsx, docs/places.md "A person's networks"). */
+export const POSTS_TAB = 'posts';
+
 /**
- * What a person's page shows (`viewing` in ui/Pairs.tsx): 'all', a network (`net:<network>`), or one route by its
- * id. One that no longer fits their routes (a split, a removed account) is All again.
+ * The networks of posts a person posts on that one of your accounts reads, in order: their identities' networks met
+ * with the feed's (your accounts on networks of posts). None: no Posts tab. One: the tab carries its glyph.
  */
-export function viewIn(v: string | undefined, routes: readonly { id: string; network: string }[]): string {
+export function postNetworks<N extends string>(theirs: readonly N[], yours: readonly N[], ofPosts: readonly N[]): N[] {
+  return [...new Set(theirs)].filter((n) => ofPosts.includes(n) && yours.includes(n)).sort();
+}
+
+/**
+ * What a person's page shows (`viewing` in ui/Pairs.tsx): 'all', a network (`net:<network>`), one route by its id, or
+ * an added tab of `extra` (Posts). One that no longer fits (a split, a removed account) is All again.
+ */
+export function viewIn(v: string | undefined, routes: readonly { id: string; network: string }[], extra: readonly string[] = []): string {
   if (!v) return 'all';
+  if (extra.includes(v)) return v;
   const net = tabNetwork(v);
   if (net !== null) return routes.some((r) => r.network === net) ? v : 'all';
   return routes.some((r) => r.id === v) ? v : 'all';
 }
 
-/** Which tab of the row a view has chosen: a route shown alone chooses its network's. */
-export function tabOf(v: string, routes: readonly { id: string; network: string }[]): string {
-  if (v === 'all' || tabNetwork(v) !== null) return v;
+/** Which tab of the row a view has chosen: a route shown alone chooses its network's. `extra`: the added tabs' ids. */
+export function tabOf(v: string, routes: readonly { id: string; network: string }[], extra: readonly string[] = []): string {
+  if (v === 'all' || tabNetwork(v) !== null || extra.includes(v)) return v;
   const r = routes.find((x) => x.id === v);
   return r ? netTab(r.network) : 'all';
 }

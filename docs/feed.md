@@ -526,6 +526,13 @@ X. Everyone in a thread is an identity, not a person: no person is made for them
 one is for someone in your notifications. Opening the conversation lists what was logged, newest first; a message
 of it (a search hit, a profile's Between you) opens its thread (`GET /api/messages/:id/thread`).
 
+**One person's posts.** `GET /api/persons/:id/posts?before=<ts>:<id>&limit=` (`personposts.ts`) lists what the hub
+logged by one person, newest first, for their page's Posts tab (docs/places.md "A person's networks"): messages of
+variant `posts` or `follow`, and the replies, mentions and quotes in your notifications (variant `feed`, whose
+`theirs` is their post), by their identities on networks of posts only, over `message_author_ts`. Each comes as a
+`PersonPostView` (the post, its network, `toYou` when it answers, mentions or quotes you), with the identities the
+page names. `toYou=1` keeps only those; the same, in a page's range, are the short rows in their chat.
+
 ## Following a post
 
 **The bell.** A thread's head has **Follow replies** (a bell, beside Open on X; a phone shows the bell alone). Pressed,
@@ -583,7 +590,10 @@ home timelines (Following two pages, For you with reasons, a post both follow, a
 account's own). Posts made there show on Following; `homeLog` lists what was read. Five likes on one post, a repost of it,
 a reply, a quote, a mention, two follows and two likes on another post. The newest four arrive live on the first run,
 so triage decides them. `personAbout` for everyone in it, and profiles with posts (pinned, a repost, a reply, a
-quote, pictures). Your routing post has a thread: you continuing it, Ravi and you going back and forth, two more
+quote, pictures). Theo's X account is the chat person Theo's (with their Signal and Discord), and the hub has logged
+some thirty of their posts as if read before (`loggedPosts`: their profile's, their question under your routing post,
+two from the timelines, older ones), so Theo's page has a Posts tab and a public row in All; every other X account,
+Alice's and Ravi's among them, is apart (the Same person? flow shows them). Your routing post has a thread: you continuing it, Ravi and you going back and forth, two more
 replies and two on a second page (cursor `more-1`); any other post it knows opens with what it answers. Two bios have
 links. Its markRead, typing and send are logged (actions `readLog`, `typingLog`, `sendLog`), and the threads asked
 for (`postLog`), so a script can see the hub sent nothing else. Action `newReply` (`{ post?, text? }`, your routing
@@ -619,6 +629,13 @@ count X's own.
   one that left the screen not read, none on a cellular connection, a thread read kept and opened without asking, a
   post shown before its thread.
 - `packages/web/test/links.test.ts`: links in bios.
+- `packages/hub/test/personposts.test.ts`: one person's posts newest first, paged by the cursor, their notification
+  once when also logged, no like and no chat, a merge bringing the other identity's posts and a split taking them,
+  nobody by that id; their public rows in a chat page's range.
+- `scripts/verify-person-posts.ts`: in a real browser on a fresh demo hub, computer and phone: Theo's row ending in
+  Posts with X's glyph, the tab's rows as the hub lists them, older pages on scrolling, a post opened and Back and
+  Escape returning to the tab scrolled where it was, the tab keys, no tab for Sam or Alice, and the public row in All
+  opening its post.
 - `scripts/verify-x-threads.ts`: in a real browser on a fresh demo hub, desktop and phone: links in bios, a feed card,
   a profile's post and a search hit opening their threads, the replies as a tree, hidden branches and the next page
   read ahead while scrolling, a ten-turn back-and-forth as one run, folding, the Compact, Flat and Chains styles, a

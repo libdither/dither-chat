@@ -11,12 +11,12 @@
  * (chatroutes.ts pickHolds), unless a draft waits in the picked route's box.
  */
 import type * as P from '@dither-chat/protocol';
-import { MATCH_STRONG } from '@dither-chat/protocol';
+import { MATCH_STRONG, POST_NETWORKS } from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, tagTells, tagText, tells, yourAccount, yourName, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
-import { personTabs, routeForTab, tabNetwork, tabOf, viewIn } from '../chattabs.ts';
+import { personTabs, POSTS_TAB, postNetworks, routeForTab, tabNetwork, tabOf, viewIn } from '../chattabs.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
@@ -368,7 +368,18 @@ function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[];
  * its tab), or one route's, picked from the list (its id). Never in the address (docs/places.md).
  */
 const viewing = signal<Record<string, string>>({});
-export const viewOf = (personId: string, directs: P.ConversationView[]) => viewIn(viewing.value[personId], directs);
+/**
+ * The networks of posts they post on that your accounts read (chattabs.ts postNetworks): with any, their row ends in
+ * Posts. From what the app holds already, their identities and your accounts: nothing asked, no bytes added at start.
+ */
+export const postNetsOf = (person: P.PersonView): P.Network[] =>
+  postNetworks(
+    person.identityIds.flatMap((id) => db.identities.get(id)?.network ?? []),
+    [...db.accounts.values()].map((a) => a.network),
+    POST_NETWORKS,
+  );
+const extraOf = (person: P.PersonView) => (postNetsOf(person).length ? [POSTS_TAB] : []);
+export const viewOf = (person: P.PersonView, directs: P.ConversationView[]) => viewIn(viewing.value[person.id], directs, extraOf(person));
 export const setView = (personId: string, v: string) => void (viewing.value = { ...viewing.value, [personId]: v });
 
 const unreadOf = (d: P.ConversationView) => d.vantages.reduce((n, x) => n + x.unread, 0);
@@ -380,15 +391,22 @@ const unreadOf = (d: P.ConversationView) => d.vantages.reduce((n, x) => n + x.un
  * route as it is. Ctrl+Shift+] and [ move along it from anywhere on the page (tabkeys.ts).
  */
 export function PersonTabs({ person, directs, view, onTab }: { person: P.PersonView; directs: P.ConversationView[]; view: string; onTab: (id: string) => void }) {
-  const tabs = personTabs(directs.map((d) => ({ network: d.network, unread: unreadOf(d) })), netName);
+  // Their public posts, last: with the network's glyph when they post on one only.
+  const posts = postNetsOf(person);
+  const extra = posts.length ? [{ id: POSTS_TAB, network: posts.length === 1 ? posts[0]! : null, unread: 0 }] : [];
+  const tabs = personTabs(directs.map((d) => ({ network: d.network, unread: unreadOf(d) })), netName, extra);
   return (
     <PlaceTabs
       class="person-tabs"
       label={`Chats with ${person.name}`}
       track="person tab"
-      value={tabOf(view, directs)}
+      value={tabOf(view, directs, extra.map((t) => t.id))}
       onPick={onTab}
       tabs={tabs.map((t) => {
+        if (t.id === POSTS_TAB) {
+          // In the text's colour: a network of posts may be black or white (X), so it takes the tab's text colour, which never hides it.
+          return { id: t.id, label: 'Posts', icon: t.network ? <NetGlyph network={t.network} size={12} /> : undefined, title: `What they posted in public${t.network ? ` on ${netName(t.network)}` : ''}, as the hub logged it (${TAB_KEYS} move between tabs)` };
+        }
         const label = t.network ? netName(t.network) : 'All';
         const what = t.network ? `Only ${label}` : 'Every chat with them together';
         return {
@@ -457,9 +475,9 @@ interface ListRow {
  */
 export function PairDropdown({ person, directs, focus, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view?: string; onPick: (view: string) => void }) {
   metaRev.value; // names: counts and times come with a new `directs`
-  const shows = viewOf(person.id, directs);
-  // One route shown alone follows the route you send through (PersonChat).
-  const v = shows === 'all' || tabNetwork(shows) !== null ? shows : focus.id;
+  const shows = viewOf(person, directs);
+  // One route shown alone follows the route you send through (PersonChat); their posts are no one route.
+  const v = shows === 'all' || shows === POSTS_TAB || tabNetwork(shows) !== null ? shows : focus.id;
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   // The header clips what overflows it, so the card is placed on the page, under the line.

@@ -130,6 +130,13 @@ export function PostsListLazy({ c }: { c: P.ConversationView }) {
   return <div class="feed-scroll">{failed ? <Empty icon="alert" title="Could not load the posts">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</div>;
 }
 
+/** A person's Posts tab (docs/places.md "A person's networks"): their posts as the hub logged them, newest first. */
+export function PersonPostsLazy({ person }: { person: P.PersonView }) {
+  const { m, failed } = useChunk(true);
+  if (m) return <m.PersonPosts person={person} kit={kit} />;
+  return <div class="feed-scroll">{failed ? <Empty icon="alert" title="Could not load the posts">Check the connection to the hub, then try again.</Empty> : <Loading fill />}</div>;
+}
+
 /** Loads the Feed page's chunk ahead (a pointer over its rail button). */
 export const preloadFeed = (): Promise<unknown> => load();
 

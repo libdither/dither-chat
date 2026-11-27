@@ -2625,4 +2625,13 @@
   .ct-chat-body {
     padding-left: 0;
   }
+/* A person's Posts tab (PersonPosts.tsx, docs/places.md "A person's networks"). */
+.pp-none {
+  margin: 24px 0;
+  color: var(--text-dim);
+  text-align: center;
+}
+.pp-net {
+  color: var(--text-dim);
+  font-size: 12px;
 }
