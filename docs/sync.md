@@ -205,6 +205,7 @@ a slow send) can land after what made it wrong.
 - **Files still coming** (`waitForFiles`, [uploads.md](uploads.md) "A send the hub holds"): the row is `queued` with
   `filesComing`, heads its chat until its uploads are in, and blocks the rows behind it as a held one does; once they
   are in, or the hub cut its photos after the phone stopped (`cut`), it goes as any other, checked for a hold first.
+  The hub checks for a hold before it cuts, so a held one keeps its photos whole until you let it go.
 - **A restart**: rows left `sending` become `unsure` ("The hub restarted while sending it"), and `queued` rows go
   again. An answer the account gives while the hub is stopping is kept, so a send that went out is not put in doubt.
 - Every change goes out on the socket (the `sends` event: the open rows, and those sent in the last 2 minutes, with

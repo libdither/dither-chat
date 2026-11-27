@@ -21,7 +21,8 @@
  *   upload hands the message over at once. Its row heads its chat (`files_coming`) and goes the moment the last byte is
  *   in, whether or not the phone is still there. If the phone stops, the hub waits as long as Settings → Sending says,
  *   then cuts each picture still coming after its last whole layer (a valid JPEG at a lower detail, jpegscans.ts) and
- *   sends it so, when every one of them is at least as good as the setting asks. A video or another file cannot be
+ *   sends it so, when every one of them is at least as good as the setting asks; a chat that moved on holds it before
+ *   the cut, not after, so it can still go whole. A video or another file cannot be
  *   cut: the message waits for the phone, a day at most.
  */
 import type * as P from '@dither-chat/protocol';
@@ -466,7 +467,8 @@ export class SendQueue {
   filesTick() {
     const now = this.clock.now();
     for (const r of this.filesWaiting()) {
-      // Nothing else changes a row while it waits for its files: `updated_at` is when the hub took it.
+      // Nothing else changes a row while it waits for its files: `updated_at` is when the hub took it, or when you let it
+      // go after a hold.
       if (now - r.updated_at > FILES_MAX_MS) {
         this.set(r.client_id, `state = 'failed', files_coming = 0, error = ?, status = 410`, 'Its files did not finish uploading within a day');
         this.changed();
@@ -479,6 +481,11 @@ export class SendQueue {
       }
       const cut = this.cutIfStopped(r, now);
       if (!cut) continue;
+      if (cut === 'held') {
+        this.afterHold(r.client_id);
+        this.changed();
+        continue;
+      }
       this.set(r.client_id, 'files_coming = 0, cut = ?', cut);
       this.changed();
       this.kick(r.conversation_id);
@@ -488,9 +495,10 @@ export class SendQueue {
   /**
    * The phone stopped sending this row's files past the setting's wait: each still coming is cut after its last whole
    * layer, all or none (a message goes once, so every one must be good enough first). The worst of them, which is what
-   * the message is said to have gone at; null when it waits on.
+   * the message is said to have gone at; null when it waits on. 'held' when the chat moved on while it waited: it is
+   * held as it is, not cut, since a cut cannot be undone and you may let it go once the phone has sent the rest.
    */
-  private cutIfStopped(r: Row, now: number): P.CutQuality | null {
+  private cutIfStopped(r: Row, now: number): P.CutQuality | 'held' | null {
     const d = this.d;
     if (!d.upload || !d.idle || !d.cuttable || !d.cut || !d.cutSettings) return null;
     const set = d.cutSettings();
@@ -500,6 +508,8 @@ export class SendQueue {
     if (!coming.length || coming.some((u) => d.idle!(u.id, now) < set.afterMs!)) return null;
     const qs = coming.map((u) => d.cuttable!(u.id));
     if (!qs.every((q) => atLeast(q, set.atLeast))) return null;
+    // The hold check it would get right before it goes, made before the cut. Once you let it go it is not asked again.
+    if (!r.confirmed && this.db.transaction(() => this.holdIfMoved(r))()) return 'held';
     if (!coming.every((u) => d.cut!(u.id))) return null;
     if (!ids.every((id) => {
       const u = d.upload!(id);

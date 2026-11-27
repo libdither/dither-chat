@@ -176,6 +176,10 @@ marked `filesComing` (`packages/hub/src/sendqueue.ts`). From then on the send is
   at the quality set there or better, it cuts each after its last whole layer, closes it with an end marker, and sends.
   All or none: a message goes once, so one video or file not all there keeps the whole message waiting. The row
   keeps `cut`, the worst quality of them, and says "Sent as far as it had come (fair)".
+- **Held before it is cut.** A cut cannot be undone, so the hold check comes first: if the chat moved on while it
+  waited, the row is held uncut, as any send would be, and the phone, back, uploads the rest. Let go (Send, or the
+  countdown in a chat someone has open) and it waits for its files again: whole if they came, else cut at the next
+  look.
 - A piece for an upload that went (whole or cut) gets `410 { sent: true }`, and so does asking how much the hub has
   of it: the phone, back online, ends the upload as sent instead of beginning it again.
 - Cancel on the row drops its files, and the sends behind it go. One whose upload is gone fails ("that upload has
@@ -264,8 +268,9 @@ limit, and streaming in the adapters (dither-accounts' extractors).
   whole scans in a cut-off file, cuts closed with an end marker, qualities, and that a hub paused at a stop sees the layer whole.
 - `packages/hub/test/sendqueue-files.test.ts`: queue rows waiting for files, against real uploads and a fake clock:
   sent when the last byte lands, a repeat, a send behind one waiting with it, cut after the wait and not before, never
-  with Never, all or none (one file that cannot be cut keeps the message waiting), a file gone, expiry, cancel and a
-  restart. `server.test.ts` ("sending files") does one and the cut setting over HTTP.
+  with Never, all or none (one file that cannot be cut keeps the message waiting), a file gone, expiry, cancel, a
+  restart, and a chat that moved on (held uncut, then whole once let go, or cut if the phone is still away).
+  `server.test.ts` ("sending files") does one and the cut setting over HTTP.
 - `packages/web/test/progressive.test.ts`: the wasm's output against jpegtran's own, a file it cannot read, what is
   packed and what is left. `sendline.test.ts`: the line's words.
 - `scripts/verify-pictures.ts` (CI): a pasted photo made progressive in headless Chromium, its pieces held and let go

@@ -69,6 +69,10 @@ function world(settings: P.CutSettings = { afterMs: 60_000, atLeast: 'fair' }) {
     /** A picture send that says its files are still coming, as the app sends one. */
     picture: (ids: string[], clientId = 'c1') => send(clientId, { body: 'from the trip', attachments: ids, waitForFiles: true }),
     later: (ms: number) => (now += ms),
+    now: () => now,
+    /** Someone else writes in the chat, now. */
+    message: (nativeId: string, body: string) =>
+      store.ingest(acc, { t: 'message', live: true, message: { nativeId, conversation: 'c', author: 'ann', ts: now, body } }),
     /** A queue of its own on the same store: the hub started again. */
     restarted: () => {
       queue.stop();
@@ -228,6 +232,46 @@ describe('a send whose files are still coming', () => {
     expect(await again.settled('c1')).toMatchObject({ state: 'sent' });
     expect(w.sent).toHaveLength(1);
     again.stop();
+  });
+
+  test('a chat that moved on while the phone was away: held as it is, not cut, and it goes whole once you let it', async () => {
+    const w = world({ afterMs: 60_000, atLeast: 'preview' });
+    const id = w.start(photo.length);
+    const half = Math.floor(photo.length / 2);
+    await w.put(id, photo, 0, half);
+    w.send('c1', { body: 'from the trip', attachments: [id], waitForFiles: true, seenUpTo: { ts: w.now() } });
+    w.later(1000);
+    w.message('m1', 'are you back yet?');
+    w.later(120_000);
+    w.queue.filesTick();
+    expect(w.queue.get('c1')).toMatchObject({ state: 'held', filesComing: true, cut: null });
+    // Nothing was cut: the phone, back, carries on where it was.
+    expect(w.uploads.state(id)).toMatchObject({ size: photo.length, received: half });
+    await w.put(id, photo, half, photo.length);
+    expect(await w.queue.settled('c1')).toMatchObject({ state: 'held' });
+    expect(w.sent).toHaveLength(0);
+    w.queue.act('c1', 'send');
+    expect(await w.queue.settled('c1')).toMatchObject({ state: 'sent', cut: null });
+    expect(w.sent[0].bytes[0]).toEqual(photo);
+  });
+
+  test('let go while the phone is still away: cut at the next look, not asked again', async () => {
+    const w = world({ afterMs: 60_000, atLeast: 'preview' });
+    const id = w.start(photo.length);
+    await w.put(id, photo, 0, Math.floor(photo.length / 2));
+    w.send('c1', { body: 'from the trip', attachments: [id], waitForFiles: true, seenUpTo: { ts: w.now() } });
+    w.later(1000);
+    w.message('m1', 'are you back yet?');
+    w.later(120_000);
+    w.queue.filesTick();
+    expect(w.queue.get('c1')).toMatchObject({ state: 'held' });
+    w.queue.act('c1', 'send');
+    expect(w.queue.get('c1')).toMatchObject({ state: 'queued', filesComing: true });
+    w.queue.filesTick();
+    const row = await w.queue.settled('c1');
+    expect(row).toMatchObject({ state: 'sent' });
+    expect(row?.cut).toBeTruthy();
+    expect(w.sent[0].bytes[0].length).toBeLessThan(photo.length);
   });
 
   test('cancelled while its files come: nothing goes, and what waited behind it does', async () => {
