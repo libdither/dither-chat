@@ -24,7 +24,7 @@ One component draws them all (`packages/web/src/ui/ContextMenu.tsx`); what each 
 - **The innermost thing wins**: a right-click on an image in a message opens the image's menu, followed by the
   message's items, as in Discord. The same goes for links, mentions and the author's name or avatar.
 - **Phone**: the same items in a bottom sheet (`Sheet.tsx`), opened by a long press (`useLongPress` in
-  `Reactions.tsx`, the press that already opened the message sheet). Sidebar rows keep `dnd.tsx`'s rule: hold
+  `longpress.ts`, the press that already opened the message sheet). Sidebar rows keep `dnd.tsx`'s rule: hold
   and lift without moving for the menu, hold and drag to move. A submenu replaces the sheet's list and adds a
   back row. The message sheet keeps what the old one had: the author and exact time at the top, six quick
   reactions, and at the bottom which tier the message landed in, why, and the two marks.
@@ -60,7 +60,8 @@ button that opens this menu.
 
 ### A conversation or channel (sidebar rows, the channel tree, the header)
 
-Mark As Read · Profile (DMs) · About This Channel (or Group, Chat: its settings,
+Mark As Read (a channel with threads: it and every thread of it, without a confirm,
+[threads.md](threads.md#next-unread-and-reading-a-channel-at-once)) · Profile (DMs) · About This Channel (or Group, Chat: its settings,
 members and who may change what, [group-settings.md](group-settings.md)) · Search in Channel · Copy Link ·
 Mute Channel and Notification Settings › (Automatic, Always alert, List only, Mute: the hub's own rules,
 [notifications.md](notifications.md#rules)) · Pin to Top, Add to Sidebar, Move Up/Down, Move to Folder › (with

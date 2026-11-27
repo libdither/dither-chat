@@ -2,10 +2,13 @@
 
 `scripts/verify-perf.ts` times what the app feels like on a hub the size of the real one, and fails when a change
 makes it slower. Run it before and after a change that touches rendering, the sync model or the hub's hot queries. CI
-runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), and ordinary tests
+runs a small version on every push that judges its counts, never its times ([In CI](#in-ci---ci)), a nightly run keeps
+every number at 1× and 4× and shows how they move ([Nightly trends](#nightly-trends)), and ordinary tests
 hold sizes and counts of what the hub sends and the web build weighs ([Budgets](#budgets-sizes-and-counts-in-every-test-run)).
 `scripts/verify-response.ts` clicks every control on each kind of page and fails on a click that draws a whole list
 again ([Every click](#every-click-2026-11-20)).
+`scripts/verify-memory.ts` goes round the same pages again and again and fails when what the page holds keeps growing
+([Memory](#memory-2026-11-24)).
 
 ```sh
 bun scripts/verify-perf.ts                 # 3 runs each at 1× and 4× CPU, compared with scripts/perf-baseline.json
@@ -15,14 +18,18 @@ bun scripts/verify-perf.ts --runs 1 --cpu 4 --pages 5   # a quick look
 
 Options: `--port` (8620; the hub it starts listens there), `--runs`, `--cpu 1,4` (`0`: no desktop pass), `--phone-cpu 4`
 (the phone pass's throttles, below; `0` leaves it out), `--ahead-cpu 4` (the fetching-ahead pass's, below; `0` leaves it
-out), `--ahead-rtt 80` (its link's round trip in ms), `--pages` (older pages to load in the
+out), `--ahead-rtt 80` (its link's round trip in ms), `--slow-cpu 4` (the slow link's pass, below; `0` leaves it out),
+`--slow-rtt 300`, `--slow-down 1.6` and `--slow-up 0.75` (that link's round trip in ms and its Mbit/s each way),
+`--slow-queue fair` (or `fifo`: [below](#over-a-slow-link-2026-11-24)), `--pages` (older pages to load in the
 biggest conversation, 15), `--web <dist>` (a build to use instead of building one), `--out <file.json>` (every run's
 numbers), `--baseline <file>`, `--keep` (leave the temp dir with the world, the build and the hub's log), `--css <css>`
 (added to every page, to try a style change without a build), `--work <dir>` (an empty dir to work in instead of a
 temp dir, kept afterwards), `--size <w>x<h>` (1280x800; below 700 wide it emulates a phone, as `--size 390x844`),
-`--scale` (the world's size against the live hub's, 1), `--ci` (below).
+`--scale` (the world's size against the live hub's, 1), `--ci` (below). For trying a change ([A/B a change](#ab-a-change)):
+`--only <pass>[,<pass>]` (`desktop`, `phone`, `ahead`, `slow`), `--ab <distA>,<distB>[,...]`, `--keep-world <dir>`,
+`--age <dir>` and `--world <dir>`. `--help` prints the script's own summary.
 
-It takes about five minutes. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
+It takes about eight minutes, three of them the slow link's pass. It builds the web app, seeds a world in a temp dir, starts its own demo hub on it
 (`--demo`, with the demo's random chatter off, `DITHER_DEMO_CHATTER=0`), and drives a fresh headless Chromium per
 run. Nothing touches a real hub.
 
@@ -83,11 +90,37 @@ Those passes fetch nothing ahead (`?ahead=0`), so their counts stay what they we
 | metric | what |
 |---|---|
 | `ahead.pages`, `ahead.pictures`, `ahead.requests`, `ahead.bytes` | a device that never saw the hub loads the inbox and waits until fetching ahead is done: pages and pictures it fetched, its requests and their bytes on the wire |
-| `ahead.open`, `ahead.served` | then the first five conversations of the inbox open one after another (median time to `dither:timeline`), and how many came from what was fetched ahead |
+| `ahead.open`, `ahead.served` | then the first five chats of the inbox (below) open one after another (median time to `dither:timeline`), and how many came from what was fetched ahead |
 | `ahead.relaunch`, `ahead.relaunchServed` | the app opened again, and the next three rows open at once, before this start fetched anything: time, and how many came from the device |
 | `noahead.open`, `noahead.relaunch` | the same in a browser that fetches nothing ahead (not in CI, which judges no times) |
 
+The eight rows are the first eight chats among the 12 rows fetching ahead takes (`AHEAD`): conversations and people's
+chats, in the order on screen; not a channel's row, which can open on a forum's cards, nor mail. Until 2026-11-24 the
+pass took the first eight conversations wherever they were, so once people's chats and channels filled the top of the
+list the eighth was the 13th row or lower, which nothing fetches ahead: `a4x.ahead.relaunchServed` read 2 in three of
+the first nightly's five runs at 4× ("the next three rows were not all kept"), and the same at 1× locally once earlier
+runs had moved the order. The app was right; the pass asked it for a row it never meant to have.
+
 `ahead.served` and `ahead.relaunchServed` have floors (`FLOORS`): every open there should come from the device.
+
+Last, a poor phone link ([below](#over-a-slow-link-2026-11-24)): 300 ms round trip, 1.6 Mbit/s down and 0.75 up, at a
+phone's size, `--slow-cpu` (4× here, 1× in CI), its keys starting `s4x.`. Every request goes through one link, the
+service worker's too, and fetching ahead is on, as in the app. Times are from the page's start.
+
+| metric | what |
+|---|---|
+| `cold.content`, `cold.fresh` | a device that never saw the hub, not even the app: time to the list shown (`dither:content`) and to the hub's data in (`dither:fresh`) |
+| `cold.toContent.*`, `cold.toFresh.*` | requests sent and bytes that reached the browser before each |
+| `cold.<kind>.requests`, `cold.<kind>.bytes` | the same before the list showed, by kind: `document`, `script`, `style`, `bootstrap`, `api` (the rest of /api), `pages` (a conversation's messages), `pictures`, `precache` (the service worker's script and every file it keeps), `socket` (the live socket's upgrade and frames), `other` (the manifest) |
+| `cold.bootstrap`, `cold.bootstrap.bytes` | the bootstrap on the wire: from asked to its last byte, and its bytes as sent (compressed) |
+| `cold.competing.requests`, `cold.competing.bytes` | other requests whose bytes came down the link while the bootstrap was on it, and those bytes (not the socket's) |
+| `cold.beforeBootstrap.precache`, `.pictures`, `.pages` | requests of each kind sent before the bootstrap's last byte |
+| `open.ms` | then the first conversation in the list opened (to `dither:timeline`) |
+| `precache.*`, `ahead.*` | the page stays until the service worker has kept the whole build and taken the page over (`precache.tookOver`, 1; at most 90 s) and fetching ahead is done: the precache's requests, bytes and when its last byte came; fetching ahead's requests and bytes. `cold.stay`: how long the page was open |
+| `relaunch.content`, `relaunch.fresh`, `relaunch.fromSnapshot` | the app opened again: times to the list and to fresh data, and whether the list came from the snapshot (1) |
+| `relaunch.toContent.requests`, `.answers`, `.bytes`, `.shell` | requests sent before the list showed, how many of them had their answer by then (the socket's health check and the activity report answer on their own while the list is drawn: the list waits on none of them), their bytes, and how many were the app itself (`document`, `script`, `style`): none once the service worker has the build |
+| `relaunch.toFresh.*` | requests and bytes before the hub's data was in |
+| `socket.resyncs`, `socket.opens`, `socket.drops`, `socket.closes`, `socket.pings`, `socket.pongMax` | over both starts: catch-ups with the hub (a bootstrap, or a sync from the journal: each marks `dither:fresh`) more than one a start, which is what a socket replaced costs (a sync of kept conversations alone is not one); live sockets opened (one a start, one more for a spare that races a late pong: state.ts `probe`), closed by the app (one given up on, or a spare that lost its race), closed from the hub's end, the heartbeat's pings, and the longest wait for a pong (a time). Once the bootstrap's first bytes have come on the cold start the pass sends the page a `focus`, as when someone comes back to the app while it loads, so one ping always goes out while the link is at its busiest |
 
 Each step waits until nothing has rendered for half a second before it counts. A plain reload is not measured: it
 swings 30–80% between runs, because the old page is still saving its snapshot on the way out.
@@ -104,7 +137,109 @@ branch against it.
 
 Some render counts also have ceilings of their own (`CEILINGS` in the script), whatever the baseline says: at most
 two App renders and three of the inbox list per switch, none of App and at most five messages for an arriving message,
-and at most 250 messages drawn on a reopen. An `--update` over one of them fails and writes nothing.
+and at most 250 messages drawn on a reopen. Over the slow link: one catch-up a start (`socket.resyncs` 0), and none of the
+app's own files fetched on a relaunch; and floors: the service worker took the page over,
+and the relaunch drew its list from the snapshot. An `--update` over one of them fails and writes nothing.
+
+## A/B a change
+
+Times on a shared machine move 5–30% between runs, so a change is measured against its base in the same hub, the
+runs of each taking turns. Seeding a full-size world takes about 90 s on a loaded machine; keep one and reuse it.
+
+```sh
+# Each build into a directory of its own (packages/web, on the base and then on the change):
+bunx --bun vite build --outDir /tmp/ab/base --emptyOutDir
+bunx --bun vite build --outDir /tmp/ab/cand --emptyOutDir
+# Seed once, and keep the world as seeded (a quick desktop run here; any passes will do):
+bun scripts/verify-perf.ts --keep-world /tmp/ab/world --only desktop --cpu 4 --runs 1 --web /tmp/ab/base
+# Then as often as you like: one hub, both builds in turn, five runs each.
+bun scripts/verify-perf.ts --world /tmp/ab/world --ab /tmp/ab/base,/tmp/ab/cand --only desktop,phone --cpu 4 --runs 5
+```
+
+- **`--ab <distA>,<distB>[,...]`**: one hub on one world, serving each build in turn from one path (a link swapped
+  between runs; the hub reads its files as they are asked for, so nothing restarts). The runs go A B, B A, A B… so a
+  hub that drifts from run to run drifts under each build alike: each run's arriving message adds to the long
+  timeline (`long.reopen.nodes` comes down by about five a run), and each run's opens move the inbox's order. Every
+  run is a fresh browser with an empty profile, as in a normal run, so nothing of one build's device (its kept
+  pages, its service worker, its HTTP cache) reaches the next. An A/B takes one warm-up run (`--warmup 1`) with A
+  before each desktop throttle, so the first run on a fresh hub, which draws more, is no build's. The output is each
+  build's median and range (lowest–highest) for every key, side by side, the difference from A in units and per cent,
+  and `p`: an exact Mann-Whitney test of the two builds' runs, how often a random split of them lands as far apart.
+  Under 0.05 is marked `*`; with five runs each the least it can be is 0.008 (every run of one build above every run
+  of the other), with three 0.1, so take five. Ceilings and floors are judged for every build; no baseline is.
+  `--out` writes `{ world, hub, ab: [{ label, dir, metrics, runs }] }`, which perf-trend.ts does not read.
+- **`--only <pass>[,<pass>]`**: just those passes (`desktop`, `phone`, `ahead`, `slow`), as if the others' throttles
+  were `0`.
+- **`--keep-world <dir>`**: after seeding, a copy of the world as seeded, before the hub ever ran on it, with a
+  `world.json` beside it: its scale, its day, the counts, the conversations the passes open, and a hash of each file
+  that seeds it or lays out its database (perf-world.ts, the hub's demo.ts, store.ts and schemas, the protocol's ids).
+- **`--world <dir>`**: a copy of a kept world instead of a seed (the kept one is never touched), in a second or two.
+  Refused, never used as it is, when its scale is not this run's (`--scale`), when it was seeded on another day (the
+  seed's messages are anchored at the last midnight, so a world kept yesterday is a day older than today's), or when
+  one of those files changed; the error says which. The demo accounts date their own messages from when they were
+  made (an `epoch` in their settings), so a reused world is given now as that time: what a seed made now would have.
+- **`--age <dir>`**: the fetching-ahead pass measures an inbox whose order the passes before it have moved (their
+  opens, the messages read, the arriving messages), and in a nightly-like run they take 20–30 minutes. `--age` keeps
+  the hub as the ahead pass first finds it: right before that pass, its database copied while it runs (`VACUUM INTO`,
+  a consistent copy) with the rest of its data dir, and once the pass's first run has looked, the inbox's first 12 rows
+  as it saw them. Run the passes you want it aged by once, then reuse the result for the ahead pass alone:
+
+  ```sh
+  bun scripts/verify-perf.ts --age /tmp/ab/aged --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 4 --slow-cpu 0 --runs 5 --warmup 1
+  bun scripts/verify-perf.ts --world /tmp/ab/aged --only ahead --ab /tmp/ab/base,/tmp/ab/cand --runs 5
+  ```
+
+  An aged world runs only with `--only ahead` (or `ahead,slow`): any other pass would age it further. It is not
+  dated again as a kept one is (what the earlier passes did happened when they did), so three things make sure the
+  ahead pass measures the order a real run had at that point:
+
+  1. **What a restart takes back is put back.** A real run never restarts its hub; a reuse starts one on the copy, and
+     each demo account sends its world again as it starts, with each conversation's read point as the demo began it.
+     The hub counts unread again from there: two demo direct chats that a first start leaves with nothing unread come
+     back with two and three unread, and one of them jumped into the fourth row. So once the hub has settled, each
+     conversation whose read point or unread count differs from the aged copy's is marked read again as the app marks
+     it (`POST /api/conversations/:id/read`), up to the copy's read point, or up to its newest message where the copy
+     had nothing unread.
+  2. **The hub's scores are compared.** The aging run keeps the hub's 40 best inbox scores (the bootstrap's
+     `attention`) with the world; the reuse prints any that moved more than a point or left the 40. They drift with the
+     minutes since (a reply waited on grows older); the learned order's exploring (docs/inbox.md) does not move them
+     here, since a seeded world has no opens old enough for the order to have learned from, so it samples nothing.
+  3. **The rows are checked.** The ahead pass's first run must find the same 12 rows in the same order as the run that
+     aged the world did, or the script stops, prints both lists and the scores that moved with their reasons, and says
+     to age it again.
+
+  Tested on 2026-11-24 ([below](#ab-a-change-tested-2026-11-24)).
+
+### A/B a change: tested (2026-11-24)
+
+On this machine with other agents' runs beside it (load average 8 to 42), a full-size world:
+
+- **Keeping and reusing.** The kept world is 232 MB; a copy takes 0.1–3.5 s, against about 90 s to seed. The hub then
+  starts in 3–7 s on a quiet machine and took 18–27 s at load 20–27 (its `startup:` line: models 8.2 s, adapters 4.4 s,
+  first scoring 4.3 s, against 2.0, 0.7 and 0.2 s quiet). That went past the 30 s the script used to give a hub to
+  answer in 6 of 14 starts; it now waits until the hub answers or its process ends (three minutes at most),
+  and shows the end of its log when it does not.
+- **Main against itself** (two copies of one build, `--only desktop,phone --cpu 4 --phone-cpu 4 --runs 5`): every count
+  and tally the same; of about 150 keys, 2 had `p` under 0.05 (`p4x.typing.keyMax`, `p4x.you.busy`), fewer than chance
+  gives one time in 20. Times were wide: the desktop's cold load 2.0–10.1 s in one build's five runs.
+- **Main against a build that waits 200 ms before its first draw** (a busy loop before `render` in main.tsx), the same
+  settings: the relaunch's longest task 337 → 551 ms (p 0.01), its list 630 → 841 ms (p 0.10), and App renders on a
+  cold load 2 → 3 in every run (p 0.01). The cold load's list did not move (2,352 → 1,849 ms, p 0.22): since the
+  bootstrap is asked for from `index.html` the first draw happens while it is still coming, so 200 ms there is off the
+  critical path. On CI's tenth-size world at 1× the same build moved the cold list 466 → 766 ms (two runs each).
+- **Aging.** On a tenth-size world (aged after `--cpu 1 --phone-cpu 1 --runs 2`) the first reuse found the demo's two
+  chats unread again and one at the fourth row, and stopped; with them marked read again, reuses found the aging run's
+  12 rows, and the second run's bytes fetched ahead matched the aging run's (23,173 and 20,706 against 23,172 and
+  21,175). At full size (aged after `--cpu 4 --phone-cpu 4 --runs 1 --warmup 1`) the reuse found the same 12 rows and
+  the hub's scores at the moment the page read them were the aging run's to the decimal. One earlier full-size aging
+  did not: the phone pass's last visit, which its browser sends as it closes, reached the hub after the aging run's
+  ahead pass had drawn its list, so the copy (which had it) put that chat third. The reuse stopped, as it should; aging
+  now waits for the hub's journal to stand still before it copies.
+
+When the ahead pass's check that the next three rows were kept fails ("the next three rows were not all kept"), it
+prints what the device had: the rows it wanted, the first 20 rows on screen, each marked `K` when its page is in
+IndexedDB and `F` when it was fetched ahead, the pages fetched ahead and where the opens came from, and every key in
+the page store.
 
 ## In CI (`--ci`)
 
@@ -121,6 +256,15 @@ out the same in five runs on GitHub's runners. On 2026-11-11 (#103's run and fou
 ci.yml --ref <branch>`) 24 of its 25 did: DOM nodes on each screen, renders and layouts of the flicks, the open and
 typing (none of App or messages, one of the list, 35 layouts), the tabs, the person's page. Its cold load's layouts
 (8 to 10) did not, and are printed only.
+
+Last comes the slow link's pass (`s1x.`), once at 1×, about 21 s more (the job took about 2 min 10 s on 2026-11-24,
+against its 10-minute limit); most of it is the precache, 1.35 MB over 1.6 Mbit/s. Five runs on GitHub's runners
+(dispatched on its branch, 2026-11-24) set what is judged: 28 of its 55 numbers (with `socket.resyncs`, added by hand at 0). Judged: requests of each kind before
+the list showed, the bootstrap's bytes, how many requests came down beside it, the socket's opens, drops, closes,
+pings and extra catch-ups, and the relaunch's requests, answers and bytes before the list and requests before fresh data. Printed only:
+every time; bytes that are the build's own sizes (scripts, stylesheet, index.html, the whole precache and its file
+count), which budgets.json holds with reasons; and what moved with timing, such as the requests before the list (26 to
+29) and the precache's requests before the bootstrap's end (7 to 9).
 
 It seeds the same world at a tenth of the size (`--scale 0.1`: 574 conversations, 150 with messages, 22k messages,
 the biggest 8,000), then does a warm-up run that is not counted and one run at 1×, with five older pages. Only
@@ -159,6 +303,85 @@ after a relaunch 16 to 18 (17 or 18), all within the two a tally may go over, th
 the 21 that fails; `long.reopen.nodes` 8214, the first run's (above); and the bootstrap's bytes, by an arriving message
 or so (`hub.bootstrap.bytes`, taken after the warm-up now, 539,634 against 539,665; `cold.bootstrapBytes` 539,733
 against 539,932).
+
+## Nightly trends
+
+CI judges counts at 1× on a tenth-size world and never looks at a time, so a slow creep passes every check, and the
+counts at 4× (renders batch differently on a slow CPU) were only ever looked at by hand. So once a night
+`.github/workflows/perf-nightly.yml` runs verify-perf at both throttles and keeps what it measured:
+
+```sh
+bun scripts/verify-perf.ts --scale 1 --runs 5 --warmup 1 --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 --slow-cpu 4 \
+  --baseline <none> --out out/perf.json
+```
+
+The slow link's pass ([Over a slow link](#over-a-slow-link-2026-11-24)) runs at 4× only: its waits are the link's,
+about a minute a run at full size, and 1× is what CI runs.
+
+Then the memory check ([Memory](#memory-2026-11-24)) at full size and 4×, so a leak too slow for CI's six rounds on a
+tenth-size world shows as a line that climbs night after night:
+
+```sh
+bun scripts/verify-memory.ts --scale 1 --cpu 4 --cycles 10 --phone-cycles 10 --out out/memory.json
+```
+
+A count it would fail on is a warning here, like verify-perf's ceilings; its numbers are recorded all the same, as
+`memory.<pass>.<count>.growth` (round 2 to the last) and `.last`, the heap's growth as `memory.<pass>.heap.perRound`
+(bytes a round), and the hub's resident memory as `memory.hub.rss.before`, `.after` and `.peak` (in MB). It adds
+about 5 minutes on a standard runner: under a minute to build and seed, a warm-up round of about 40 s, then 22-25 s a
+round on the computer and 18-20 on the phone, side by side (the first nightly run, 2026-11-24).
+
+- **When:** 04:41 UTC every night on main (stress.yml runs at 07:17, android-device.yml at 09:23), and by hand from
+  Actions > Perf nightly > Run workflow, which asks for the world's size, the runs, and whether to record the run.
+  The measuring takes about 23 minutes on a standard runner (4 cores) and the memory check about 5 more.
+- **Never red on a number.** It has no baseline: nothing is judged, and a ceiling or floor verify-perf reports is a
+  warning on the run. It fails only when measuring breaks (the build, the hub, a page that never answers).
+- **History:** each night is one JSON line on the `perf-history` branch (`history.jsonl`; a branch of data only,
+  never merged): the date, the commit, the runner (CPU, cores, memory, image, browser), the settings, the world's
+  counts, and every metric's median with the lowest and highest of its runs. A run on main is recorded; a run by hand
+  on another branch only when asked (`record`), else it goes in the summary only. Only the small job that adds the
+  line has write access to the repository; the one that runs the browser can only read.
+- **What it shows:** the job's summary has the last night against the medians of the 7 and 30 nights before it
+  (nights run with the same settings), flagging a time that moved more than 15% from the 7 nights' median (and 5 ms,
+  or 2 slow frames), and a count, tally or byte size outside every value those 7 nights' runs came to: a count that
+  never moves flags on any move, and one whose runs spread by themselves (the bytes fetching ahead pulls: 22 to 32 kB
+  in one night) only when it leaves that spread. Then the counts that came out different at 1× and 4×; then every
+  metric. Flags only: the job stays green. The artifact `perf-trend` is a page of small charts, one per step and
+  pass, a line per throttle (the memory check's: one per count, a line for the computer and one for the phone),
+  each night's median with the band of its runs, that needs nothing from the network
+  (light and dark). The artifact `perf-night` has the night's line and verify-perf's and verify-memory's whole output.
+- **No key list.** `scripts/perf-trend.ts night` records whatever is in `out/*.json`: a new verify-perf metric is
+  recorded and charted the first night it appears. Another script's numbers are one line in the workflow, the script
+  writing `out/<name>.json` as `{ "metrics": { "<key>": { "v": 12, "kind": "ms", "runs": [11, 12, 14] } } }`
+  (verify-perf's own `--out` shape); its keys are kept as `<name>.<key>`. A kind of `ms` or `frames` is a time, any
+  other a count.
+
+The same page from the history, locally:
+
+```sh
+git fetch origin perf-history
+bun scripts/perf-trend.ts report --html /tmp/perf-trend.html      # the table on stdout, the charts in the file
+bun scripts/perf-trend.ts report --history <file.jsonl>             # a history of your own
+```
+
+Why the full-size world: on 2026-11-24 the same run took 18 minutes at a quarter of the size and 20 at full size (the
+runs mostly wait for the page to settle), and only the full size has what a slow creep would show first: a bootstrap of
+4.5 MB rather than 1.2 MB, conversations of 80,000 messages, and an arriving message that keeps the main thread busy for
+63 ms at 1× rather than 23. Its counts also compare with the local baseline's (`scripts/perf-baseline.json`); its times are of another machine.
+
+The first night (2026-11-24, medians of five on a 4-core runner):
+
+| | 1× | 4× |
+|---|---|---|
+| desktop cold load, list painted | 587 ms | 1,340 ms |
+| desktop first open (median of six) | 61 ms | 211 ms |
+| desktop message arriving, main thread busy | 63 ms | 205 ms |
+| desktop relaunch, list painted | 193 ms | 606 ms |
+| desktop an older page | 57 ms | 318 ms |
+| phone cold load | 516 ms | 1,306 ms |
+| phone opening the biggest channel | 113 ms | 403 ms |
+| phone keystroke to frame, p90 | 11 ms | 25 ms |
+| phone, first five rows opened with fetching ahead (without) | 39 ms (147) | 148 ms (268) |
 
 ## Baselines and when to update them
 
@@ -241,7 +464,10 @@ What made the difference:
   order changes.
 - **`/api/inbox`** sorted a week of triage (200k rows on the live hub) for each of its picks. An index on the tier
   and score (`triage_tier_score`; `triage_level_score` before the tiers) lets each pick stop at its limit;
-  `test/inbox-plan.test.ts` checks the plans.
+  `test/inbox-plan.test.ts` checks the plans. Alerts and Conversations still sorted every one ever (the prune keeps
+  them): 50 ms on the perf world and 250 to 370 ms on a copy of the live hub by 2026-11-24, growing. Their decisions
+  now keep the message's time (`triage.message_ts`), and a partial index on it (`triage_notified`) lets that pick
+  stop at its limit too: 2.5 ms and 4 ms, the whole inbox 93 to 41 ms on the perf world.
 
 ## Scoped renders and a window
 
@@ -284,8 +510,19 @@ What changed:
   their props change or `metaRev` moves. Updates replace a message or conversation object rather than change it, so
   the same object is the same thing. What a message would read that changes with every message (its thread's
   conversation, the message its reply quotes, where it came from in a merged timeline) the timeline passes in. A
-  row's "5m" and a deleted message's "ago" are small components that still read `rev`, so they move on as before.
-  Rows get the same `onClick` each time (`opener` in Sidebar.tsx), and people rows their `directs` as a prop.
+  deleted message's "ago" is a small component that still reads `rev`. An inbox row's "5m" and its ↩ and how long
+  read `minute` (versions.ts), which moves once a minute while the page is shown and again when it is shown: a message
+  or a visit draws its own row's time, not every row's. Rows get the same `onClick` each time (`opener` in
+  Sidebar.tsx), and people rows their `directs` as a prop. The click check (below, "Every click") found more lists
+  drawn whole, and these are memoised too: each inbox row with its ↩ button (`InboxRowView`; the inbox makes its rows
+  again for each change, so a chat row is compared by its person and routes), the rail's places (Rail.tsx: the rail
+  works out which is open and its counts and passes them in, so going somewhere draws the place left and the place
+  opened), a server's channel rows (`ChannelRow`, given its threads, and the open conversation only when it is one of
+  them, with one opener per tree) and the directory's cards (keyed, and compared field by field). What a parent hands a
+  new object each time and that reads more than its props is memoised on what it shows (`memoOn`, a string it works
+  out): a status dot (its person's state and tooltip, so a presence frame draws only the dots it changed, and a row
+  drawn again does not draw its dot) and a profile's place pictures. A profile's Activity card compares its props by
+  value and reads `minute`, not `rev`, so a nickname or a message leaves it alone.
 - **Batched**: the signals move once the task that changed things is done (a timer), not on every change. Once per
   animation frame measured worse: the render then ran in the same task as the frame's layout and paint, and the
   longest task of a first open went from about 320 to 512 ms at 4×; a hidden page gets no frames either.
@@ -385,6 +622,68 @@ bits, Sidebar, ContextMenu…) made rolldown keep them in one shared chunk; once
 one of them loaded at startup anyway. The group puts them back together: 1,072 KB (326 KB gzip) in 4 files, against
 1,079 KB (335 KB gzip) in 10 on main the day before. A lazy chunk imports what it shares with startup from that chunk,
 already loaded. A module only lazy chunks use is not in it.
+
+### Left out of the first load (2026-11-24)
+
+Coverage of a cold load (the DevTools protocol's precise coverage, mapped back through the source map) found three
+quarters of the startup chunk never ran before the list showed. The biggest share no first screen uses were whole
+pages, and those are now chunks of their own (ui/LazyPane.tsx `lazyPane`): a person's profile, a place's page,
+Settings, the directory and How it sorts. Each loads when it is first opened, and all of them a few seconds after the
+hub's data is in, one per idle moment, so a first open is drawn at once as before. Going to one of Settings' sections
+(its nav, Adversarial features, Indexing) waits for the section to be drawn (bits.tsx `showSection`). The list of
+sections, which the nav beside Settings reads, is in ui/settingsSections.ts.
+
+Full-size world, 4× CPU, main against this, interleaved, medians of seven (the machine's load was 6 to 20, so the
+times are rough; the bytes are exact):
+
+| | before | after |
+|---|---|---|
+| `shared/startup` | 1,050 KB (352.6 KB gzip) | 857 KB (292.5 KB gzip) |
+| desktop: list painted | 2,078 ms (1,776–2,431, and one stall of 17 s) | 1,960 ms (1,650–2,577) |
+| desktop: script run before the list | 740 ms (652–925) | 697 ms (565–916) |
+| phone: list painted | 2,740 ms (2,316–4,760) | 2,431 ms (1,809–3,963) |
+| first open after a cold load, desktop: Settings, How it sorts | 180, 391 ms | 149, 308 ms |
+
+Then the layers that draw nothing until they are opened: the picture and file viewer (Viewer.tsx), the index dialog
+(Indexing.tsx; what the menus ask of it, whether a place can be indexed and opening the dialog, is in indexjobs.ts)
+and Organize (OrganizeServers.tsx; the sort menu and the rows' slides stay in Reorganize.tsx). They load with the
+pages, and a layer opened before its chunk is here shows a moment later. `shared/startup`: 857 KB (292.5 KB gzip) to
+817 KB (279.2 KB gzip).
+
+Then the conversation itself (Timeline.tsx, with the composer, attachments, pictures and the rest only it uses: a
+chunk of 94 KB, 33 KB gzip). No first screen draws one (a phone starts on the list, a desktop on For you), but the next
+tap usually opens one, so its chunk loads at once when the hub's data is in, or at the first tap or key if that comes
+sooner (`whenTouched`), not at idle: loaded at idle, a conversation opened as the list came took twice as long, its
+first page asked for only once the chunk was here. A start straight into a conversation (a link, a notification) loads
+it as the app draws. `shared/startup`: 817 KB (279.2 KB gzip) to 718 KB (245.6 KB gzip).
+
+The three together, main against this, full size, 4×, interleaved, medians of ten (load 6 to 12; the bytes are exact,
+the times rough):
+
+| | main | after |
+|---|---|---|
+| startup set | 1,332 KB (406.7 KB gzip) | 1,000 KB (299.7 KB gzip) |
+| desktop: list painted | 3,006 ms (1,554–7,096) | 2,005 ms (1,590–6,027) |
+| desktop: script run before the list | 737 ms (542–1,245) | 657 ms (510–908) |
+| desktop: a conversation opened as the data came in | 758 ms (657–1,229) | 584 ms (432–1,240) |
+| …opened 1.5 s later | 464 ms (330–1,284) | 355 ms (351–483) |
+| phone: list painted | 2,470 ms (1,508–6,428) | 1,966 ms (1,458–6,900) |
+| phone: script run before the list | 760 ms (592–1,551) | 619 ms (539–833) |
+| phone: a conversation opened as the data came in | 644 ms (586–707) | 667 ms (607–738) |
+| …opened 1.5 s later | 466 ms (396–1,448) | 419 ms (414–525) |
+
+Then what the sidebar and App used of three files that are otherwise a conversation's or a layer's. The inbox's mail
+chips and tiles are in ui/MailLists.tsx (and MailLists.css), the rest of mail in a chat (MailChat.tsx) went into the
+conversation's chunk; a merge suggestion's picked pair and where it came from are in pairpick.ts, the page itself
+(Pairs.tsx) went with the conversation too; the reaction picker and who reacted (Reactions.tsx) are a layer loaded with
+the pages, and the emoji catalog still loads 4 s after start, as before. `shared/startup`: 718 KB (245.6 KB gzip) to
+665 KB (228.3 KB gzip); the conversation's chunk grew from 94 KB to 128 KB (33 to 44 KB gzip).
+
+Against the step before, full size, 4×, interleaved (load 9 to 22, so the times are rough): on a phone, medians of
+twelve, the list painted at 2,447 ms (2,004–6,844) instead of 2,659 ms (2,074–10,827), with 2,050 ms of main-thread
+work before it instead of 2,341; on a computer, in the seven pairs not overlapping a build, sooner in all seven (median
+1,792 ms against 2,144). A conversation opened as the data came in or 1.5 s later was as fast as before (each of the
+two quicker in half the pairs or more, within noise).
 
 ### The startup set (2026-11-10)
 
@@ -704,6 +1003,55 @@ goes out of sight, or to the next quiet save once it is ten minutes old. Counted
 over four opens: main wrote 4,544,244 to 4,655,541 characters per save, 134–156 ms in `JSON.stringify` and 116–154 ms
 in the store's `put`, all on the main thread; the branch writes 98,213 to 164,072 characters in 2–6 ms.
 
+### The first snapshot (2026-11-24)
+
+On a device that keeps nothing yet (a first start, or a deploy that changed the protocol) the hub's first answer is
+written at once, since until it is an offline start has nothing to show. Storing it is one `put` of the 4.5 MB text,
+which the page holds as a two-byte string (a name with an emoji in it is enough), and IndexedDB's copy of it holds the
+main thread: 61–77 ms at 4× in a cold load's CPU profile, while the list was still being drawn. It is now written at
+the first idle moment within a second (`FIRST_WITHIN_MS`), and leaving the page writes it as before.
+
+Storing it as a Blob instead takes no time in the `put`, but reading it back on a relaunch (`blob.text()`, 56–72 ms
+on the main thread) costs what reading the string does (44–62 ms), and making a Blob or bytes from the string costs
+80–95 ms: measured in Chrome at 4× on the perf world's bootstrap, seven rounds. So the format stays.
+
+Six and two cold loads of each at 4× on the full-size world, interleaved, on a machine at load average 30–130: from
+the hub's answer to the list, medians 1,540 → 1,210 ms and 1,161 → 826 ms, shorter in 7 of the 8 pairs. Relaunches
+read the snapshot as before (written when the page was hidden).
+
+## Fonts at the first layout (2026-11-25)
+
+On Linux, Chrome's page asks the browser process for each font family by name, and the browser process asks
+fontconfig; the page waits for the answer. A trace of a cold load at 4× on the full-size world (the `fonts` and
+`disabled-by-default-fonts` categories: `FontDataManager::onMatchFamilyStyle` names each family) showed 14 lookups
+before the list showed, 107–150 ms of the main thread with the fontconfig fallback and the per-size render settings:
+
+- `ui-sans-serif`, the stack's first family, is a real family only in Safari. Chrome looks it up as a literal name,
+  finds nothing, and does so once per weight: four lookups, about 30 ms. `system-ui`, next, gave the desktop's font.
+- One emoji on screen (a ❤️) sends Chrome down the rest of the stack for that character: `-apple-system`, `Segoe UI`,
+  `Roboto`, `Helvetica Neue`, `Arial`, then its standard font, each a lookup (about 25 ms), then fontconfig's search
+  for a font that has it (`GetFallbackFontForCharacter`, 25–32 ms the first time, nothing after).
+- The monospace stack is first looked up after the list shows; the emoji pickers' stacks only when one opens.
+
+`--font` is now `system-ui, sans-serif`, which is the font the old stack showed wherever `system-ui` is known (every
+current browser): San Francisco on Apple's systems, Segoe UI on Windows, Roboto on Android, the desktop's font on
+Linux. In headless Chromium on Linux every text node on screen renders in the same faces before and after
+(`CSS.getPlatformFontsForNode`: DejaVu Sans and its bold, Noto Color Emoji for emoji), on the inbox at desktop and
+phone size and in two open conversations. Six cold loads of each at 4×, interleaved: 6 lookups instead of 14, and
+the font time before the list 114 → 70 ms (medians). In verify-perf's A/B (`--only desktop --cpu 4 --runs 5`) that
+is inside the noise: the list 1,378 → 1,362 ms (p 0.55), a relaunch's list 621 → 589 ms (p 1.0).
+
+Tried and not kept:
+
+- **`sans-serif` alone**: Chrome's sans-serif on Linux is Arial, which fontconfig gives as Liberation Sans, so the
+  font changed, and it was no faster (74 ms). It would be Helvetica on a Mac and Arial on Windows too.
+- **`system-ui, sans-serif, 'Noto Color Emoji'`**: the emoji is found by name, so fontconfig's search goes (45 ms
+  instead of 70), but it puts that emoji font ahead of the one the system picks (a Linux desktop set to another emoji
+  font, or Noto installed on Windows), and in the A/B it was no faster (1,465 ms, p 0.84).
+
+What is left there is the per-size render settings (`GetWebFontRenderStyleForStrike`, a fontconfig match for each
+face and size: 22 of them, about 30 ms) and the emoji search, each paid once per browser start, on Linux only.
+
 ## The loading orb (2026-11-11)
 
 `1x.open.first.layouts` read 48–50 on main on 2026-11-11 against the baseline's 17 (#85, 2026-11-10), in two runs of
@@ -930,13 +1278,142 @@ settings and what is where, the changes that move `metaRev`. They hold conversat
 replaces its conversation's object), and what reads the objects (unread counts, activity) is still worked out on
 `dataVersion`, from the ids. A notification level that depends on a native mute with an end is kept no later than
 that end (`metaMemo`'s `until`). Two kinds of change moved `metaRev` without changing what is where, and now say so
-(`changed('shown')`): people's names and pictures arriving with a page of messages, and what a message's reaction row
+(`changed('shown')`; the first is `changed('identity')` now, [below](#who-wrote-the-inbox-and-a-sync-that-changed-nothing-2026-11-24)): people's names and pictures arriving with a page of messages, and what a message's reaction row
 offers once a conversation's reaction context is known, both of which came with every first open; and a person, or an
 account already here, changing (the walk came back once in a trace of Mail's first open, after a meta change this
-did not name; these two are the likely ones, not checked).
+did not name; these two are the likely ones, not checked). A folder opened or closed, here or from another device, moves
+what is where and nothing a row or a message shows (`changed('open')`): `metaDataVersion` moves, `metaRev` stays, and
+the rail, which reads `rev`, draws it.
 
 `test/model-memo.test.ts` holds it: a read changes the counts and the order at once, with the same walk; the walk is
 done again on a meta change; a level holds until a rule changes or a mute runs out.
+
+### Who wrote, the inbox, and a sync that changed nothing (2026-11-24)
+
+A cold load at 4× still worked out the rail, its counts and the badge four to six times after the bootstrap: every
+change moved `dataVersion`, and four kinds of change that none of them read came in the first seconds. The inbox's
+answer (`/api/inbox`) and the week's mail decisions; the 60 or so people who wrote what the inbox lists, each a
+`changed('shown')`; the hub's list of devices, sent at every start and taken as a meta change, which walked every
+server again; and, on a relaunch, the sync after the snapshot, which said `changed('meta')` whatever it brought.
+
+Now they say what they are. `changed('identity')` (identities from a page, the inbox, a sync, a call, a change log)
+moves `metaRev` for the names, `changed('inbox')` (the inbox's messages and the mail decisions) and
+`changed('devices')` move `rev`; none of them moves `placesDataVersion` (versions.ts), which the memos of places,
+counts, order, people's directs and the inbox's rows are keyed on (model.ts `placesMemo`). How it sorts' board reads
+the inbox and stays on `dataVersion`. A sync moves only what its own fields changed: `meta` for your person or the
+category provider, `shown` for the reaction usage, `list` for dither-accounts' view, `identity` for its identities;
+its events are classified as the socket's are.
+
+Counted in an instrumented build on the full-size world (each memo's runs, one cold load and one relaunch at 4×):
+the cold load works out the badge's total, the rail's entries and the inbox's rows once, not four to six times, and
+walks each server once, not twice (activity 172 runs, not 1,032; levels 1,166, not 2,330); the relaunch once, not two
+to three times. In a CPU profile, six cold loads and relaunches of each, interleaved, medians at 4×: the rail, the
+badge and the inbox list 415 → 284 ms of a cold load, the page's script in all 1,606 → 1,340 ms; a relaunch's script
+976 → 892 ms. Times to the list did not move beyond the noise of a loaded machine: the work saved came after it.
+
+What was still worked out again for every message or read (`changed('list')`): each server's activity and count, the
+badge's total and the rail's order, all from the conversations' objects, though one conversation changed. Now it is
+not ([below](#one-conversation-at-a-time-2026-11-24)).
+
+Then the passes over every conversation that most of them leave at once: the badge's total asks whether a conversation
+has anything unread before whether it is shown (most are read), the rail's added conversations and the inbox's hidden
+rows look up the place's settings before making a default for it (`placePref` makes one for each of the 5,600 that
+have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
+ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
+
+### One conversation at a time (2026-11-24)
+
+An arriving message is three frames from the hub: the conversation's new last message and counts, the reaction
+picker's usage, and, a second later, the read. Each was a `changed('list')`, and each worked out every server's
+activity and count, the badge's total, people's directs and the inbox's rows again from all 5,600 conversations.
+
+Now a change says which conversations it changed, when that is all it changed: `changed('list', ids)`, from the
+socket's events (state.ts `applyEvents`: a conversation's event that leaves its names and place alone, an inbox score,
+a message, reactions' usage) and from the copies a notification brings before the hub answers (arrived.ts). versions.ts
+keeps the last 64 of them by version (`convsChangedSince`); any other change, or more than 64 conversations at once,
+reads as "anything". `placesMemo` then brings a value up to date from those conversations alone where it can:
+
+- what is worked out from a server's conversations (their objects, its count, its activity, its channels' order) is
+  kept when none of them is under it; a folder's, a channel's with its threads, the same;
+- the badge's total is a sum kept by conversation: a changed one's part is taken out and put in again;
+- people's directs: the person's list, with the new copy in the old one's place, sorted again;
+- the inbox's rows: the changed conversations' own rows made again in their places, and the rows the hub has not
+  scored yet (their order moves with the time), then grouped as before; a conversation that comes into the inbox or
+  leaves it makes them all again;
+- what reads only names, settings and what is where (a server's tree, your rules) is kept;
+- with nothing changed that any of them reads (reactions' usage), all are kept.
+
+A native mute that ran out since a value was worked out makes it all again: levels change then with nothing in `db`
+changing (`levelsHeld`). `test/model-incremental.test.ts` runs random worlds through random runs of messages, reads,
+new scores and time passing, and checks every few steps that what was brought up to date equals what working it all
+out again gives.
+
+Five runs of four arrivals each at 4× on the full-size world, CPU profiles, interleaved against the build before,
+medians per arrival [spread]: `placesMemo` 65 [40–157] → 16 [10–35] ms, the rail 45 [28–113] → 18 [15–34] ms, the
+badge 13 [8–30] → 1 [0–2] ms, the inbox list 15 → 8 ms, the page's script in all 148 [96–374] → 79 [71–180] ms. The
+main thread's whole busy time per arrival, 772 → 694 ms, is mostly the rail's paints and within the noise. A cold load
+and a relaunch work everything out the first time as before: in a benchmark of the same passes in Bun on this world's
+bootstrap (least of 40 runs), working everything out after a meta change took as long as before, and after one
+conversation's change 0.5–0.9 ms instead of 3–6.
+
+Then the passes over every conversation that most of them leave at once: the badge's total asks whether a conversation
+has anything unread before whether it is shown (most are read), the rail's added conversations and the inbox's hidden
+rows look up the place's settings before making a default for it (`placePref` makes one for each of the 5,600 that
+have none), the quiet shelf too, and `visibleConv` is a loop. Six cold loads of each at 4×, medians: the rail 214 → 166
+ms, the badge 78 → 60 ms, the inbox list 96 → 86 ms; a relaunch's rail and badge 25–35 ms less in all.
+
+### Memo keys (2026-11-24)
+
+model.ts's memos were kept in one map each, by a key made of what is worked out and the place it is for:
+`'lvl:' + id`, `'su:' + id`, `'under:' + id`. Each lookup built that string and hashed it, hit or miss, and a first draw
+makes tens of thousands of them (every unread conversation's level in each count, each server's count, activity and
+conversations). In a cold load's CPU profile at 4× the two memo wrappers' own time was 46 ms (`metaMemo` 30,
+`placesMemo` 17), more than the levels they kept. Now each memo is kept by kind (a literal) and then by id, two maps,
+and an id from the hub is a string already hashed once. The rules are looked up by scope and then target the same way,
+and `unreadOf` is a loop rather than a filter and two maps.
+
+CPU profiles of five cold loads and relaunches of each at 4× on the full-size world, interleaved against the build
+before, medians of each function's own time [spread]: on a cold load `metaMemo` 37 [26–56] → 12 [6–15] ms, `unreadOf`
+16 [10–42] → 8 [3–10], `placesMemo` 17 [12–22] → 15 [7–17], `effectiveLevel` 7 → 3: about 40 ms less; on a relaunch
+about 16 ms less. In a benchmark of the same passes in Bun on this world's bootstrap (least of 40 runs), working the
+rail, the badge, the servers' counts, the inbox and people out after a meta change took 8–9 ms instead of 10–14.
+
+### A channel's threads (2026-11-24)
+
+`indexThreads` (syncmodel.ts), run on each bootstrap and after every event that adds, moves or drops a thread, added
+each thread to its channel by copying the channel's list: quadratic in a channel's topics. The perf world has two
+threads a channel, but a busy Zulip or Matrix channel has a thousand topics or more. Now the lists grow in place, and
+the edges and the places' categories are indexed with loops rather than `some`, `findIndex` and copies. A test checks
+three channels with 1,000 to 3,000 topics index as before (`test/bootstrap-index.test.ts`). In Bun on the perf world's
+bootstrap plus three such channels (6,000 topics, three interleaved runs, medians of 21): `indexThreads` 31–36 → 0.5–0.8
+ms, applying the whole bootstrap 39–49 → 5–10 ms. On the perf world as it is, no change beyond noise.
+
+### Times in lists (2026-11-24)
+
+Every list row says how long ago its last message was (format.ts `ago`): "5m", "3h", "Tue", "Oct 12". Its formatters
+were already made once, but each row older than a day still called one, and a formatter's call costs more than the
+rest of `ago` together: about 16 ms of a cold load's main thread at 4× (CPU profiles, `ago`'s own time). A day's label
+depends on its local date alone, so each weekday and each date is now formatted once and kept
+(`test/format.test.ts` checks every 37 minutes over 400 days against formatting each time, in several time zones). In
+Chrome at 4× over the perf world's 1,508 conversations' last-message times, three runs of nine rounds each, medians:
+11.5–14 ms before, 0.6–6 ms with no label kept yet, 0.5–1.6 ms once kept (a list drawn again).
+
+### The rail's order between messages (2026-11-24)
+
+The rail's entries in order (model.ts `railEntries`) were worked out whole after every message or read: each
+server's activity through its memo (173 servers on the perf world), each entry's settings, and a sort. Now the list
+keeps what it was sorted from (each entry's settings, activity and where it was listed), and a message or a read
+takes the activity again only of the servers holding a changed conversation (an index from conversation to server,
+made once per list) and of folders whose conversations are a new list, then sorts that again; when no activity moved
+(a read) it is the very same list. A changed conversation added to the rail on its own makes the list again, since
+the entry holds its copy. Entries alike in everything the order looks at keep the order the stable sort gave them:
+`test/model-incremental.test.ts` checks the order after runs of messages at a few shared times, with servers given the
+same spot, pinned, hidden and empty, against that sort.
+
+Arriving messages at 4× on the full-size world, CPU profiles of four arrivals each, base and branch interleaved on two
+hubs and then swapped between them (the two copies of the world had drifted apart, and one cost twice the other in
+the inbox), medians per arrival of `railEntries`' time: 6 → 2 ms on one hub and 14 → 4 ms on the other; the rail in
+all, 19 → 13 and 42 → 34 ms. In Bun on the perf world's bootstrap, 0.20–0.43 → 0.03–0.10 ms.
 
 ## One setting at a time (2026-11-20)
 
@@ -961,6 +1438,32 @@ the hub's bootstrap (`SELECT * FROM participant`, in the order they were written
 names, and every message and row on the screen drew again. Both read by id now, and the app compares members as a set
 (packages/hub/test/conversation-view.test.ts, packages/web/test/versions.test.ts).
 
+## What redraws (2026-11-26)
+
+The client's copy of the hub's data (`db`, `timelines`, `quoted` in store.ts) is plain objects, and reading it
+subscribes nothing: a component shows a change when a signal it read moves (`rev`, `metaRev`, `mailRev`,
+`presenceRev`, a `timelineRev`, versions.ts), or when its parent draws it again with different props. @preact/signals
+skips a component whose props are all the same if it read any signal while it rendered, or keeps state
+(`useState`, `useReducer`, `useComputed`, `useSignal`), and `memo()` skips one too. A component Preact never skips
+draws whenever its parent does.
+
+So a component that reads one signal (a setting, the route) and the hub's data, but no change signal, shows the data
+as it was the last time something else drew it. The server sidebar's channel tree read unread counts from `db` and a
+setting (`pref('collapsed')`): a topic read on another device stayed bold until something else redrew the tree
+([#426](https://github.com/libdither/dither-chat/pull/426)).
+
+`bun run check:redraws` (scripts/check-redraws.ts) finds these. What a component reads while it renders counts,
+through every call into packages/web/src, and so does what a child it draws reads when that child is never skipped;
+event handlers, effects, timers and `useState`'s first value do not. A component that is right without a change
+signal, because its props change whenever what it reads does, says why in a comment starting `redraws:` just before
+it. It reads a change signal at all, not the right one: one that reads `metaRev` and shows unread counts passes,
+though counts move only `rev`.
+
+A component in a long list that shows a little of what `metaRev` covers would draw on every rule, status or name that
+moves it. It reads a `computed` instead that follows the change signal and gives, as a string, only what it shows:
+a computed tells what reads it only when its value changes. AccountDots reads `dotsSource` (ui/bits.tsx), and a mail
+row's swipes `filingSource` (ui/mail/Filing.tsx). The check counts such a computed as a change signal.
+
 ## Every click (2026-11-20)
 
 `scripts/verify-response.ts` (CI's `response` job, in four parts) builds the app without minifying, so components
@@ -972,20 +1475,24 @@ controls (the rail's, the list's) are clicked there only. Each page has a hub of
 settled world (its hub has looked at every attachment, which a hub does 15 s after it starts and sends the messages
 again with), at a new address, so what an earlier page's clicks changed is not there and a page reads the same in
 any of CI's four parts. Nothing that sends,
-deletes, leaves, calls or signs out is pressed. After each click it waits until nothing has rendered, no request is
-out, no timeout a moment away (100 ms to 3 s) is pending and nothing has come on the socket for 700 ms, so what the
-click set off counts with it: a chat read 600 ms after it opens, the hub's answers, and the lists' re-sort, which
-waits until 4 s after the last touch and while the pointer is on a list, and asks again every 1.5 s (so the mouse
-leaves after each click, as a hand does). A page that is not still within 12 s fails, since
-what it was doing would land in the next click. Then it waits until the hub has no scores still to come
-(`GET /api/attention/waiting`: a conversation folded again waits 5 s first) and for the page to be still again. Then Escape or the address takes the click back, and the page is
-loaded again only when that did not get back to where it was.
+deletes, leaves, calls or signs out is pressed. After each click it waits for what the click set off to be done and
+drawn, by what the page and the hub say rather than by a quiet spell, which a busy machine never gives: in the page,
+no request out and no timeout a moment away (100 ms to 3 s) pending, then two frames; on the hub, no scores still to
+come (`GET /api/attention/waiting`, which sends what changed first: a conversation folded again waits 5 s); on each
+socket, a ping answered, so everything the hub sent before it has come. It goes round again while a round saw a
+render, a request or an event. So what the click set off counts with it: a chat read 600 ms after it opens, the hub's
+answers and scores, and the lists' re-sort, which waits until 4 s after the last touch and while the pointer is on a
+list, and asks again every 1.5 s (so the mouse leaves after each click, as a hand does). A page still busy a minute on
+fails, since what it was doing would land in the next click. Then Escape or the address takes the click back, and the
+page is loaded again only when that did not get back to where it was.
 
 The app's own clocks would land in whichever click is running when they strike, so the page holds them: every
 `setInterval` of 5 s or more (the usage tick that counts a visit 3 s into a place, the minute's re-sort, the ping),
 and the usage tracker's visits, which it answers itself instead of sending to the hub. Each page then has two cases of
 its own before its clicks: "held: the app's clocks" runs every held interval once, and "hub: a visit counted" posts a
-visit to the hub as another device would, and counts what the hub's event draws. A case that could not run fails.
+visit to the hub as another device would, and counts what the hub's event draws. A case that could not run fails. The
+clocks case draws every "5m" and ↩ again, on purpose: that is the minute clock (`minute` in versions.ts), and it is on
+the known list.
 
 For each click it counts every component's renders (`window.__ditherPerf.components`), layouts and style
 recalculations, and times the click to the next frame and the longest task. A click fails when it renders again at
@@ -1007,9 +1514,239 @@ bun scripts/verify-response.ts --only control:react  # controls whose name has t
 bun scripts/verify-response.ts --cpu 4 --out x.json  # slower, and every click's numbers
 ```
 
+## Over a slow link (2026-11-24)
+
+The other passes run on loopback, or, for fetching ahead, over a link set on the page alone. The slow pass loads the
+app as a phone on a poor link would. `scripts/slowlink.ts` is a TCP proxy between Chromium and the hub that holds
+every byte as that link would: each direction sends one packet at a time at its rate, each packet arrives half a round
+trip after it left, and a new connection waits a round trip (the handshake) before its first byte goes. DevTools' own
+throttling (`Network.emulateNetworkConditions`) is not enough here: it is set on a page, and the service worker's
+requests, its whole precache, go round it. The proxy reads each request's head (HTTP/1.1, one request at a time on
+a connection: Chromium does not pipeline) and puts every byte the hub sends back to the request it answers, with the
+time it reached the browser; the page's marks are on the same clock (`performance.timeOrigin`). Chromium asks for
+zstd on loopback as it does over https, so the bytes are the ones a phone gets.
+
+The link: 1.6 Mbit/s down, 0.75 up, a 300 ms round trip. The rates are
+[Lighthouse's phone on "slow 4G"](https://github.com/GoogleChrome/lighthouse/blob/main/docs/throttling.md), the
+slowest link pages are commonly tested on. Its round trip is 150 ms where Lighthouse simulates the link and 562.5 ms
+where it has DevTools throttle it (DevTools adds the latency per request, not per packet, so it scales it up to make
+the same page as slow); 300 ms is between, a phone at the edge of 4G coverage or on good 3G, and a phone on the
+tailnet sometimes goes through a relay as well. Which connection sends next: each in turn (`--slow-queue fair`, the
+default), as a router that queues each flow on its own does and about what TCP's congestion control comes to when
+flows share a bottleneck; or first come first served (`--slow-queue fifo`), a deep buffer shared by everything, as
+many cellular links have.
+
+First numbers, on main (2026-11-24, with #359; a full-size world, 4× CPU, fair, three runs on a machine at load
+average 8 to 10, so the times are rough; counts are of the median run):
+
+| | |
+|---|---|
+| cold start: list shown, hub's data in | 8.9 s, 8.2 s (8.8–9.0, 8.1–8.3) |
+| on the link before the list showed | 54 requests, 1.24 MB: 5 scripts 349 KB, the stylesheet 60 KB, the bootstrap 435 KB, 34 of the precache's requests 377 KB, 10 other /api requests 22 KB |
+| the startup script | 345 KB, from 0.65 s to 3.3 s: the longest wait before anything is drawn |
+| the bootstrap asked for | 650–660 ms after the socket was: it waits for the socket to open (`resync` runs from `onopen`), a handshake and an upgrade, two round trips |
+| the bootstrap on the wire | 3.8 s for 435 KB (3.5–3.9), beside 228 KB (160–254 KB) of 30 of the precache's requests, all sent before its last byte. Alone, 435 KB takes about 2.5 s here, and with `--slow-queue fifo`, where the precache queues behind it, it took 2.7–2.9 s |
+| the precache | 81 requests, 1.37 MB, its last byte at 17.5–18.9 s (`/sw.js` asked for at 3.6 s, as soon as the app ran) |
+| first conversation opened | 1.2–1.8 s |
+| relaunch from the snapshot: list shown, hub's data in | 0.6–0.7 s, 1.0–1.1 s; none of the app from the network (the service worker had it), 3 requests answered before the list was drawn (the health check, the activity report, the manifest), none of which it waits on |
+| the live socket | opened once a start, kept, one catch-up a start; the ping sent while the bootstrap came back in 319–324 ms |
+
+With `--slow-queue fifo` the same ping waited 443 to 2,970 ms for its pong, the longest 30 ms short of `PONG_WAIT`
+(3 s). At 1.2 Mbit/s down (`--slow-down 1.2 --slow-queue fifo`, one run, load average 26) the build before #359 dropped
+one: the ping went out as the bootstrap began to come, no pong came in time, the app closed the socket at 10.1 s and
+opened another, which took until 12.4 s to open behind the precache, and synced again. Since #359 a late pong is raced
+by a new socket instead ([docs/sync.md](sync.md#a-bad-link)): the same run on it waited 4,280 ms for the pong, kept the
+socket (two opened over both starts, none closed by the app) and caught up once a start.
+
+**The bootstrap before the app's script** (2026-11-24). A cold start asked for the bootstrap only once the app's
+script had come (3.3 s), the socket had opened (two round trips) and the snapshot read had found nothing: at 4.2 s.
+Now `index.html` opens the socket itself and, on a device that keeps no snapshot, asks for the bootstrap as soon as
+that socket is open, at 1.3 s here ([docs/sync.md](sync.md#the-client)). It then shares the link with the startup
+script (405 KB came down beside it, so it takes 4.2 s on the wire rather than 3.5 s, and the script's last byte comes
+at 4.8 s rather than 3.3 s), but both are in by about 5.5 s. Full size, 4×, fair, base and change in turn, three runs
+each (load average 10 to 16):
+
+| | before | after |
+|---|---|---|
+| slow link: list shown, hub's data in | 10.5 s, 9.7 s (8.5–15.3, 7.8–14.6) | 6.6 s, 5.7 s (6.3–8.3, 5.7–7.2) |
+| slow link: relaunch, list and data | 0.65 s, 1.16 s | 0.68 s, 1.03 s |
+| phone at 4×, loopback: list shown | 2.7 s (1.5–2.9) | 1.5 s (1.5–2.0) |
+| desktop at 4×, loopback: list shown, data in | 1.8 s, 1.07 s | 1.9 s, 0.92 s (one run of three at 8.8 s, in a stall of the machine: its longest task 1.6 s) |
+
+An earlier round of four runs each had the slow link's list at 9.3 s against 6.9 s (6.5–7.3), its data at 8.6 s
+against 5.8 s (5.7–5.8). The first open after it, the relaunch and the socket's counts did not move.
+
+Registering the service worker only once the list was shown and the data in (so that its precache does not share the
+link with the bootstrap) took the bootstrap on the wire from 3.4 s to 2.8 s and the bytes before the list from 1.10
+to 0.88 MB on its own, but the list only from 9.3 s to 8.6 s, and with the bootstrap asked for early it bought
+nothing: the precache starts as the app runs, which is now about when the bootstrap ends (6.9 s and 5.8 s with it,
+7.5 s and 5.9 s without). Started that late, all at once, it made the first conversation opened after the list wait
+for its six connections (4.1 s once); two files at a time fixed that but took the precache from 19 s to 26 s. Not
+kept. On the live hub, whose bootstrap is about twice this one on the wire, it may be worth trying again.
+
+**A relaunch's catch-up on the socket** (2026-11-24). A relaunch had the list from the snapshot at about 0.65 s and
+the hub's data about 0.35 s after: the catch-up (`POST /api/sync`) was asked once the socket had opened, one more
+round trip. Now the socket asks from the snapshot's position (index.html reads it from `localStorage`, where
+snapshot.ts keeps it) and the hub sends the catch-up as its first frame ([docs/sync.md](sync.md#on-the-socket)), so it
+comes with the socket. Full size, 4×, fair, base and change in turn, six runs each (load average 10 to 20, so the
+times spread):
+
+| | before | after |
+|---|---|---|
+| slow link: relaunch, list shown | 0.78 s (0.58–1.50) | 0.63 s (0.61–1.27) |
+| slow link: relaunch, hub's data in | 1.22 s (1.01–2.13) | 0.72 s (0.67–1.30) |
+| from the list to the data | 483 ms (325–633) | 66 ms (17–104) |
+| requests before the data | 12 | 8 to 10 |
+
+The data now comes about as soon as the list is drawn: what is left before it is the socket's two round trips (a new
+connection and its upgrade) and the snapshot's read and first draw, which take about as long.
+
+## The web build on the wire (2026-11-24)
+
+The hub compressed every file of the web build at zstd level 3 on each request (compress.ts), the startup script
+and stylesheet included: 412 KB on the wire for the startup set. They are the same bytes every time, so now the hub
+packs each once, at level 19, and keeps it (`PackedFiles` in compress.ts): it starts packing the whole build when it
+starts listening, what index.html names first, one file at a time on the thread pool (89 files, 5.8 MB to 1.56 MB, in
+2.9 s at load average 8), and a file asked for before it is packed, or changed since, goes out at level 3 as before
+and is packed for the next ask. Each kept file carries the size and change time it was packed from, so a new build in
+the same place is never answered with old bytes. Source maps are left out (only DevTools asks for them), as are gzip
+clients, whom nothing changes for. The client unpacks level 19 as fast as level 3.
+
+| on the wire, as zstd | level 3 | level 19 |
+|---|---|---|
+| the startup script | 349 KB | 294 KB (−16%) |
+| the stylesheet | 60 KB | 44 KB (−26%) |
+| the whole build (the service worker's precache) | 1.88 MB | 1.60 MB (−15%) |
+
+Over the slow link (the slow pass alone, `--cpu 0 --phone-cpu 0 --ahead-cpu 0 --slow-cpu 4`, full size, nine runs of
+main and of this taken in turn, at load average 8 to 14; medians and ranges, in ms from when the page was asked for,
+since on a loaded machine the browser sometimes asked seconds late). Main here is from before the bootstrap was asked
+for from `index.html` (above), when the script came alone; now the two share the link and both are wanted for the
+list, so the script's 55 KB fewer come off that shared wait:
+
+| | main | packed |
+|---|---|---|
+| the startup script's last byte | 3,306 (3,278–3,358) | 2,950 (2,837–3,034) |
+| the bootstrap's last byte | 7,629 (7,476–8,718) | 7,459 (7,144–8,342) |
+| hub's data in (`cold.fresh`) | 7,901 (7,688–9,006) | 7,710 (7,361–8,934) |
+| list shown (`cold.content`) | 8,627 (8,399–10,259) | 8,461 (8,145–11,430) |
+| the precache's last byte | 17,775 (17,634–22,518) | 16,956 (16,484–24,335) |
+| relaunch: list shown, hub's data in | 1,004, 1,453 | 632, 1,194 |
+
+The script's bytes are the steady part: 356 ms sooner in every run. The bootstrap gains less, because the
+precache, its files smaller, gets further while the bootstrap comes (29 requests beside it in both).
+
+### The bootstrap's window
+
+zstd at level 3 looks back at most 2 MB for a match. A full-size bootstrap is 4.4 MB (the live hub's 4.9–5.4 MB), and
+it names the same ids megabytes apart: each conversation's in `edges`, near the start, and again in `conversations`,
+which runs from about 0.9 to 3.8 MB. Further back than 2 MB, an id went out again in full. Every zstd answer now has
+a 4 MB window (`WINDOW_LOG` in compress.ts; browsers take up to 8 MB, RFC 9659). zstd fits the window to a smaller
+answer by itself, so anything up to 2 MB comes out byte for byte as before: every budget at a tenth of the size is the
+same. The full-size bootstrap is 406.7 KB on the wire against 389.5 KB (−4.2%; 430 against 411 KB with an empty
+attention, on the perf world as verify-perf starts it), about 85 ms less over the slow link. It goes through
+node:zlib's zstd, which takes a window, rather than `Bun.zstdCompress`, which does not: 10 ms rather than 7 for the
+4.4 MB, on the thread pool.
+
+What else the bootstrap's bytes are, at full size and level 3 with that window (each the bytes saved by leaving it out,
+so as a share of 411 KB): conversations' ids 79 KB, topics 51 KB, last messages' ids 25 KB and texts 28 KB, the edges
+of conversations (which repeat each conversation's `spaceIds`, with a position) 29 KB, of which their positions
+12 KB. Leaving out every null, false and empty field of conversations saves only 7 KB on the wire (1.3 MB of the
+4.4 MB before compression), identities' 2 KB, spaces' 1 KB. A higher level costs the hub's time on every bootstrap:
+level 6 gives 396 KB in 37 ms, level 9 376 KB in 42 ms.
+
+The edges of conversations are gone from the app's bootstrap since: it asks for `/api/bootstrap?edges=spaces`, whose
+`edges` hold only those between spaces, and `conversationEdges` beside `conversations` the positions of each one's
+edges, in its `spaceIds`' order (syncmodel.ts `indexEdges` makes the edges again). On the perf world at full size,
+4,035 KB against 3,567 KB before compression (−11.6%) and 383 KB against 353 KB on the wire (−7.7%); at a tenth, 432
+against 384 KB and 44.2 against 41.6 KB. Without `?edges=spaces` (an older page, dither-calendar, the scripts) the
+bootstrap is as it was.
+## Memory (2026-11-24)
+
+`scripts/verify-memory.ts` (CI's `memory` job) looks for leaks: what the page holds growing as it is used. Against a
+demo hub of its own on the perf world at a tenth of its size, a computer's page and a phone's go round the same pages
+again and again, side by side: the six conversations the perf runs open and a thread, the top of the biggest channel
+drawn (older messages from memory), the details panel opened and closed (on the computer), a person's page, their
+profile, Settings, Mail and Feed, back, and the inbox again. After each round the page is let settle, the garbage is
+collected twice (`HeapProfiler.collectGarbage`), and it counts:
+
+| count | from |
+|---|---|
+| `heap` | `Performance.getMetrics`'s JSHeapUsedSize: printed only |
+| `nodes`, `listeners`, `documents` | `Memory.getDOMCounters`: every DOM node alive, detached ones too, and event listeners |
+| `detached` | `DOM.getDetachedDomNodes`: nodes off the page that something still holds |
+| `elements` | the page's own elements |
+| `intervals`, `timeouts`, `objectUrls`, `sockets`, `observers` | counted from the start by a script before the app's (its `INIT`): intervals set and not cleared, timeouts pending (printed only), `URL.createObjectURL` not revoked, sockets open, Resize-, Intersection- and MutationObservers still observing and not collected |
+| `marks` | performance marks and measures kept |
+| `held.*` | the app's own caches, from `window.__ditherPerf.held()` (`sized` in perf.ts, under `?perf=1`): timelines, messages held in them, quoted messages, kept pages, identities, mail bodies, the maps state.ts keeps for the page's life |
+
+What is judged is growth from round 2 to the last (6 on the computer, 5 on the phone), never a size. The page's own
+counts (elements, nodes, listeners) may move by 2% in all, once; what the app keeps running or holds not at all; and
+nothing may grow in each of the last three rounds, however little: a leak grows every round, a clock's step once.
+`scripts/memory-known.json` (none yet) is where growth known to be needed would go, with why. A count that grew past
+what it may says where its new intervals, object URLs or observers were made.
+
+The first round is the warm-up: it loads three older pages of the biggest channel from the hub, so that the later
+rounds draw from memory. Every page from the hub stays in memory for as long as the page is open (`timelines` in
+store.ts, by design), so a round that loaded one more each time would grow by a page whatever else it did. The app's
+visits (`POST /api/usage`) are answered in the page, as in the click check, so the hub's order stays put.
+
+```sh
+bun scripts/verify-memory.ts                       # what CI runs, about two minutes
+bun scripts/verify-memory.ts --cycles 50 --phone-cycles 0 --cpu 4 --scale 1   # the long run, below
+bun scripts/verify-memory.ts --snapshots <dir>     # heap snapshots after round 2 and the last, for DevTools' Comparison
+```
+
+Other options: `--first` (the round growth is counted from), `--web <dist>`, `--out <file.json>` (every round's
+counts, and under `metrics` the numbers the nightly run charts), `--keep`, `--verbose` (each step's time). The hub's
+resident memory (`/proc/<pid>/status`, it has no endpoint for its heap) is printed before and after, never judged.
+
+**Every night** it runs again at full size and 4×, ten rounds on each page ([Nightly trends](#nightly-trends)), and
+its growth, last values, heap and the hub's memory are charted night to night: never judged there, only flagged when
+a count leaves what the nights before came to.
+
+**Steady.** Five runs here and five on GitHub's runners (dispatched with `gh workflow run ci.yml --ref <branch>`), on
+2026-11-24: every judged count came out the same in rounds 2 to 6 and 2 to 5, in every run. The heap grew 190 to 260
+KB a round on the computer and 145 to 170 KB on the phone, which is why it is printed and not judged. The job takes
+about two minutes on a runner, beside `response`'s four, so the run takes no longer.
+
+**It catches one.** A page made to leak an interval, a click listener and a detached `div` on every visit to Settings
+failed on nodes, listeners and intervals, each +4 over four rounds.
+
+**What it found.** Every chat opened added a `dither:timeline` mark (`markPainted`, perf.ts) to the page's list of
+performance marks, which nothing emptied: nine a round, about 130 bytes each. Now each name keeps its last: the checks
+that wait for them watch with a `PerformanceObserver`, which sees each. `marks` holds at 4.
+
+**The long run** (2026-11-24, full-size world, 4× CPU, 50 rounds on the computer, a loaded machine, about 28 s a
+round): elements, nodes, listeners, intervals, object URLs, sockets, observers and every cache held still from round 2
+to 50, but for one step: the page's elements went 2,270 → 2,269 at round 11 and → 2,291 at round 22 (nodes 2,931 →
+2,962, listeners back to 771), and stayed. That is the inbox's rows changing as the hub's attention rescores (every
+five minutes), not growth, and why the page's counts may move once. The heap went from 17.5 MB after round 2 to 19.7
+MB after round 50: about 160 KB a round to round 10, and 23 KB a round from round 20 to 50 (19.0 to 19.7 MB). The
+hub's resident memory went from 230 MB before to 195 MB after (peak 389 MB).
+
+What the heap's growth is, from heap snapshots (`--snapshots`, compared by constructor) on the tenth-size world. From
+round 2 to 8 (the heap 11.1 to 12.2 MB): two thirds compiled code (V8's InstructionStream, Code, FeedbackVector: the
+JIT warming up), and a quarter the tables of perf.ts's own WeakMap and WeakSet that count renders (only under
+`?perf=1`). From round 10 to 30 (12.6 to 13.2 MB; the snapshots' totals 1.0 MB apart): compiled code again (about
+620 KB), the response bodies DevTools keeps for the check's own `Network.enable` (160 KB), and the browser's
+performance entries (long animation frames, paints, events). No object of the app's grew in number.
+
 ## Next
 
 What these numbers point at, not done yet:
+
+- **On a slow link the precache shared it with the bootstrap** ([above](#over-a-slow-link-2026-11-24)). Since the
+  bootstrap is asked for from `index.html` it is mostly in before the precache starts, here; registering later did not
+  help ([above](#over-a-slow-link-2026-11-24), the end). With a bootstrap the live hub's size it may.
+- **The bootstrap now shares the link with the startup script** on a cold start: 405 KB of it came down beside the
+  bootstrap. Each is wanted for the list; a smaller one of either is the next gain there.
+- **The startup script, 196 KB compressed** (zstd at level 19, as the hub sends it) since [Left out of the first
+  load](#left-out-of-the-first-load-2026-11-24) (294 KB before; 345 KB before the hub packed it at level 19,
+  [above](#the-web-build-on-the-wire-2026-11-24)), is the longest wait of a cold start on a slow link before any of
+  the app runs. Every KB off it is 5 ms there. Of what is left: Requests.tsx's page and a profile's connections (about
+  10 KB), the details panel (about 8 KB), and calls (about 35 KB, tied up with ringing, which has to be there from the
+  start).
 
 - **The bootstrap is 4.4–5.4 MB**, two thirds of it conversations, and most of those channels nobody has written in.
   On the live hub's copy, leaving out null and default fields saves 25%, leaving out the 3,489 channels without

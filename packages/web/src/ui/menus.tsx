@@ -7,30 +7,31 @@ import type * as P from '@dither-chat/protocol';
 import { followedPostOf, NETWORK_META, PICTURE_LAYOUTS, RULE_LABEL, RULE_LEVELS, showsInline } from '@dither-chat/protocol';
 import { fullTime } from '../format.ts';
 import { noteRowRead } from '../activity.ts';
-import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, sumUnread, unreadOf, type Level } from '../model.ts';
+import { AUTOMATIC, OLDER_RULE, authorName, convTitle, deepLink, directsOf, effectiveLevel, externalProfile, heldHere, netName, placePref, plainBody, ruleOn, spaceLink, sumUnread, unreadOf, zulipMessageLink, type Level } from '../model.ts';
 import { inheritedPictures, PICTURE_LABELS, setPlacePictures } from '../arrange.ts';
 import { deviceRule, myDevice, setDeviceRule } from '../devices.ts';
 import { android } from '../android.ts';
-import { alertToggle, isTier, lessToggle } from '../marks.ts';
+import { isTier } from '../marks.ts';
+import { answer, saidOf } from '../loudness.ts';
 import { phone } from '../phone.ts';
-import { mark } from '../triage.ts';
 import { desk, openLink } from '../desk.ts';
+import { asLabel, downloadsAs, hubMedia } from '../download.ts';
 import { pickerFor, quickReactions, reactionScope, reactorsFor, replacing, toggleReaction } from '../reactions.ts';
 import { clearReactions, moderatorDelete, moderatorRemoveEmbeds, modOf } from '../moderate.ts';
-import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
+import { api, canDelete, canEdit, db, deleteMessage, go, href, isSelfIdentity, markAllRead, markRead, metaRev, openProfile, rev, setRule, startEditing, toast } from '../state.ts';
 import { messageSomeone, openPalette } from './Palette.tsx';
-import { hasHistory, historyOf } from './MessageHistory.tsx';
+import { hasHistory, openHistory } from '../messageHistory.ts';
 import { MarkToggles, tierHeading, tierIcon } from './Marks.tsx';
 import { Avatar } from './bits.tsx';
 import { closeMenu, copy, groups, menuPoint, openMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { DEVICE_LEVELS } from './DeviceRules.tsx';
 import { forwarding } from './Forward.tsx';
 import { appsFor, can } from '../apps.ts';
-import { addLook } from './Reactions.tsx';
+import { addLook } from '../reactions.ts';
 import { Icon } from './icons.tsx';
 import { nicknameEntries } from './Nickname.tsx';
 import { openAbout } from '../opening.ts';
-import { canIndex, startIndexing } from './Indexing.tsx';
+import { canIndex, startIndexing } from '../indexjobs.ts';
 import { arrangeEntries, folderEntries, placeConvs } from './Organize.tsx';
 import { openConv } from '../opening.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';
@@ -40,7 +41,7 @@ import { fileKind, fileMime, openFileViewer, VIEWABLE } from '../files.ts';
 import { inviteRef } from '../invites.ts';
 import { installStickerLink, stickerInstaller } from './ComposerMedia.tsx';
 import { canEndPoll, endPoll, pin, pinChoices, pinnable } from '../polls.ts';
-import { threadConvEntries, threadMessageEntries } from '../threads.ts';
+import { readScope, threadConvEntries, threadMessageEntries } from '../threads.ts';
 import { sendingEntries } from './sendingMenu.tsx';
 import { accountEntries } from './accountMenu.tsx';
 
@@ -55,6 +56,7 @@ function messageLink(m: P.MessageView): string {
   const c = db.conversations.get(m.conversationId);
   if (c?.network === 'discord') return `${deepLink(c)}/${m.nativeId}`;
   if (c?.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(c.nativeId.split('|')[0])}/${encodeURIComponent(m.nativeId)}`;
+  if (c?.network === 'zulip') return zulipMessageLink(c, m.nativeId) ?? appLink({ view: 'inbox', conv: m.conversationId, msg: m.id });
   return appLink({ view: 'inbox', conv: m.conversationId, msg: m.id });
 }
 
@@ -91,6 +93,7 @@ function QuickReactions({ m, close, sheet }: { m: P.MessageView; close: () => vo
 }
 
 function MessageHead({ m }: { m: P.MessageView }) {
+  metaRev.value; // the author's name and picture, and the accounts' labels
   const self = isSelfIdentity(m.authorId);
   const name = self ? 'You' : authorName(m.authorId);
   const author = m.authorId ? db.identities.get(m.authorId) : null;
@@ -104,7 +107,8 @@ function MessageHead({ m }: { m: P.MessageView }) {
           <b>{name}</b>
           <small>
             {fullTime(m.ts)}
-            {m.editedTs ? ' · edited' : ''} · {netName(m.network)}
+            {m.editedTs ? ' · edited' : ''}
+            {m.movedAt ? ' · moved' : ''} · {netName(m.network)}
             {via.length ? ` via ${via.map((a) => a.label).join(', ')}` : ''}
           </small>
         </span>
@@ -146,14 +150,13 @@ function TriageFoot({ m }: { m: P.MessageView }) {
   );
 }
 
-/** The two marks as ticked entries: "Should have alerted" (on an alert, "Alert was wrong") and "Less like this". */
+/** Louder and Quieter as ticked entries (they stand as the old marks: loudness.ts `markOf`). */
 function markEntries(m: P.MessageView): MenuEntry[] {
   if (!markable(m)) return [];
-  const alert = alertToggle(m.triage!);
-  const less = lessToggle(m.triage!);
+  const said = saidOf(m.triage);
   return [
-    { label: alert.label, checked: alert.on, track: m.triage!.decision === 'push' ? 'mark alert wrong' : 'mark alert', run: () => void mark(m, { alert: alert.send }) },
-    { label: less.label, checked: less.on, track: 'mark less', run: () => void mark(m, { less: less.send }) },
+    { label: 'Louder', checked: said === 'louder', track: 'mark louder', run: () => void answer(m, 'louder', 'sheet') },
+    { label: 'Quieter', checked: said === 'quieter', track: 'mark quieter', run: () => void answer(m, 'quieter', 'sheet') },
   ];
 }
 
@@ -185,6 +188,8 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
         track: 'view reactions',
         sub: m.reactions.map((r): MenuEntry => ({ track: 'view reactions (one)', label: `${r.emoji ? `:${r.emoji.name}:` : r.key.match(/^(.+):\d+$/) ? `:${r.key.split(':')[0]}:` : r.key}  ${r.count}${r.style === 'super' ? ' ⚡' : ''}`, run: () => (reactorsFor.value = { message: m, key: r.key, style: r.style, anchor: menuPoint() }) })),
       },
+      // By the reactions, as on the phone's sheet: everything that happened to it, edits, reactions and receipts.
+      hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => openHistory(m, 'all', menuPoint()) },
     ],
     [
       canEdit(m) && { label: 'Edit Message', icon: 'pencil', hint: 'E', track: 'edit', run: () => startEditing(m) },
@@ -204,7 +209,6 @@ function messageEntries(m: P.MessageView, onReply?: () => void, marks = true): M
       m.replyToId && { label: 'Go to Replied Message', icon: 'chevronUp', track: 'go to replied', run: () => document.getElementById(`m-${m.replyToId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) },
       original && { label: 'Go to Original Message', icon: 'external', track: 'go to original', run: () => go({ view: 'inbox', conv: original.conversationId!, msg: original.messageId! }) },
       m.authorId && { label: self ? 'Your Profile' : 'Profile', icon: 'user', track: 'profile', run: () => openProfile(m.authorId) },
-      hasHistory(m) && { label: 'Message History', icon: 'clock', track: 'history', run: () => (historyOf.value = m) },
     ],
     [canMarkUnread(m, self) && { label: 'Mark Unread', icon: 'mail', track: 'mark unread', run: () => void markUnreadFrom(m) }],
     // Saved on Discord, Remind Me, Remove Embeds, Report (sendingMenu.tsx, docs/sending.md).
@@ -282,6 +286,7 @@ const absolute = (url: string) => new URL(url, location.href).href;
 export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, images: ViewerImage[] = [], onReply?: () => void): MenuSpec {
   // A Lottie sticker is an animation's JSON, not a picture to open or copy.
   const image = a.kind === 'image' && !isLottie(a);
+  const forms = image && hubMedia(a.url) ? downloadsAs(fileMime(a)) : [];
   const noun = image ? 'Image' : a.kind === 'video' ? 'Video' : a.kind === 'audio' ? 'Audio' : 'File';
   const items = groups(
     [
@@ -294,6 +299,8 @@ export function attachmentMenu(a: P.AttachmentView, m: P.MessageView | null, ima
       !!desk.value && !!fileMime(a) && { label: 'Open With…', icon: 'external', run: () => void openWith(a) },
       image && { label: 'Copy Image', icon: 'copy', run: () => void copyImage(a.url) },
       { label: `Save ${noun}`, icon: 'download', run: () => save(a.url, a.name) },
+      // A picture in another form: a JPEG as JPEG XL, a JPEG XL as a JPEG (download.ts).
+      forms.length > 1 && { label: 'Save Image As', icon: 'download', sub: forms.map((as) => ({ label: asLabel(as, fileMime(a)), track: `save as ${as}`, run: () => save(a.url, a.name, as) })) },
       { label: 'Copy Link', icon: 'link', run: () => copy(absolute(a.url), 'Link copied') },
     ],
     // A run of pictures: how this chat shows them (the rail beside it does the same; ui/PictureSwitch.tsx).
@@ -409,8 +416,48 @@ function followEntries(c: P.ConversationView): MenuEntry[] {
   return [{ label: stopped ? 'Follow Again' : 'Stop Following', icon: stopped ? 'bell' : 'bellOff', run }];
 }
 
-/** `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. */
-export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpec {
+/**
+ * Mark As Read. A channel with threads (a Zulip channel, a Discord forum or text channel, a Matrix room) is read with
+ * every thread of it, at once and without a confirm: a channel is a small scope. Each goes to its network through the
+ * read queue (hub readqueue.ts). Larger scopes (a server, a folder, everything) still ask.
+ */
+function markReadEntry(c: P.ConversationView): MenuEntry {
+  const scope = readScope(c);
+  if (scope.length > 1)
+    return {
+      label: 'Mark As Read',
+      icon: 'check',
+      disabled: !scope.some((t) => unreadOf(t).unread),
+      // The row read without an answer (inbox.md), as a chat's own Mark As Read says it.
+      run: () => (noteRowRead('conversation', [c.id]), markAllRead(scope, convTitle(c), false)),
+    };
+  return { label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) };
+}
+
+/**
+ * Mark As Read on a channel's inbox row (docs/inbox.md "One row per channel"): the channel and every thread of it, the
+ * ones the row does not list too, at once, with no confirm: the row said what it holds. Each goes to its network through
+ * the read queue (hub readqueue.ts).
+ */
+function readChannelEntry(c: P.ConversationView): MenuEntry {
+  const unread = readScope(c).filter((t) => unreadOf(t).unread || unreadOf(t).mentions);
+  return {
+    label: 'Mark As Read',
+    icon: 'check',
+    disabled: !unread.length,
+    run: () => {
+      noteRowRead('conversation', unread.map((t) => t.id));
+      if (unread.length === 1) markRead(unread[0].id);
+      else markAllRead(unread, convTitle(c), false);
+    },
+  };
+}
+
+/**
+ * `why`: the inbox's reasons for where this row sits (docs/inbox.md), shown first. `channelRow`: the menu of a
+ * channel's inbox row, which stands for its threads too (Mark As Read reads them all).
+ */
+export function conversationMenu(c: P.ConversationView, why?: string[], channelRow = false): MenuSpec {
   const eff = effectiveLevel(c);
   const own = ruleOn('conversation', c.id);
   const muted = own === 'none';
@@ -424,7 +471,7 @@ export function conversationMenu(c: P.ConversationView, why?: string[]): MenuSpe
     head: <div class="cm-sheet-title">{convTitle(c)}</div>,
     items: groups(
       why?.length ? [{ kind: 'row', render: () => <WhyHere reasons={why} /> }] : [],
-      [{ label: 'Mark As Read', icon: 'check', disabled: !unreadOf(c).unread, run: () => (noteRowRead('conversation', [c.id]), markRead(c.id)) }],
+      [channelRow ? readChannelEntry(c) : markReadEntry(c)],
       [
         person && { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: person.id }) },
         { label: `About This ${c.shape === 'direct' ? 'Chat' : noun}`, icon: 'info', run: () => openAbout('conversation', c.id) },
@@ -489,7 +536,7 @@ export function spaceMenu(s: P.SpaceView): MenuSpec {
   const section = s.kind === 'section';
   const noun = section ? 'Category' : s.network === 'discord' ? 'Server' : NETWORK_META[s.network].spaceNoun.replace(/^./, (x) => x.toUpperCase());
   const convs = placeConvs('space', s.id);
-  const link = s.network === 'discord' ? `https://discord.com/channels/${s.nativeId}` : s.network === 'matrix' ? `https://matrix.to/#/${encodeURIComponent(s.nativeId)}` : null;
+  const link = spaceLink(s);
   return {
     label: `${s.name} actions`,
     head: <div class="cm-sheet-title">{s.name}</div>,

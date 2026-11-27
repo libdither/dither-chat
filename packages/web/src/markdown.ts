@@ -90,7 +90,8 @@ export function renderMarkdown(src: string, ctx: MdContext): string {
   let s = src.replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => slot(`<pre class="md-code"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(code.replace(/\n$/, ''))}</code></pre>`));
   s = s.replace(/`([^`\n]+)`/g, (_, code) => slot(`<code class="md-inline">${esc(code)}</code>`));
   // Mentions and room links before escaping eats the angle brackets.
-  s = s.replace(/<@&(\d+)>/g, (_, id) => {
+  // A role or group: a Discord role's snowflake, a Zulip group's `<host>/g/<id>`.
+  s = s.replace(/<@&([^>\s]+)>/g, (_, id) => {
     const r = ctx.role?.(id);
     const color = r?.color && /^#[0-9a-f]{6}$/i.test(r.color) ? ` style="color:${r.color}"` : '';
     return slot(`<span class="mention role"${color}>@${esc(r?.name ?? 'role')}</span>`);

@@ -7,14 +7,15 @@
  * search the text of messages). MailSearchGroup is the app search page's Mail group: the hub's top five.
  */
 import type * as P from '@dither-chat/protocol';
-import { searchList, searchOps, setSearchOp, toggleSearchOp } from '@dither-chat/protocol';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { senderLine } from '../../mail/model.ts';
+import { bareSubject, searchList } from '@dither-chat/protocol';
+import { useEffect, useState } from 'preact/hooks';
+import { isGroupThread, senderLine, threadName } from '../../mail/model.ts';
+import { MailTile } from '../MailLists.tsx';
 import { api, db, go, mailRev } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
 import { Avatar, Empty } from '../bits.tsx';
 import { Icon } from '../icons.tsx';
-import { listTime } from './MessageCard.tsx';
+import { listTime } from './listTime.ts';
 import { Loading } from '../Loader.tsx';
 import { MoreResults } from '../more.tsx';
 
@@ -112,16 +113,18 @@ function HitRow({ hit, list, active, showAccount }: { hit: P.MailSearchHit; list
   const other = [...t.from].reverse().find((f) => !f.self) ?? t.from[t.from.length - 1];
   const name = other?.name || other?.email || '?';
   const account = db.mail.accounts.get(t.accountId);
+  const group = isGroupThread(t);
   return (
-    <button class={`row mail-row mail-hit ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-thread={t.id} onClick={() => go({ view: 'mail', list, thread: t.id })}>
+    <button class={`row mail-row mail-hit ${active ? 'active' : ''} ${t.unread ? 'unread' : ''}`} data-thread={t.id} onClick={() => go({ view: 'inbox', mail: list, conv: t.id })}>
       <span class="row-avatar">
-        <Avatar id={other?.email ?? t.id} name={name} size={36} />
+        {/* One colour per sender name: a sender writing from news@ and events@ is one face. A thread with more people is a chat named by its subject, with the envelope tile. */}
+        {group ? <MailTile /> : <Avatar id={other?.name || other?.email || t.id} name={name} size={36} />}
       </span>
       <span class="row-main">
         <span class="row-top">
           <span class="row-title">
             {showAccount && account && <span class="mail-acc-dot" style={{ background: account.color }} title={account.address ?? account.label} />}
-            <span class="mail-row-who">{senderLine(t)}</span>
+            <span class="mail-row-who">{group ? threadName(t) : senderLine(t)}</span>
             {t.count > 1 && <span class="mail-count">{t.count}</span>}
           </span>
           {t.flagged && <Icon name="star" size={12} class="mail-star" />}
@@ -129,7 +132,7 @@ function HitRow({ hit, list, active, showAccount }: { hit: P.MailSearchHit; list
           <span class="row-time">{listTime(hit.at)}</span>
         </span>
         <span class="row-bottom">
-          <span class="mail-row-subject">{t.subject || '(no subject)'}</span>
+          <span class="mail-row-subject">{group ? senderLine(t) : bareSubject(t.subject) || '(no subject)'}</span>
           {hit.matches > 1 && <span class="mail-hit-n" title={`${hit.matches} messages in it match`}>{hit.matches}</span>}
           {t.unread > 0 && <span class="unread-dot" />}
         </span>
@@ -142,12 +145,6 @@ function HitRow({ hit, list, active, showAccount }: { hit: P.MailSearchHit; list
     </button>
   );
 }
-
-const CHIPS: [string, string, string][] = [
-  ['is', 'unread', 'Unread'],
-  ['is', 'starred', 'Starred'],
-  ['has', 'attachment', 'Attachment'],
-];
 
 /** Some account's server was left out because the hub holds all of its mail (server=auto). */
 const skipped = (server: NonNullable<P.MailSearchPage['server']>) => server.accounts.some((a) => a.state === 'local');
@@ -173,51 +170,21 @@ function ServerNotes({ server }: { server: NonNullable<P.MailSearchPage['server'
   );
 }
 
+/**
+ * A search's results in a mail list's place: its box is the Inbox header's (ui/Sidebar.tsx MailListSearch), so the
+ * search keeps the list it was typed in (mail/model.ts listSearch).
+ */
 export function MailSearch({ q, active }: { q: string; active?: string }) {
   mailRev.value;
-  const [draft, setDraft] = useState(q);
-  const box = useRef<HTMLInputElement>(null);
   const list = searchList(q);
   const f = q.trim() ? held.get(q) : undefined;
-  useEffect(() => setDraft(q), [q]);
   useEffect(() => {
-    if (!q.trim()) box.current?.focus();
-    else if (!held.has(q)) void run(q);
+    if (q.trim() && !held.has(q)) void run(q);
   }, [q]);
-  const set = (next: string) => go({ view: 'mail', list: searchList(next.trim()) }, true);
   const showAccount = db.mail.accounts.size > 1;
   const serverHits = f?.server?.hits ?? [];
   return (
     <div class="mail-search">
-      <form
-        class="search search-box mail-search-box"
-        role="search"
-        onSubmit={(e) => {
-          e.preventDefault();
-          // What is in the box now, even before an input's render has caught up. The same again: search again.
-          const next = (box.current?.value ?? draft).trim();
-          if (next === q && next) void run(q);
-          else set(next);
-        }}
-      >
-        <Icon name="search" size={15} />
-        <input ref={box} aria-label="Search mail" placeholder="Search mail" enterkeyhint="search" value={draft} onInput={(e) => setDraft((e.target as HTMLInputElement).value)} />
-        {draft && (
-          <button type="button" class="icon-btn small" aria-label="Clear" title="Clear" onClick={() => (setDraft(''), set(''), box.current?.focus())}>
-            <Icon name="x" size={14} />
-          </button>
-        )}
-      </form>
-      <div class="inbox-chips mail-chips mail-search-chips" role="group" aria-label="Only">
-        {CHIPS.map(([op, v, label]) => {
-          const on = searchOps(q, op).includes(v);
-          return (
-            <button class={`chip-btn ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set(op === 'is' ? toggleSearchOp(q, op, v) : setSearchOp(q, op, on ? null : v))}>
-              {label}
-            </button>
-          );
-        })}
-      </div>
       <div class="side-scroll mail-list" aria-label="Mail found" aria-busy={!!f?.loading}>
         {!q.trim() && (
           <Empty icon="search" title="Search your mail">
@@ -287,13 +254,13 @@ export function MailSearchGroup({ q }: { q: string }) {
   const list = searchList(q);
   return (
     <section class="search-group mail-search-group" aria-label="Mail">
-      <button class="search-group-head" tabIndex={-1} onClick={() => go({ view: 'mail', list })}>
+      <button class="search-group-head" tabIndex={-1} onClick={() => go({ view: 'inbox', mail: list })}>
         <Icon name="mail" size={12} /> Mail
       </button>
       {page.hits.map((h) => (
         <HitRow key={h.thread.id} hit={h} list={list} showAccount={db.mail.accounts.size > 1} />
       ))}
-      <button class="link-btn mail-search-all" onClick={() => go({ view: 'mail', list })}>
+      <button class="link-btn mail-search-all" onClick={() => go({ view: 'inbox', mail: list })}>
         {page.more ? 'More in Mail' : 'Open in Mail'}
       </button>
     </section>

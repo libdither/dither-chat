@@ -148,7 +148,12 @@ try {
     return p.eval<string>(`document.querySelector('.tooltip.shown')?.innerText ?? ''`);
   };
   const openWho = async () => {
-    await p.eval(`(() => { const r = document.querySelector('[data-vr]'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 5, clientY: b.y + 5 })); })()`);
+    // Who reacted is View Reactions in the message's menu; a right-click on the pill opens its history instead.
+    await p.eval(`(() => { const m = document.querySelector('[data-vr]').closest('.msg'); const b = m.querySelector('.msg-body').getBoundingClientRect(); m.querySelector('.msg-body').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 5, clientY: b.y + 5 })); })()`);
+    await p.until(`[...document.querySelectorAll('[role="menuitem"]')].some((i) => i.textContent.includes('View Reactions'))`, 4000);
+    await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent.includes('View Reactions')).click()`);
+    await p.until(`!!document.querySelector('.cm-sub [role="menuitem"]')`, 4000);
+    await p.eval(`(() => { const k = document.querySelector('[data-vr] .emoji-text, [data-vr] .emoji-img'); const t = k.alt || k.textContent; [...document.querySelectorAll('.cm-sub [role="menuitem"]')].find((i) => i.textContent.includes(t)).click(); })()`);
     await p.until(`!!document.querySelector('.reactors .reactor')`, 5000);
     await Bun.sleep(600);
     return p.eval<{ rows: { name: string; when: string; title: string; past: string; gone: boolean }[]; sub: string; notes: number }>(`(() => {
@@ -172,6 +177,13 @@ try {
   check(tipLines.length >= 4 && ['Priya', 'Alice', 'Theo'].every((n) => tipLines.some((l) => l.startsWith(n) && time.test(l))) && !/~/.test(tip), "hovering a pill shows who reacted and each one's time, Signal's own", tipLines);
   if (shots) await p.shot(`${shots}/when-tooltip-signal.png`);
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+  // A right-click on a pill opens the message's history on its reactions, with a way to all of it.
+  await p.eval(`(() => { const r = document.querySelector('[data-vr]'); const b = r.getBoundingClientRect(); r.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 5, clientY: b.y + 5 })); })()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
+  const pillHistory = await p.eval<{ head: string; rows: string[]; menu: boolean }>(`({ head: document.querySelector('.mh-pop .mh-bar')?.innerText ?? '', rows: [...document.querySelectorAll('.mh-pop .mh-row .mh-what')].map((e) => e.innerText.replace(/\\s+/g, ' ').trim()), menu: !!document.querySelector('.cm') })`);
+  check(/Reactions/i.test(pillHistory.head) && /All history/i.test(pillHistory.head) && pillHistory.rows.some((r) => /reacted/.test(r)) && !pillHistory.menu, 'a right-click on a pill opens its reactions history, not a menu', pillHistory);
+  await escape();
+  await Bun.sleep(200);
   const laughs = await openWho();
   const mei = laughs.rows.find((r) => r.name.startsWith('Mei'));
   check(laughs.sub === 'Taken back' && mei?.gone && /^took back \d/.test(mei.when) && /^added \d/.test(mei.past), 'who took theirs back is listed under Taken back, with when they added it', laughs.rows);
@@ -194,9 +206,9 @@ try {
   await p.eval(`(() => { const m = [...document.querySelectorAll('.msg')].find((x) => x.textContent.includes('Mesa is open till 10')); const b = m.getBoundingClientRect(); m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: b.x + 40, clientY: b.y + 8 })); })()`);
   await p.until(`[...document.querySelectorAll('[role="menuitem"]')].some((i) => i.textContent.includes('Message History'))`, 4000);
   await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent.includes('Message History')).click()`);
-  await p.until(`!!document.querySelector('.modal .msg-history-event')`, 5000);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
   await Bun.sleep(300);
-  const lines = await p.eval<string[]>(`[...document.querySelectorAll('.modal .msg-history-event')].map((e) => e.innerText.replace(/\s+/g, ' ').trim())`);
+  const lines = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row .mh-what')].filter((e) => !/sent it/.test(e.innerText)).map((e) => e.innerText.replace(/\s+/g, ' ').trim())`);
   const order = lines.map((l) => (l.includes('pinned') ? 'pin' : /^Sam\S* ?\S* reacted/.test(l) ? 'sam+' : /^Sam\S* ?\S* took back/.test(l) ? 'sam-' : /^Alice\S* ?\S* reacted/.test(l) ? 'alice+' : '?'));
   check(order.join() === 'sam+,sam-,pin,alice+,sam+' || order.join() === 'pin,sam+,sam-,alice+,sam+', 'Message history: Sam reacted, took it back, Alice reacted, Sam reacted again, each with its time', lines);
   if (shots) await p.shot(`${shots}/when-history-signal.png`);

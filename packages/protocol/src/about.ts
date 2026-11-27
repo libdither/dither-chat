@@ -212,6 +212,8 @@ export const GROUP_RULES: Partial<Record<Network, GroupRule>> = {
   telegram: { noun: 'group', who: 'known', mode: 'add', name: 'required', nameMax: 128, min: 1, max: 10 },
   // XChat (X's web client): New message → Create a group, people its search offers as addable, a name of up to 32.
   x: { noun: 'group', who: 'known', mode: 'add', name: 'optional', nameMax: 32, min: 1, max: 10 },
+  // Zulip's group direct message: anyone in the organization, no name of its own, made by its first message.
+  zulip: { noun: 'group conversation', who: 'known', mode: 'add', name: 'optional', nameMax: 0, min: 2, max: 50 },
 };
 
 /** What `createGroup` answers, in native ids. */
@@ -242,6 +244,7 @@ export function createGroupProblem(network: Network, name: string | undefined, p
   if (people > r.max) return `${what} starts with at most ${r.max} ${them(r.max)}`;
   const n = (name ?? '').trim();
   if (!n) return r.name === 'required' ? `Give the ${r.noun} a name` : null;
+  if (r.nameMax === 0) return `${what} has no name of its own`;
   if ([...n].length > r.nameMax) return `${what}'s name is at most ${r.nameMax} characters`;
   return null;
 }
@@ -401,6 +404,18 @@ export const ABOUT_RULES: Record<Network, AboutRules> = {
   lemmy: { conversation: [], space: [] },
   substack: { conversation: [], space: [] },
   bluesky: { conversation: [], space: [] },
+  lesswrong: { conversation: [], space: [] },
+  // Event sites: an event's name and picture are the host's, changed on the site (docs/events.md).
+  luma: { conversation: [], space: [] },
+  partiful: { conversation: [], space: [] },
+  // Zulip: a channel's name, description, who may post, public or private, and whether new members see its history;
+  // a topic's name (renaming moves its messages); the organization's name and description. Names are at most 60.
+  zulip: {
+    conversation: ['name', 'topic', 'announceOnly', 'joinRule', 'history'],
+    space: ['name', 'topic'],
+    nameMax: 60,
+    topicMax: 1024,
+  },
 };
 
 export const ABOUT_LABEL: Record<AboutKey, string> = {
@@ -531,8 +546,11 @@ export interface PersonAbout {
   accent?: string;
   /** Bio or About text, as the network has it (Discord markdown, WhatsApp About, Signal About). */
   bio?: string;
-  /** A short status line with an emoji (Discord custom status, Signal's About emoji). */
-  status?: { text?: string; emoji?: string };
+  /**
+   * A short status line with an emoji (Discord custom status, Signal's About emoji). A custom emoji is `:name:`, with
+   * its picture in `emojiUrl` where the network gives one (Zulip's organization emoji).
+   */
+  status?: { text?: string; emoji?: string; emojiUrl?: MediaUrl };
   pronouns?: string;
   /** ms epoch: when their account was made (Discord, from the id). */
   createdAt?: number;
@@ -546,8 +564,16 @@ export interface PersonAbout {
   friends?: string[];
   /** Connected accounts, websites, a phone number. */
   links?: { label: string; value: string; url?: string; verified?: boolean }[];
-  /** Anything else worth a line: "Business account", "Local time". */
-  facts?: { label: string; value: string }[];
+  /**
+   * Their time zone, an IANA name ("Europe/Berlin"), where the network says one (Zulip's `timezone`): the profile shows
+   * their local time from it, worked out as it is shown.
+   */
+  timeZone?: string;
+  /**
+   * Anything else worth a line: "Business account". `people`: native identity ids of the people the value names, in
+   * its order (a bot's owner, a person field), so the app can link them; identity facts for them come first.
+   */
+  facts?: { label: string; value: string; people?: string[] }[];
   /** Badges the network shows on their profile, by name, with the network's picture. */
   badges?: { name: string; icon?: MediaUrl }[];
   /** A frame drawn around their picture (Discord's avatar decoration). */

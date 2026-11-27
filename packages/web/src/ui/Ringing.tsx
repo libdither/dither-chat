@@ -7,8 +7,8 @@ import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { applyCalls, ringingCalls, voice } from '../ringing.ts';
 import { activeCall, startCall } from '../call.ts';
-import { api, db, go, pref, rev, toast } from '../state.ts';
-import { convTitle } from '../model.ts';
+import { api, db, go, metaRev, pref, rev, toast } from '../state.ts';
+import { convTitle, faceOf } from '../model.ts';
 import { Avatar } from './bits.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { Icon } from './icons.tsx';
@@ -36,7 +36,7 @@ function answerElsewhere(c: P.CallView): string {
 function who(identityId: string | null): { name: string; avatar: string | null; personId: string | null } {
   const i = identityId ? db.identities.get(identityId) : undefined;
   const person = i?.personId ? db.persons.get(i.personId) : null;
-  return { name: person?.name ?? i?.displayName ?? i?.handle ?? 'Someone', avatar: i?.avatar ?? null, personId: i?.personId ?? null };
+  return { name: person?.name ?? i?.displayName ?? i?.handle ?? 'Someone', avatar: faceOf(identityId).url, personId: i?.personId ?? null };
 }
 
 function RingCard({ c }: { c: P.CallView }) {
@@ -89,6 +89,7 @@ export function RingCards() {
 
 /** Who is in a voice channel, and its status line, for its row and its page. Nothing when nobody is and it has none. */
 export function VoicePeople({ conversationId, size = 18, names, class: cls = '', style }: { conversationId: string; size?: number; names?: boolean; class?: string; style?: Record<string, string> }) {
+  metaRev.value; // names and pictures change without the channel's members changing
   const v = voice.value.get(conversationId);
   if (!v || (!v.members.length && !v.status)) return null;
   const call = activeCall.value?.conversationId === conversationId && activeCall.value.phase !== 'ended' ? activeCall.value : null;

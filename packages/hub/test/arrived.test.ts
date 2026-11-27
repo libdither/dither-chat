@@ -82,11 +82,11 @@ test("a message's push carries the copy; a held one does not, nor does a hub who
     new Notifier({
       store: { notifyLook: () => ({}), one: () => null, ...store },
       phone: { list: () => ({ send: true }), higher: () => {} } as any,
-      activity: { notification: () => 'nid_1', sent: () => {} },
+      activity: { notification: () => 'nid_1', sent: () => {}, skipped: () => {} },
       devices: { addressed: () => false, quietOn: () => [] },
       push: { desktops: () => [], notify: async (_t, _b, _c, extra) => (pushes.push(extra), { devices: 1, accepted: 1 }) },
       delivery: { listDue: () => true, plan: () => ({ alert: true, count: 1, conv: { title: 'c', shape: 'direct' }, sender: { name: 'Ann', key: 'ann' }, lines: [], icons: {} }) },
-      server: { notify: () => {}, warm: async () => {} },
+      server: { notify: () => {}, warm: async () => {}, watched: () => false },
     });
   const n = make(storeOf(m));
   n.message('Ann', 'hi there', 'cnv_1', 'msg_1', [], {}, 'message', 'push');

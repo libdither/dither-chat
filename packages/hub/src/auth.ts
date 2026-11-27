@@ -258,15 +258,34 @@ export class Auth {
     if (!r) return null;
     const now = this.now();
     if (!this.alive(r, now)) {
-      this.db.query('DELETE FROM session WHERE id = ?').run(r.id);
+      this.bookkeep(() => this.db.query('DELETE FROM session WHERE id = ?').run(r.id));
       return null;
     }
     let refresh: number | null = null;
     if (now - r.last_used >= TOUCH_MS || (ip && ip !== r.last_ip)) {
-      this.db.query('UPDATE session SET last_used = ?, last_ip = ? WHERE id = ?').run(now, ip || r.last_ip, r.id);
-      if (now - r.last_used >= REFRESH_MS) refresh = Math.floor((this.expiresAt({ created_at: r.created_at, last_used: now }) - now) / 1000);
+      // The answer is already known from the read above; this write only notes the use. A full disk or a busy
+      // database must not turn a good session into a failed request: the note is tried again on the next request,
+      // and the cookie is refreshed only once the new last use is really saved.
+      const noted = this.bookkeep(() => this.db.query('UPDATE session SET last_used = ?, last_ip = ? WHERE id = ?').run(now, ip || r.last_ip, r.id));
+      if (noted && now - r.last_used >= REFRESH_MS) refresh = Math.floor((this.expiresAt({ created_at: r.created_at, last_used: now }) - now) / 1000);
     }
     return { id: r.id, refresh };
+  }
+
+  private bookkeepWarned = 0;
+  /** A write that only keeps the session table tidy: a failure is logged (at most once a minute) and the check goes on. */
+  private bookkeep(write: () => unknown): boolean {
+    try {
+      write();
+      return true;
+    } catch (e) {
+      const now = this.now();
+      if (now - this.bookkeepWarned >= TOUCH_MS) {
+        this.bookkeepWarned = now;
+        console.warn(`auth: could not note a session's use, the request goes on: ${(e as Error)?.message ?? e}`);
+      }
+      return false;
+    }
   }
 
   /** Ended sessions go. */

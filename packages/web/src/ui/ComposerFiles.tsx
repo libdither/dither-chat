@@ -3,6 +3,9 @@
  * with a cancel; one that failed can be tried again. A file that cannot be sent stays in the row, saying why (too
  * large for the network or the hub, empty, unreadable), rather than being left out without a word. More files than
  * the network takes in one message go as several messages (state.ts send), and the row says how many.
+ *
+ * Photos and videos show as tiles at their own shape, and a click on one opens it in a box over the chat (Peek.tsx,
+ * a chunk of its own). On a phone a tap opens the send screen at that one instead (Attach.tsx).
  */
 import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, splitsFiles } from '@dither-chat/protocol';
@@ -12,7 +15,11 @@ import { netName } from '../model.ts';
 import { connected, startUpload, uploadsOf } from '../state.ts';
 import { readable, refusalOf, type UploadJob } from '../upload.ts';
 import { isMedia } from '../camera.ts';
+import { viewer } from '../viewer.ts';
 import { Icon } from './icons.tsx';
+
+type PeekBox = typeof import('./Peek.tsx').Peek;
+let peekBox: PeekBox | null = null;
 
 export interface Attached {
   key: number;
@@ -75,15 +82,29 @@ export function useAttached(network: P.Network | undefined, convId: string) {
   return { files, add, remove, clear, sendable, failed };
 }
 
-export function AttachedFiles({ files, remove, network }: { files: Attached[]; remove: (key: number) => void; network?: P.Network }) {
+/** `open`: a photo or video's tile clicked; the box over the chat unless the composer has its own (the phone's send screen). */
+export function AttachedFiles({ files, remove, network, open }: { files: Attached[]; remove: (key: number) => void; network?: P.Network; open?: (f: Attached) => void }) {
+  const [peek, setPeek] = useState<number | null>(null);
+  const [Peek, setBox] = useState(() => peekBox);
   if (!files.length) return null;
   const split = splitNote(files, network);
+  const show =
+    open ??
+    ((f: Attached) => {
+      setPeek(f.key);
+      // The box is a chunk of its own, loaded the first time.
+      if (!Peek) import('./Peek.tsx').then((m) => setBox(() => (peekBox = m.Peek)), () => setPeek(null));
+    });
   return (
     <div class="composer-files">
-      {files.map((f) => (
-        <AttachedFile key={f.key} f={f} remove={() => remove(f.key)} />
-      ))}
+      {/* One line that scrolls sideways, so many photos never push the chat up out of sight. */}
+      <div class="composer-files-row">
+        {files.map((f) =>
+          f.url ? <AttachedMedia key={f.key} f={f} remove={() => remove(f.key)} open={() => show(f)} /> : <AttachedFile key={f.key} f={f} remove={() => remove(f.key)} />,
+        )}
+      </div>
       {split && <div class="composer-files-split">{split}</div>}
+      {peek !== null && Peek && <Peek files={files} start={peek} remove={remove} onClose={() => setPeek(null)} />}
     </div>
   );
 }
@@ -123,6 +144,54 @@ function AttachedFile({ f, remove }: { f: Attached; remove: () => void }) {
         </button>
       )}
       <button class="icon-btn small" onClick={remove} title={status === 'uploading' ? 'Cancel the upload' : 'Remove'} aria-label={status === 'uploading' ? `Cancel uploading ${name}` : `Remove ${name}`}>
+        <Icon name="x" size={12} />
+      </button>
+    </div>
+  );
+}
+
+/** A photo attached, full screen in the picture viewer to pinch and zoom, with the other photos attached (the phone's send screen). */
+export function inspect(files: Attached[], f: Attached) {
+  if (!f.url) return;
+  const photos = files.filter((x) => x.url && !x.file.type.startsWith('video/'));
+  viewer.value = { images: photos.map((x) => ({ url: x.url!, name: x.file.name || null })), index: Math.max(0, photos.indexOf(f)) };
+}
+
+/** A photo or video attached: a tile at its own shape that opens it large, its name and size showing on a hover. */
+function AttachedMedia({ f, remove, open }: { f: Attached; remove: () => void; open: () => void }) {
+  const { status, why, pct } = statusOf(f);
+  const name = f.file.name || 'file';
+  return (
+    <div class={`composer-media ${status}`} data-status={status}>
+      <button class="composer-media-open" data-track="look at attached" onClick={open} title={why ? `${name}: ${why}` : `${name}, ${bytes(f.file.size)}`} aria-label={`Look at ${name}`}>
+        <Thumb f={f} />
+        {f.file.type.startsWith('video/') && (
+          <span class="composer-media-play" aria-hidden="true">
+            <Icon name="play" size={14} />
+          </span>
+        )}
+        <span class="composer-media-cap" aria-hidden="true">
+          <span>{name}</span>
+          <small>{bytes(f.file.size)}</small>
+        </span>
+      </button>
+      {why ? (
+        <span class="composer-media-why" role="alert">
+          {why}
+          {status === 'failed' && (
+            <button class="btn small" onClick={() => f.job!.retry()}>
+              Retry
+            </button>
+          )}
+        </span>
+      ) : (
+        status === 'uploading' && (
+          <span class="upload-bar composer-media-bar" role="progressbar" aria-label={`Uploading ${name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+            <span style={{ width: `${pct}%` }} />
+          </span>
+        )
+      )}
+      <button class="composer-media-remove" data-track="remove" onClick={remove} title={status === 'uploading' ? 'Cancel the upload' : 'Remove'} aria-label={status === 'uploading' ? `Cancel uploading ${name}` : `Remove ${name}`}>
         <Icon name="x" size={12} />
       </button>
     </div>

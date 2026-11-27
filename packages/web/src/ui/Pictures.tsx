@@ -13,7 +13,7 @@ import { fitPicture, mosaicRows, tileAspect, type PictureRef } from '../pictures
 import { viewer, type ViewerImage } from '../viewer.ts';
 import { AttachmentNote } from './MessageExtras.tsx';
 import { AltBadge, Veil, veiled } from './rich/parts.tsx';
-import { measurers, Morph, PictureRail, pinchHandlers, setUnfolded, switchOf, unfolded } from './PictureSwitch.tsx';
+import { keepStill, measurers, Morph, PictureRail, pinchHandlers, setUnfolded, switchOf, unfolded } from './PictureSwitch.tsx';
 
 /** A plain click opens the viewer; a middle or modified click still opens the file in a tab. */
 export function openViewer(e: MouseEvent, images: ViewerImage[], index: number) {
@@ -174,8 +174,8 @@ function drawRun(pics: PictureRef[], layout: PictureLayout, runKey: string, open
 /**
  * The pictures of one message, or of a run of them (`runKey`: its first message's id), drawn as `layout` says.
  * `anchors`: messages of the run drawn only by this block, so a jump to one of them lands here. `convId`: the chat a
- * switch saves to; with `rail`, the computer's rail of ways stands beside a run of two or more. While a slide or a
- * pinch is under way (switchOf), the run is drawn between two ways over it (Morph).
+ * switch saves to; with `rail`, the computer's rail of ways stands in the gutter left of a run of two or more. While
+ * a slide or a pinch is under way (switchOf), the run is drawn between two ways over it (Morph).
  */
 export function Pictures({ pics, layout, runKey, anchors, convId, rail }: { pics: PictureRef[]; layout: PictureLayout; runKey: string; anchors?: string[]; convId?: string; rail?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
@@ -188,13 +188,16 @@ export function Pictures({ pics, layout, runKey, anchors, convId, rail }: { pics
     measurers.set(runKey, { host: () => host.current, pics, runKey, draw: drawRun });
     return () => void (measurers.get(runKey)?.pics === pics && measurers.delete(runKey));
   });
+  // While a slide is under way, and once more as it ends, what is under the finger is put back where it was before
+  // this draw is painted (PictureSwitch.tsx keepStill).
+  useLayoutEffect(() => keepStill(runKey));
   const anchorEls = anchors?.map((id) => <span class="pic-anchor" id={`m-${id}`} />);
   const pinch = switchable && !rail ? pinchHandlers(runKey, convId!, layout) : undefined;
   const { body, wide } = drawRun(pics, layout, runKey, layout === 'fold' && unfolded.value.has(runKey));
   // While sliding, the run as it is stays where it was, out of sight (the fingers' touches still go to its pictures),
   // and the drawing between two ways takes its place.
   return (
-    <div class={`pics${wide || sliding ? ' wide' : ''}${switchable && rail ? ' has-rail' : ''}${pinch ? ' pics-pinch' : ''}${sliding ? ' pics-sliding' : ''}`} ref={host} {...pinch}>
+    <div class={`pics${wide || sliding ? ' wide' : ''}${pinch ? ' pics-pinch' : ''}${sliding ? ' pics-sliding' : ''}`} ref={host} {...pinch}>
       {anchorEls}
       {body}
       {switchable && rail && <PictureRail layout={layout} convId={convId!} runKey={runKey} />}

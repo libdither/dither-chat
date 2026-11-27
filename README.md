@@ -1,8 +1,8 @@
 # dither-chat
 
-**All your chats in one app, run on your own computer.** Discord, Signal, WhatsApp, Matrix, Telegram, X and email
-arrive in one inbox that you can open on your phone and your computer. Someone you talk to on three networks shows up
-as one person. The app learns which messages are worth interrupting you for.
+**All your chats in one app, run on your own computer.** Discord, Signal, WhatsApp, Matrix, Telegram, Zulip, X, email
+and the event sites Luma and Partiful arrive in one inbox that you can open on your phone and your computer. Someone
+you talk to on three networks shows up as one person. The app learns which messages are worth interrupting you for.
 
 ![Alice Chen's chat: messages from Signal, Telegram and WhatsApp in one timeline, each marked with its network](docs/screenshots/readme/person-alice.webp)
 

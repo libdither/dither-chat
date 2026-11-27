@@ -276,6 +276,18 @@ describe('more like Discord', () => {
     expect(store.search('rhinoceros tomorrow').corrected).toBeUndefined();
     expect(store.search('xqzvw').hits).toEqual([]);
   });
+  test('as you type (typing), neither fallback runs: no inside words, no corrections; CJK still searches', () => {
+    const typing = (q: string) => store.search(q, 50, null, 0, { typing: true });
+    expect(typing('orro')).toMatchObject({ hits: [], mode: 'fulltext' });
+    expect(store.search('orro').mode).toBe('substring');
+    const r = typing('rhinocerus charged');
+    expect(r.hits).toEqual([]);
+    expect(r.corrected).toBeUndefined();
+    // What the index has comes as before.
+    expect(typing('borrow').hits.map((h) => h.message.nativeId)).toEqual(store.search('borrow').hits.map((h) => h.message.nativeId));
+    // Unspaced CJK is one token: inside it is the only way to find it, so it is no fallback.
+    expect(typing('京で').hits.map((h) => h.message.nativeId)).toEqual(['m5']);
+  });
   test('edit distance counts a swap as one', () => {
     expect(editDistance('teh', 'the', 2)).toBe(1);
     expect(editDistance('kitten', 'sitting', 3)).toBe(3);

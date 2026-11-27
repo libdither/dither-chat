@@ -25,7 +25,8 @@ function worker(opts: { canReply?: boolean; fetch?: (url: string, init: any) => 
     fetched.push({ url, body: init.body ? JSON.parse(init.body) : undefined, method: init.method });
     return (opts.fetch ?? (async () => Response.json({ ok: true })))(url, init);
   };
-  new Function('self', 'fetch', 'NotificationEvent', 'caches', src)(self, fetchStub, NotificationEvent, {});
+  // No waiting in a test: a timer runs at once (the "Noted" a mark leaves closes after one).
+  new Function('self', 'fetch', 'NotificationEvent', 'caches', 'setTimeout', src)(self, fetchStub, NotificationEvent, {}, (fn: () => void) => fn());
   const run = async (type: string, e: any) => {
     let done: Promise<unknown> = Promise.resolve();
     listeners[type]({ ...e, waitUntil: (p: Promise<unknown>) => (done = p) });
@@ -228,33 +229,48 @@ test("a group's or channel's own picture over the sender's; a DM, or a group wit
 const titles = (w: ReturnType<typeof worker>) => w.shown.at(-1)!.o.actions.map((a: any) => a.title);
 const base = { title: 't', conversationId: 'cnv_1', messageId: 'msg_1' };
 
-test('the actions go by the tier: an alert Reply and "Not urgent", a Conversation Reply and "Should have alerted", a list row both marks', async () => {
+test('the actions go by how it reached you: a sound "Worth it" and "Could have waited", a silent one Reply and "Louder", a list row "Quieter" and "Louder"', async () => {
   const w = worker();
   await w.push({ ...base, canReply: true, tier: 'push', level: 'push' });
-  expect(titles(w)).toEqual(['Reply', 'Not urgent']);
-  expect(actions(w)).toEqual(['reply', 'wrong']);
+  // A browser shows two: both answers.
+  expect(titles(w)).toEqual(['Worth it', 'Could have waited']);
+  expect(actions(w)).toEqual(['worth', 'could_wait']);
   await w.push({ ...base, canReply: true, tier: 'quiet', level: 'quiet' });
-  expect(titles(w)).toEqual(['Reply', 'Should have alerted']);
-  expect(actions(w)).toEqual(['reply', 'alert']);
+  expect(titles(w)).toEqual(['Reply', 'Louder']);
+  expect(actions(w)).toEqual(['reply', 'louder']);
   await w.push({ ...base, canReply: true, tier: 'digest', level: 'quiet' });
-  expect(titles(w)).toEqual(['Less like this', 'Should have alerted']);
-  expect(actions(w)).toEqual(['less', 'alert']);
-  // Where no reply can be typed, or the hub said it may not go out: the mark alone, and for a list row both.
+  expect(titles(w)).toEqual(['Quieter', 'Louder']);
+  expect(actions(w)).toEqual(['quieter', 'louder']);
+  // Where no reply can be typed, or the hub said it may not go out: the answers alone.
   const firefox = worker({ canReply: false });
   await firefox.push({ ...base, canReply: true, tier: 'push' });
-  expect(titles(firefox)).toEqual(['Not urgent']);
+  expect(titles(firefox)).toEqual(['Worth it', 'Could have waited']);
   await firefox.push({ ...base, tier: 'quiet' });
-  expect(titles(firefox)).toEqual(['Should have alerted']);
+  expect(titles(firefox)).toEqual(['Louder']);
   await firefox.push({ ...base, tier: 'digest' });
-  expect(titles(firefox)).toEqual(['Less like this', 'Should have alerted']);
-  // Without the message's id there is nothing to mark: it opens, as before.
+  expect(titles(firefox)).toEqual(['Quieter', 'Louder']);
+  // Without the message's id there is nothing to answer: it opens, as before.
   await w.push({ title: 't', conversationId: 'cnv_1', tier: 'quiet' });
   expect(actions(w)).toEqual(['open']);
-  // Mail takes only "Less like this", and has no alert marks.
+  // Mail takes only "Less like this", and nothing on an alert.
   await w.push({ ...base, messageId: 'mml_1', mailThreadId: 'cnv_1', tier: 'digest', level: 'quiet' });
   expect(titles(w)).toEqual(['Less like this']);
   await w.push({ ...base, messageId: 'mml_1', mailThreadId: 'cnv_1', tier: 'push', level: 'push' });
   expect(actions(w)).toEqual(['open']);
+});
+
+test('an answer from a notification goes to the loudness answers; mail\'s "Less like this" and the old marks to the feedback route', async () => {
+  const w = worker();
+  await w.click({ ...base }, 'could_wait');
+  expect(w.fetched.at(-1)).toMatchObject({ url: '/api/loudness/answers', method: 'POST', body: { messageId: 'msg_1', answer: 'could_wait', source: 'notification' } });
+  await w.click({ ...base }, 'louder');
+  expect(w.fetched.at(-1)).toMatchObject({ url: '/api/loudness/answers', body: { answer: 'louder' } });
+  await w.click({ ...base, messageId: 'mml_1' }, 'less');
+  expect(w.fetched.at(-1)).toMatchObject({ url: '/api/messages/mml_1/feedback', body: { less: true } });
+  // A notification shown before the scale still carries the old marks.
+  await w.click({ ...base }, 'wrong');
+  expect(w.fetched.at(-1)).toMatchObject({ url: '/api/messages/msg_1/feedback', body: { alert: false } });
+  expect(w.closed).toHaveLength(4);
 });
 
 test('only an alert may sound: a Conversation and a list row are silent, whatever else the push says', async () => {
@@ -279,20 +295,20 @@ test('only an alert may sound: a Conversation and a list row are silent, whateve
   // The tier wins over the level beside it.
   await w.push({ ...base, tier: 'digest', level: 'push' });
   expect(said()).toEqual({ silent: true, renotify: false });
-  expect(titles(w)).toEqual(['Less like this', 'Should have alerted']);
+  expect(titles(w)).toEqual(['Quieter', 'Louder']);
 });
 
 test('a hub from before the tiers says only the level: quiet is a silent Conversation, anything else an alert', async () => {
   const w = worker();
   await w.push({ ...base, canReply: true, level: 'quiet' });
   expect(w.shown.at(-1)!.o).toMatchObject({ silent: true, renotify: false });
-  expect(titles(w)).toEqual(['Reply', 'Should have alerted']);
+  expect(titles(w)).toEqual(['Reply', 'Louder']);
   await w.push({ ...base, canReply: true, level: 'push' });
   expect(w.shown.at(-1)!.o).toMatchObject({ silent: false, renotify: true });
-  expect(titles(w)).toEqual(['Reply', 'Not urgent']);
+  expect(titles(w)).toEqual(['Worth it', 'Could have waited']);
   await w.push({ ...base, canReply: true });
   expect(w.shown.at(-1)!.o).toMatchObject({ silent: false, renotify: true });
-  expect(titles(w)).toEqual(['Reply', 'Not urgent']);
+  expect(titles(w)).toEqual(['Worth it', 'Could have waited']);
 });
 
 test('a mark from the notification tells the hub what it says, closes it, and opens nothing', async () => {
@@ -307,6 +323,21 @@ test('a mark from the notification tells the hub what it says, closes it, and op
     expect(w.closed).toEqual(['it']);
     expect(w.opened).toEqual([]);
   }
+  // In its place a silent "Noted", which closes itself, and only itself: a push since then stays.
+  const w = worker({ showing: [{ tag: 'cnv_1', data: { noted: true } }, { tag: 'cnv_1', data: { messageId: 'msg_2' } }] });
+  await w.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'could_wait');
+  expect(w.shown).toHaveLength(1);
+  expect(w.shown[0]).toMatchObject({ title: 'Noted: Could have waited', o: { body: 'More like this will wait.', tag: 'cnv_1', silent: true, data: { conversationId: 'cnv_1', noted: true } } });
+  expect(w.closed).toEqual(['it', 'other:cnv_1']);
+  // A refusal, or no hub: "Answer not saved" says why, and stays.
+  const refused = worker({ fetch: async () => Response.json({ error: 'No such message' }, { status: 409 }) });
+  await refused.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'worth');
+  expect(refused.shown[0]).toMatchObject({ title: 'Answer not saved', o: { body: 'Worth it: No such message.', tag: 'cnv_1', silent: true } });
+  expect(refused.shown[0].o.data.noted).toBeUndefined();
+  expect(refused.closed).toEqual(['it']);
+  const down = worker({ fetch: async () => Promise.reject(new TypeError('Failed to fetch')) });
+  await down.click({ conversationId: 'cnv_1', messageId: 'msg_1' }, 'louder');
+  expect(down.shown[0].o.body).toBe('Louder: Could not reach the hub.');
   // Without a message, or with an action from a notification shown before the tiers, it opens the conversation.
   const none = worker();
   await none.click({ conversationId: 'cnv_1' }, 'less');

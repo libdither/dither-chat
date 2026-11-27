@@ -52,3 +52,15 @@ export function ringingCalls(): P.CallView[] {
 export function callIn(conversationId: string): P.CallView | null {
   return [...calls.value.values()].find((c) => c.conversationId === conversationId && c.state !== 'ended') ?? null;
 }
+
+/**
+ * The call an Answer from outside the page (Android's ring notification, android.ts) joins: that call, while it has
+ * not ended; a stale Answer gets null. Joining an ended one-to-one call would place a new call to the other side
+ * (Signal and the like have no call to join, so joining one rings them), so an Answer replayed later, as when Android
+ * brings the app back from the intent that once answered, must join nothing. Without a call id, the conversation's call
+ * going on or ringing.
+ */
+export function answerable(list: P.CallView[], callId: string | undefined): P.CallView | null {
+  const c = callId ? list.find((x) => x.id === callId) : list.find((x) => x.state !== 'ended');
+  return c && c.state !== 'ended' ? c : null;
+}

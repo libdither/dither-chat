@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { DEFAULT_RETENTION } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { claimsOf, fitScales, jaroWinkler, norm, ownKeys, pairKey, phoneKey, puppetOf, run } from '../src/matches.ts';
+import { claimsOf, fitScales, jaroWinkler, nameHandle, norm, ownKeys, pairKey, phoneKey, puppetOf, run } from '../src/matches.ts';
 import { keepAbout } from '../src/people.ts';
 import { COLLECT_PACE, ProfileCollector, SameMatches } from '../src/samepeople.ts';
 import { Store, type AccountRow } from '../src/store.ts';
@@ -158,6 +158,15 @@ describe('suggestions on a hub', () => {
     store.db.query('DELETE FROM picture_hash').run();
   });
 
+  test('mostly flat pictures (letter pictures) count for nothing, however near their hashes', () => {
+    const put = store.db.query('INSERT OR REPLACE INTO picture_hash (identity_id, url, hash, at) VALUES (?, ?, ?, 0)');
+    // Initials on one colour: a few bits from the letters, the rest flat. Two bits apart, and from different people.
+    put.run(did('dee'), 'u1', '0000140c14000000');
+    put.run(sid('uuid-dee'), 'u2', '0000141c14000000');
+    expect(find(run(store.db), did('dee'), sid('uuid-dee'))?.evidence.some((e) => e.kind === 'picture') ?? false).toBe(false);
+    store.db.query('DELETE FROM picture_hash').run();
+  });
+
   test('Not the same keeps a pair out; Later for a month; merging makes one person and is learned as a yes', async () => {
     const m = new SameMatches({ store, file: null, jevUrl: null });
     await m.refresh();
@@ -190,6 +199,29 @@ describe('suggestions on a hub', () => {
     expect(m.view().suggestions.some((s) => s.a.id === did('ann') || s.b.id === did('ann'))).toBe(false);
     expect(() => m.merge([did('me-d'), did('bo')])).toThrow();
     m.stop();
+  });
+
+  test('a pair merged elsewhere (a profile, the details panel) is gone from the list at once, before the next run', async () => {
+    const m = new SameMatches({ store, file: null, jevUrl: null });
+    await m.refresh();
+    const key = pairKey(did('dee'), sid('uuid-dee'));
+    expect(m.view().suggestions.some((s) => s.key === key)).toBe(true);
+    // As the profile's merge box does: a person for each, then one merged into the other, with no run after.
+    const into = store.ensurePerson(did('dee'));
+    store.mergePersons(into, store.ensurePerson(sid('uuid-dee')));
+    const v = m.view();
+    expect(v.suggestions.some((s) => s.key === key)).toBe(false);
+    expect(v.faint?.some((s) => s.key === key)).toBe(false);
+    expect(v.groups.some((g) => g.sides.includes(did('dee')) || g.sides.includes(sid('uuid-dee')))).toBe(false);
+    // Split apart again, the next run offers them again (as the persons each now has).
+    store.splitIdentity(sid('uuid-dee'));
+    await m.refresh();
+    const has = (x: P.MatchSide, id: string) => x.identities.some((i) => i.id === id);
+    expect(m.view().suggestions.some((s) => (has(s.a, did('dee')) && has(s.b, sid('uuid-dee'))) || (has(s.b, did('dee')) && has(s.a, sid('uuid-dee'))))).toBe(true);
+    m.stop();
+    // Left as they were, accounts no person holds, for the tests after.
+    store.db.run(`UPDATE identity SET person_id = NULL WHERE id IN ('${did('dee')}', '${sid('uuid-dee')}')`);
+    store.db.run(`DELETE FROM person WHERE NOT EXISTS (SELECT 1 FROM identity i WHERE i.person_id = person.id) AND is_self = 0`);
   });
 
   test('picture hashes are taken only as 16 hex digits, and a picture hashed is not asked for again', async () => {
@@ -300,5 +332,65 @@ describe('weaker leads', () => {
     for (const s of r.faint) expect(s.p).toBeLessThan(0.35);
     for (const s of r.faint) expect(s.p).toBeGreaterThanOrEqual(0.15);
     for (const s of r.suggestions) expect(s.p).toBeGreaterThanOrEqual(0.35);
+  });
+});
+
+describe('Zulip addresses', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dither-matches-zulip-'));
+  let store: Store;
+  const zid = (n: string) => hubId('idn', 'zulip', n);
+  const eid = (n: string) => hubId('idn', 'email', n);
+
+  beforeAll(() => {
+    store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    const zu = store.createAccount({ network: 'zulip', label: 'z', color: '#111', adapter: 'zulip' });
+    const dc = store.createAccount({ network: 'discord', label: 'd', color: '#222', adapter: 'discord' });
+    store.ingest(zu, { t: 'status', status: 'online', self: { nativeId: 'chat.example.org/u/1', displayName: 'Me', isSelf: true } });
+    store.ingest(dc, { t: 'status', status: 'online', self: { nativeId: 'me-d', displayName: 'Me', isSelf: true } });
+    // Sam on Zulip, whose address is the one mail knows, and Sam's handle on Discord, the address's own part.
+    store.ingest(zu, { t: 'identity', identity: { nativeId: 'chat.example.org/u/7', displayName: 'S. Quill', handle: 'Sam.Quill@Example.org' } });
+    store.ingest(dc, { t: 'identity', identity: { nativeId: 'samq', displayName: 'sq', handle: 'sam.quill' } });
+    // Four others at the same place, nothing else alike.
+    for (const [n, name, local] of [['8', 'Wren Ashby', 'wren'], ['9', 'Tomas Ilk', 'tilk'], ['10', 'Ola Varn', 'ola.v'], ['11', 'Ruth Mbeki', 'rmbeki']] as const)
+      store.ingest(zu, { t: 'identity', identity: { nativeId: `chat.example.org/u/${n}`, displayName: name, handle: `${local}@example.org` } });
+    const at = Date.now();
+    for (const [addr, name] of [['sam.quill@example.org', 'Sam Quill'], ['wren.other@example.org', 'Jo Pell']])
+      store.db.query('INSERT INTO identity (id, network, native_id, display_name, updated_at) VALUES (?, ?, ?, ?, ?)').run(eid(addr), 'email', addr, name, at);
+  });
+  afterAll(() => {
+    store.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const all = (r: { suggestions: P.MatchSuggestion[]; faint: P.MatchSuggestion[] }) => [...r.suggestions, ...r.faint];
+
+  test("a Zulip account is known by its address, and its handle is the address's own part", () => {
+    expect(ownKeys({ network: 'zulip', native_id: 'chat.example.org/u/7', handle: 'Sam.Quill@Example.org' }).map((k) => k.key)).toEqual(['email:sam.quill@example.org']);
+    expect(ownKeys({ network: 'zulip', native_id: 'chat.example.org/u/7' })).toEqual([]);
+    expect(nameHandle('zulip', 'Sam.Quill@Example.org')).toBe('Sam.Quill');
+    expect(nameHandle('email', 'sam@example.org')).toBeNull();
+    expect(nameHandle('discord', 'sam.quill')).toBe('sam.quill');
+  });
+
+  test('the same address in mail is a contact match, and the handle matches the address\'s own part elsewhere', () => {
+    const r = run(store.db);
+    const mail = all(r).find((s) => s.key === pairKey(zid('chat.example.org/u/7'), eid('sam.quill@example.org')));
+    expect(mail?.evidence.find((e) => e.kind === 'contact')?.text).toBe('The same email address on both (sam.quill@example.org)');
+    expect(mail?.p).toBeGreaterThan(0.95);
+    const dis = all(r).find((s) => s.key === pairKey(zid('chat.example.org/u/7'), did('samq')));
+    expect(dis?.evidence.find((e) => e.kind === 'name')?.text).toContain('The same handle, samquill');
+  });
+
+  test('sharing the domain makes no pair', () => {
+    const zulip = ['7', '8', '9', '10', '11'].map((n) => zid(`chat.example.org/u/${n}`));
+    const r = run(store.db);
+    for (const s of all(r)) {
+      const [a, b] = s.key.split('+');
+      // Only Sam's pairs: none between people who share nothing but where their address is.
+      if (zulip.includes(a) && zulip.includes(b)) throw new Error(`paired ${s.key}`);
+      if (s.key.includes(eid('wren.other@example.org'))) throw new Error(`paired ${s.key}`);
+    }
+    // Every pair is two of Sam's three accounts.
+    const sam = [zid('chat.example.org/u/7'), did('samq'), eid('sam.quill@example.org')];
+    expect(all(r).map((s) => s.key).sort()).toEqual([pairKey(sam[0], sam[1]), pairKey(sam[0], sam[2]), pairKey(sam[1], sam[2])].sort());
   });
 });

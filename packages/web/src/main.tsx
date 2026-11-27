@@ -5,12 +5,14 @@ import { LoginScreen } from './ui/Login.tsx';
 import { login } from './login.ts';
 import { reportContent, reportFresh, startAndroid } from './android.ts';
 import { startActivity } from './activity.ts';
+import { startNowPlaying } from './nowplaying.ts';
 import { startClickLog } from './clicklog.ts';
 import { startDevices } from './devices.ts';
 import { installDeskLinks } from './desk.ts';
 import { trackViewport } from './phone.ts';
 import { startAhead } from './ahead.ts';
 import { registerServiceWorker } from './pwa.ts';
+import { noteJxl } from './jxl.ts';
 import { dropPages, dropSnapshot, readSnapshot, restore } from './snapshot.ts';
 import { applyBootstrap, applyEvents, beforeSync, connect, loaded, restoreOutbox } from './state.ts';
 import { installErrorReports } from './errors.ts';
@@ -26,6 +28,7 @@ connect();
 void restoreOutbox();
 trackViewport();
 startAndroid();
+startNowPlaying();
 startActivity();
 startClickLog();
 startDevices();
@@ -83,6 +86,8 @@ try {
   location.reload();
 }
 
+// Tells the hub whether pictures may come as JPEG XL (jxl.ts).
+void noteJxl();
 registerServiceWorker();
 // Fetching ahead what you will likely open next (prefetch.ts): a chunk of its own, off the first screen's path.
 startAhead();

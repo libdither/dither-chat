@@ -10,9 +10,10 @@
 import { inflateSync } from 'node:zlib';
 import type * as P from '@dither-chat/protocol';
 import { cleanName, extOf, languageOf, MIME_BY_LANGUAGE } from '@dither-chat/protocol';
+import { isJxl, jxlDims } from './jxlformat.ts';
 
 /** Bump when the sniffer learns something new: files looked at by an older one are looked at again. */
-export const SNIFF_VERSION = 1;
+export const SNIFF_VERSION = 2;
 
 export const HEAD = 64 * 1024;
 export const TEXT_MAX = 2 * 1024 * 1024;
@@ -77,6 +78,7 @@ async function magic(src: Source, b: Uint8Array, hint: { name?: string | null; m
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: 'image/jpeg', kind: 'image', ...(await jpegDims(src)) };
   if (has(b, 0, 'GIF87a') || has(b, 0, 'GIF89a')) return { mime: 'image/gif', kind: 'image', ...(b.length >= 10 ? dims(u16le(b, 6), u16le(b, 8)) : {}) };
   if (has(b, 0, 'RIFF') && has(b, 8, 'WEBP')) return { mime: 'image/webp', kind: 'image', ...webpDims(b) };
+  if (isJxl(b)) return { mime: 'image/jxl', kind: 'image', ...jxlDims(b) };
   if (has(b, 0, 'BM') && b.length >= 26 && u32le(b, 2) >= 26) {
     const dib = u32le(b, 14);
     const w = dib === 12 ? u16le(b, 18) : u32le(b, 18) | 0;

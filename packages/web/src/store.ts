@@ -17,6 +17,8 @@ export interface Timeline {
   messages: P.MessageView[];
   hasMore: boolean;
   loading: boolean;
+  /** The load under way is of older messages, above what is shown; otherwise it is the open, which the bar over the message box shows (waits.ts). */
+  older?: boolean;
   /** person timelines: the direct conversations merged into it */
   conversationIds?: string[];
   /** Jumped to an old message: this window does not reach the latest ones. */
@@ -27,6 +29,8 @@ export interface Timeline {
   from?: P.SyncPosition;
   /** Loaded for a glance (Catch up's cards) from what the hub stored: opening it asks the network, as a first open does. */
   glance?: boolean;
+  /** A person's chat: what they wrote in threads with others, in the range held (mail/chats.ts, ElsewhereView). */
+  elsewhere?: P.ElsewhereView[];
 }
 export const timelines = new Map<string, Timeline>();
 /** Messages referenced by replies that are outside the loaded page. */

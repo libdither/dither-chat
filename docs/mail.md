@@ -7,10 +7,9 @@ Email beside your chats, through dither-accounts' `mail` interface. The design, 
 
 - **Mail in the rail**, after People, once the hub can read mail. A dot while Inbox has unread threads. On a phone it
   sits in Home with the rest; Ctrl+K finds Mail, its views and each mailbox.
-- **The list**: Inbox (ranked, or newest first), Everything and Updates across every account as one row of chips that
-  scrolls sideways, without a scrollbar: its edge fades while more chips lie past it, and the chosen one is scrolled
-  into view. The folder button has Starred and Sent (newest first, of the accounts showing) above each account's
-  mailboxes. **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
+- **The list**: Inbox (ranked, or newest first), Updates and Everything across every account as chips under the
+  Inbox's header, with **More ⌄** holding Starred and Sent (newest first, of the accounts showing) above each account's
+  mailboxes (docs/inbox.md "Mail lists"). **Everything** is the whole of Inbox, Updates too, newest first (`v:all:<scope>`); the old People and
   Unread views have no chip but their links (`v:people:*`, `v:unread:*`) still list. Under "Mail", **whose mail** is two wheels (`ui/mail/ScopeWheel.tsx`):
   the platform (All mail, then Gmail, Proton, Outlook, Email: `mailPlatform`, by kind and address) when there is more
   than one, then the account (All of that platform's, or one) when it has more than one. Each shows the choice in use
@@ -68,14 +67,15 @@ The people you write to by mail join the people the hub already knows (`hub/src/
   in, gets an identity on the `email` network (its address is its id and handle) and a person of their own, as a DM
   partner does. Their name is the one on their latest From, else the one you wrote to them under. Anyone else who
   writes to you stays an address, unless classification (slice 8) calls their mail personal: then they get an
-  identity, without a person. Newsletters and notifications never do. Your own addresses are never anyone.
+  identity, without a person. Newsletters and notifications never do. Your own addresses are identities of yours
+  (the self person, "Mail as chats"), never anyone else's.
 - **Never by name.** Sam by mail and Sam on Signal stay two people until you merge them. A profile's "Same name
   elsewhere" hint says who and where ("Alice Chen <alice@…>", "Alice Chen on Signal and Discord"), and the merge
   search finds people by an address too, and the email identities no person holds yet.
-- **A profile's Mail card**: their newest threads across every mail account, how many there are, and "All mail with
-  Sam", the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
+- **A profile's mail**, in its **Between you** list beside their messages: their newest threads across every mail
+  account, how many there are, and All mail, the list `w:<person>` in Mail (`withList`: every thread they are on, in any mailbox). A merge carries the
   mail: the merged person's card and list hold every thread of every address of theirs, and a split takes it back.
-  An email-only person asks no network for a profile, and has no chat banner and no empty Recent messages card.
+  An email-only person asks no network for a profile, and has no chat banner.
 - **In the reader**, the sender's name opens their page. Thread and message views name the identity and person
   behind each address (`MailAddressView.identityId`, `personId`; `MailThreadView.personIds`).
 - **When an account's mail is deleted** (24 h after access ended), the identities and persons only it held go too;
@@ -90,18 +90,108 @@ own addresses becoming known, mail from before this slice on a first start) goes
 background. Views work out the person behind each address as they are made (so `mail_thread.person_ids` stays unused),
 and a merge, a split or a new person sends that person's threads again. The profile's card comes with `GET /api/persons/:id/profile` (`ProfileView.mail`), the merge search is
 `GET /api/persons/candidates?q=&except=`. Tests: `hub/test/mail-people.test.ts`, `web/test/mail-people.test.ts`, and
-`scripts/verify-profile.ts` (the Mail card on a desktop in the dark theme and a phone in the light one, the reader's
+`scripts/verify-profile.ts` (the mail in Between you on a desktop in the dark theme and a phone in the light one, the reader's
 sender, all mail with them, the hint, the merge search by address, merge and split).
+
+## Mail as chats
+
+There is no Mail page of its own: mail is read where the chats are (`hub/src/mail/places.ts`, `mail/chatpage.ts`,
+`hub/src/rungs.ts`). Ids stay mail's own (`mth_` threads, `mml_` messages): mail is read with the chats when a page is
+asked for, never copied into the message table.
+
+- **Where a thread goes** (`placeOf`): into the chat of the one person it is with, `person:<id>` (the chat that already
+  holds their Signal, Discord and other direct messages, docs/chats.md), when it is not bulk and every other address on
+  it (`mail_party`, less every one of your accounts' own) is an email identity of that same person, and that person
+  is not you. Anything else is a chat of its own, keyed by the thread's id: more people, a sender with no person, a
+  newsletter, a note to yourself. Worked out from who is on it each time it is asked, never stored, so a Cc added
+  later, a merge or a split moves it at once.
+- **Routes by email.** A person's chat gets a route (`ChatRoute`, network `email`) for each of your mail accounts and
+  each address of theirs it has such threads with: `email:<account>:<address>` (address lower-cased), which is also
+  the `conversationId` of its messages. A thread with two of their addresses goes on the route of the one that wrote
+  last. `MailChatView` says the rest: its threads newest first (the latest is where a reply goes), unread messages,
+  the latest subject and preview. These routes have no conversation row: a chat's default route may be one (the page
+  sends that mail through `POST /api/mail/send`), but `POST /api/chats/:id/messages` never sends through one (asked
+  for one by name, it answers 409).
+- **Yours.** Each of your mail addresses is an email identity of the self person (`Store.ownEmailIdentity`, made as
+  a chat account's own identity is, when mail is connected and when an account's addresses change), so the page's
+  `isSelfIdentity` knows mail you sent. Someone with no identity (a newsletter) is given one in the page only, by the
+  id an identity of that address would have.
+- **A mail as a chat message** (`MessageView.mail`, `MessageMailView`): `ts` is when it reached the server, as mail
+  sorts; the body is the words above the quote when the body is here, else the preview; `rich` when its HTML is more
+  than plain text would show (what the reader's body renderers decide); `quoted` when there is quoted text under it;
+  `opens` on the first message of its thread; `inReplyTo`, the Message-ID it answers. One mail that reached two of
+  your accounts (two rows with one Message-ID) is shown once in a person's chat, as its earliest copy, with both
+  accounts in `seenVia`. `only`, on a mail of yours in a thread with others that went to fewer of them than are on it
+  (`mail_thread.participants`, less your addresses), lists who it went to, so the thread says "to Alice only".
+- **Letter furniture** (`web/src/mail/letter.ts`, `web/test/mail-letter.test.ts`): a chat draws a mail's words as a
+  chat message, in a person's chat and in a group thread alike. Folded behind a faint … at the end of the last line:
+  only what is certainly not the message, what follows a `-- ` line (the delimiter itself is never drawn) and a last line that is only the sender's name (first name, full name, or
+  their identity's, person's or your account's name). An unsure tail ("Best,\nSam", "Thanks!", "Love, Mom", "Sent from
+  my phone") stays in place, small and faint. A greeting ("Hi both,") stays full size, with no blank line after it.
+  A run of blank lines is one small gap. A link shows as its host and a short path (the middle cut out), the full
+  address on hover and in its long-press menu. The … shows only when it hides something: the folded lines, the quoted
+  mail (unless it answers the message drawn right above it), and "Show as sent" for a mail whose HTML plain text would
+  lose. A click or tap opens them under the message, and another closes them.
+- **The line over the box** (web `ui/MailChat.tsx`) holds pills, not captions. In a person's chat, after "To Sam
+  Rivera", the thread the mail goes into (`✉ Dinner on Friday? ⌄`): its list has "New subject…" first, then your
+  threads with them newest first; New subject turns the pill into a field of its size, and Esc puts the thread back.
+  In a thread's own chat, who the answer goes to: up to two names, else "Everyone · N", with Everyone, Only <each
+  person> and Full editor. "Only Alice" sends the reply all to her alone (`mail/chatsend.ts`), says "Reply to Alice
+  only" in the box, and is everyone again after the send. A pill at rest is a neutral fill; it is outlined while its
+  list is open or when it is not at its default. Subjects are drawn without their Re: and Fwd: (`bareSubject`);
+  what is sent keeps them.
+- **The subject tag** in a message's head, where the thread changes, has the pill's envelope and bare subject. A
+  click or tap opens the thread's card ("3 mails · with Sam Rivera · newest today") with Archive and Star;
+  archiving says "Archived · Undo", and an archived thread's tags show the archive glyph. Every mail message's menu
+  has the same two for its thread: "Archive “Dinner on Friday?”" (or Unarchive) and "Star thread" (or Unstar).
+- **A person's chat** (`GET /api/chats/person:<id>/messages?before=<ts>:<id>&limit=`) is their chat timeline and the
+  mail of their threads, merged newest first by `(ts, id)` under the one cursor: `limit` counts both, and `hasMore`
+  is either side's. A person you only mail with has a chat too.
+- **What they wrote elsewhere** (`MessagePage.elsewhere`, `ElsewhereView`): their messages, to you (To or Cc), in
+  threads with others, in the page's range (from its oldest message, or the start on the last page, up to where the
+  newer page began, or now), newest last. Each has its excerpt (three lines, 280 characters of the words above the
+  quote) and `awaits`: to you, or naming you, under a week old, and you have neither written in nor opened the thread
+  since (where mail's attention has folded the thread, the turn it says you owe must cover it). The chat
+  (`ui/MailChat.tsx` `ElsewhereRows`) draws one row per thread, at their newest message there, under its own day line:
+  `✉ <subject> · with <others> · <time> ⌄`. The whole line opens and closes the row; open, it shows the text and
+  "Answer there" (or "Open there" when nothing awaits you), which opens the thread at that message with "Back to <their full name>" over it. A thread that awaits
+  you starts open, the rest closed; one you closed while it waits says "Waiting on you" at the right. Right-click or
+  long-press: "Open in <subject>" and "Hide in this chat"; hidden threads leave a faint "1 hidden thread · Show" line in
+  their place. On a narrow row "with …" goes first, then the subject is cut.
+- **Rungs** (`RUNGS`: `hidden`, `closed`, `open`): how a thread shows in a person's chat, when you chose
+  (`PUT /api/rungs {view, place, rung}`, `null` takes it back; table `place_rung`; `view` is `person:<id>`, `place` the
+  thread). Kept on the hub, so a row you closed on one device is closed on the others. Without a choice the row is
+  open while it awaits you (`web/src/mail/elsewhere.ts` `rowOpen`). An open or closed choice is for the row it was
+  made on: once newer mail of theirs comes to the thread (a row later than the choice), the row starts as rows do
+  again. `hidden` stays until Show or Undo; hidden threads are still sent, for the line that counts them.
+- **Other chats**: `GET /api/mail/chats/:id/messages?before=&limit=` pages a route by email (its threads only) or one
+  thread `mth_…` (any thread, newsletters too) as a chat, in the same shape; `GET /api/mail/chats?person=<id>` lists a
+  person's routes. The mail bootstrap carries every route (`MailBootstrap.chats`) and your rungs (`.rungs`).
+- **A thread's name** (web `mail/model.ts` `threadName`, used by `mail/chats.ts` for the thread's conversation): its
+  subject as drawn (`bareSubject`: no Re:, Fwd:, AW: and the like; what is sent keeps the subject), or with no subject
+  its people by first name ("Alice, Jo"). The same in the inbox's row (with the envelope tile and "Jo: …"), the chat's
+  header (the tile, the name, and beneath it up to two of the people on it, from its mails' From, To and Cc, then "+3",
+  a click listing everyone), the mail
+  lists' rows and search hits (the name over who wrote), and Ctrl+K and search's Jump to, which find it by its
+  people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive, with
+  Star and Trash in ⋯. In a mail message's menu the thread's trash comes last, under a line of its own.
+- **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
+  for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
+  again); `rung` when one is chosen or taken back.
+- **Marking read** what a chat showed: `POST /api/mail/flag {messageIds, seen: true}` marks only those messages.
+
+Tests: `hub/test/mail-chats.test.ts`.
 
 ## Sending (slice 5)
 
-- **Writing.** ✎ in Mail's header (or `c`) starts a new message. Reply, Reply all and Forward sit under each message; on
+- **Writing.** New email in the Inbox header's + (or `c` in a mail list or thread) starts a new message. Reply, Reply all and Forward sit under each message; on
   a phone a bar under the thread answers the latest (`r`, `a`, `f` on a desktop). The composer is a full-screen card on
   a phone and a panel docked at the bottom right on a desktop, so the list stays usable beside it. Its header has ✕ and
   the trash (discard); Attach, Aa (formatting) and Send are along the bottom, Send at the right. It has From (a picker
-  when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc, the subject and your
-  text. A reply's quote is one quiet line under the text ("··· Quoting Sam ×": ··· shows it, × leaves it out, "Quote
-  Sam" puts it back); a forward carries the original's text and its files, each of which can be taken off. Ctrl+Enter
+  when the account sends as several addresses, its status's `self.addresses`), To, Cc and Bcc (Cc and Bcc beside To
+  open their lines; an empty one has ✕ to take it away again, and the caret goes to To), the subject and your text. A reply's quote is under
+  the text, in sight (see "A forward or a quote" below; deleted, "Quote Sam" puts it back); a forward carries the
+  original and its files, each of which can be taken off. Ctrl+Enter
   sends; ✕, Esc or back closes it and keeps the draft.
 - **Out of the way, on a desktop** (`web/src/mail/dock.ts`, tested in `web/test/mail-dock.test.ts`): the header drags
   the panel anywhere on screen, and any edge or corner resizes it, the opposite edges staying put (at least 360 × 260,
@@ -138,18 +228,102 @@ sender, all mail with them, the hint, the merge search by address, merge and spl
   once, so a draft written without the hub, or cut off by a reload, is still there. One per thread (`t:<thread>`:
   answering a thread that has one opens it) or `new:<uuid>`. "N drafts" under the views opens them. A draft's files
   stay on the hub an hour after it was last saved or opened (the uploads' own limit).
-- **Formatting** is Markdown, as in chat (`protocol/src/mail-markdown.ts`): the text part goes as you wrote it, which
-  reads well as text, and the HTML part is it made into HTML, on the hub, the same whichever account sends (Gmail on
-  the web, Proton and IMAP all send the HTML they are given). **bold**, _italic_, ~~struck~~, `code` and fenced code,
-  [links](https://example.com) and bare addresses, lists, `>` quotes and `#` headings; a line break is a line break.
-  Not taken as Markdown: a signature's `--` under a line (no setext headings), a line indented four spaces (no
-  indented code), HTML you type (it is text), links other than http(s) and mailto, pictures (a link to them). Aa shows
-  the format bar: B, I, S, code, link, bullets, numbers, quote (each takes itself off again), and Preview, the HTML part
-  as it will arrive, in a frame without scripts. Keys: Ctrl+B, Ctrl+I, Ctrl+K (link), Ctrl+Shift+7, 8 and 9 (numbers,
-  bullets, quote), Ctrl+Shift+X (struck), as Gmail's are where it has them. Enter goes on with a list (Enter on an empty
-  item ends it). A web address pasted over selected text links it; rich text pasted from a page or a document keeps
-  its bold, italic, links, headings, lists, quotes and code as Markdown (`web/src/mail/paste.ts`, read from the
-  clipboard's HTML in an inert document; colours, fonts and pictures stay behind); Ctrl+Shift+V pastes it plain.
+- **Writing** (`web/src/ui/mail/editor/`): one document, four ways to see and edit it, switched at the right of the
+  format bar (Rich · Markdown · HTML · Plain). Each message opens in Rich, or in Plain if it was left there; the view
+  is the draft's, not a setting. The old view fades and lifts away as the new one settles in, at the same place in the
+  text (no animation with reduced motion). The rich document (Tiptap, a ProseMirror document, `schema.ts`) is the one
+  truth: the other views are made from it when opened and put back into it when left, as one step of the editor's
+  undo, with the undo before it kept. A view only looked at changes nothing, and every feature of the bar comes back
+  the same from an edit in Markdown or HTML. The bar is one stop for Tab; the arrow keys move along it.
+  - **Rich** (the default): text as it will look. Bold, italic, underline, struck, colour (eight swatches), link
+    (Ctrl+K, or paste an address over the text), bullets, numbers, quote, heading (larger, then smaller, then off),
+    code (in the line, or a block over several lines), alignment, a table, Remove formatting (Ctrl+\\); struck, colour,
+    heading, code, alignment, tables and Remove formatting wait behind ⋯ (opened, it stays open on the device), so the
+    bar and the switch between views are one row; on a phone the row scrolls sideways under the switch. Markdown's
+    shortcuts work as you type (`**`, `# `, `- `, `> `). A picture pasted, dropped or chosen goes in the text where the
+    caret is (a `data:` URL in the draft; over 5 MB, or not PNG, JPEG, GIF or WebP, it is attached instead); pasted
+    anywhere else in the composer, it is attached. Aa hides the formatting buttons; the switch between views stays.
+  - **Markdown** (CodeMirror, `livemd.ts`): the same document as Markdown, drawn as you type, as Obsidian does:
+    headings big, bold bold, and the marks that make them fold away on every line but the caret's. A pasted picture
+    stands in as `![name](dc-picture:id)` and shows as itself (a picture from an original too: its size and address
+    come back with it). A quote is Markdown's `>`, a bar drawn for each level; `&lt;` and `\_` show as `<` and `_` off
+    the caret's line. A block kept whole (`[[island:id]]`) is drawn as it will arrive, under a bar that names it ("Kept
+    as its own HTML") with "Open in HTML view": Markdown with HTML in it, as CommonMark allows. What Markdown can't say
+    (colour, underline, a centred or right-aligned paragraph or heading) stays as small pieces of HTML, and comes back
+    as it was.
+  - **HTML**: the mail's whole HTML, a forward's or a quote's inside folded, pasted pictures as `dc-picture:id`, with
+    the mail as it arrives beside it, which stays in view with a scroll of its own. A docked composer grows to the
+    window for it, and back when you leave it. On a phone a switch shows the HTML or the mail as it arrives. What you
+    write there that the rich document can't hold as its own (a layout, a style sheet) stays exactly as written, as a
+    block of its own.
+  - **Plain**: plain text only, no HTML part (`MailDraft.plainOnly`): the text part exactly as it goes, a forward or a
+    quote as its text, exactly as it goes, read-only under its name, with ✕ to take it out ("Put the forwarded message
+    back" then goes back to Rich, an HTML part again). No formatting buttons; pictures in the text are left out, and one pasted or dropped
+    here is attached. Markdown's marks stay as written; the bits of HTML it keeps (colour, alignment) go, their words
+    kept, as the hub does for every text part. Rich again makes it HTML.
+  - **A forward or a quote** is the document's own text when it can be without losing anything (`islandBlocks` in
+    `MailEditor.tsx`: plain tags, left to right (Gmail's `dir="auto"` too, unless the text is right to left), and only
+    styles the document keeps (a span's or a link's colour, a paragraph's alignment, a quote's bar) or that change nothing you see (Apple Mail's `line-break`, zero margins); every word and
+    picture there after): the attribution ("On …, Sam wrote:") then the original in a mail quote (`blockquote type=cite`, as
+    every quote the editor writes, nested as it was), or the forwarded-message lines then the original. It is edited
+    like the rest (trim it, answer inside it), is `>` in Markdown, and goes as it reads. Pictures it brings keep the
+    original's address (`data-dc-src`, and `data-dc-held` for a held one), so the pictures choice below applies to
+    them and they are marked the same way. "Quote <name>" comes back once its attribution line and its first words are
+    gone (a quote of your own does not count). A draft emptied of it stays so when it is opened again, and a forward's "Put the forwarded message back" once its lines are gone. An empty line goes
+    as `<p><br></p>`, which every mail app draws (an empty `<p>` is drawn as nothing), and `<p><br></p>` or Gmail's
+    `<div><br></div>` comes in as one empty line.
+  - **Otherwise it is kept whole** (an island: a newsletter's layout, its own styles), drawn in a sandboxed frame with
+    a bar: "Kept as its own HTML", its size, then its name (cut short on a phone; its tooltip says it all), Hide, Edit
+    HTML, Make it text and ✕. Edit HTML opens its HTML in an editor right under the bar, and the block is drawn again
+    below as you type; Done closes it (only opening it changes nothing). What was typed there, or in Markdown, HTML or Plain, a
+    moment ago goes with a send, a close, a discard or a switch of view at once. Make it text turns it into ordinary text to edit and answer inside (`islandText`
+    in `schema.ts`: its words, links, pictures, lists and quotes; its layout and styles gone, a layout's tables as their
+    cells one after another, a table of data with headers kept), the caret at its start; Undo brings the block back.
+    On a phone the bar's name has a line of its own, the buttons under it. The hub makes it (`hub/src/mail/island.ts`, `MailComposeStart.island`): the original's HTML with its style
+    sheets written into each element's own `style`, so it keeps its look in mail apps that drop style sheets (Gmail);
+    what can't go into one element (`@media`, `:hover`) stays in a sheet scoped to the block. Trackers are gone. Each
+    picture from the web keeps its address, shown as your picture setting shows it in the reader (a held one as a
+    striped box; one that will not go as the mail is sent, under the choice below, faded and dashed, here and in the
+    HTML view's "As it arrives"). It starts open. The caret starts on the line above it, never on the block, so typing
+    never replaces it. A block of HTML of your own has the same bar.
+  - **The editor fetches nothing from the web** (`ui/mail/editor/schema.ts`): a picture address you write or paste
+    (in any view) is a striped box the picture's shape, its host written on it, until it is sent, since your browser
+    fetching it would tell its host you are writing; one that will not go says "left out" on it. The frames' policy
+    lets in only this hub's pictures and pasted ones, and their `srcset` and `<picture>` sources are taken out (the hub
+    takes them out when sending too). An address without its scheme (`//host/pic.png`) is the web's, over https.
+  - **Pictures from the web** in it (a forward's, a quote's, an address written in the HTML view) go as the footer's
+    button says ("70 · Link · 1 can tell", beside the size, in sight however long the forward is), which opens the
+    choice (the last one made on the device is where a new mail starts; the untick below is that mail's alone): **Link** (the default: their app fetches them when they open it; one that can tell the
+    original sender is left out unless you untick "Leave out the ones that can tell", `MailDraft.linkCanTell`; Link
+    says how many can tell on itself, "Link · 2 can tell", and the footer's number is always what goes, "69 · Link · 1 left out", "0 · Leave out"; a phone leaves the number off for room), **Embed** (the hub fetches them now, through its image proxy, and sends them inside the mail:
+    nothing is fetched on their end; never linked instead: one that can't be fetched is left out, and so is one that can
+    tell unless the hub has it already, since fetching it now would tell the original sender; the choice says how many,
+    and that loading it in the reader first lets it go inside)
+    or **Leave out**.
+    Backgrounds (a `background` attribute, a style's or a sheet's `url()` and `image-set()`'s first choice), an SVG
+    `<image>` and a video's poster go the same way. Video and audio are linked as they are with Link, and taken out
+    (their fallback text kept) with Embed and Leave out; this hub's own addresses never leave. What Embed left out is
+    on the outbox item (`MailOutboxView.pictures`: `{ embedded, leftOut: { failed, canTell } }`), and the sending strip
+    says it ("· 2 pictures left out"). Each says what it does
+    to the size. Pictures inside the mail go as parts the HTML shows (`cid:`) when the account's status says
+    `details.inlineParts` (dither-accounts' `OutgoingFile.contentId`), else as `data:` pictures, which Gmail hides.
+  - **The text part** is plain text: the Markdown with every HTML tag in it taken out (its words kept, `<br>` and the
+    ends of blocks as line breaks, a link as `[text](address)` or its address alone when that is its text, entities and
+    Markdown's backslash escapes (`utm\_source`) undone; Markdown's own marks and code stay),
+    with a forward's or a quote's text as a plain-text mail has it and pictures as `[picture: name]`. An island carries a fingerprint of its words (`data-dc-text`): once they were edited in the HTML
+    view, or when the original had no text part, its text is made from its own HTML instead. `MailIsland.textBytes` is
+    what an island adds to the text part as made, which the size meter counts while the island is unchanged. Plain sends that alone: no HTML part.
+  - Drafts keep the HTML (`MailDraft.html`, with `pictures` and `plainOnly`); a draft from before it opens from its
+    Markdown and is kept as HTML from then on. The hub takes scripts, frames, forms, `on…` attributes and the editor's
+    own marks out before it goes, and never sends one of its own addresses (its proxy's, a part's): each is the
+    picture's own address, or the picture.
+- **Sizes.** The footer says "≈ 188 KB of 25 MB": the mail as it goes, pictures and files counted as base64 (a third
+  bigger). It opens the breakdown: the text part, the HTML part, the pictures pasted in, the ones embedded, the files,
+  the total, and what their app loads on their end (linked pictures, with the bytes the hub knows of them:
+  `POST /api/mail/pictures/sizes`, which fetches nothing, one answer per address, with whether the hub has it already
+  (`cached`, so the composer can say how many Embed would leave out); this hub's picture addresses, as a forward's
+  backgrounds have, count as the picture they stand for). The account's cap counts files and pictures
+  inside it by their own bytes, not their base64, as dither-accounts counts attachments; the footer turns red over it.
 - **Undo a send.** Send gives the message to the hub's outbox (`hub/src/mail/outbox.ts`), once per `clientId`, after checking
   it: someone to send to (To, Cc and Bcc together at most the account's `details.maxRecipients`, else 500, 100 on
   Proton), From one of the account's addresses (422 otherwise), 25 MB a file and the files together at most its
@@ -231,13 +405,41 @@ files made without the hub surviving a reload of the page (its draft does).
   follows one. A link whose text names another site ("paypal.com" going to evil.example) asks first, showing where it
   really goes; the message's ▾ details say so too, with a Reply-To that goes elsewhere and a name that is itself
   another address.
-- **Remote images** are held back: "4 remote images hidden · Load · Always from Sam", with placeholders of their size.
-  Allowed, they come through the hub (`GET /api/mail/img/<token>`, `hub/src/mail/images.ts`): the token is an HMAC of
-  the message and the URL with the hub's key, so the proxy fetches only what that message names. Public addresses
-  only, checked for every address a name resolves to, and the request goes to the address that was checked (a name
-  that changes its answer meanwhile gets nowhere); redirects checked again; no cookies or referrer; 10 MB at most;
-  kept only if the bytes are an image (not SVG); 7 days in the media cache. A tracker (1-2 px, or hidden by its
-  style) is dropped even when images are allowed: a pixel fetched through the hub still reports the open.
+- **Pictures and trackers** (`hub/src/mail/pictures.ts`). Each picture from the web is one of three kinds:
+  - a **tracker**: a 1-2 px or hidden image, or a known open-tracking service or path (`/track/open.php`, `/wf/open`,
+    …). Removed, by default; kept ("Trackers: Keep" in Settings → Mail), they load whenever any pictures load (Ones
+    unlikely to tell or All) and are held under None. One
+    mail's own choice comes first (`POST /api/mail/images { messageId, trackers: 'keep' | 'remove' | null }`; the
+    reader's `pictures.trackersSource` says whether it was the mail's or the setting's).
+  - **personal** ("can tell"): its address carries your address (plain, encoded, or hashed with MD5 or SHA), or an
+    id made for one recipient in a path segment, a query value or a host label (but the last two): a UUID, 5+ digits
+    alone, 10+ hex digits with a digit among them, 10+ letters and digits interleaved, 20+ letters and digits in one
+    case, or 16+ in a random mix of cases; or an id-like query key (`uid`, `u`, `e`, `r`, `id`, `user`, `mc_eid`, …)
+    with any value. Years (`/2024/`) and sizes (`1200x800`) are not ids. Fetching it can tell the sender you opened the mail. The rule leans this
+    way: a file named by its content's hash is held needlessly, never the other way round.
+  - **shared** ("unlikely to tell": a short id can slip through, so None is the only sure choice): the same address in every copy; seen in mail from another sender too counts as shared
+    (not your own mail: your Sent copy of a forward carries the original's personal pictures; in that copy the
+    original's sender is not enough either, it takes two senders who are not you, as in the composer).
+  Settings → Mail, **Load pictures**: None, **Ones unlikely to tell** (the default) or All. A sender's rule (Always or
+  Never from them) and a choice for one mail come first. The bar over a mail says what happened ("12 pictures loaded ·
+  3 held back (they would tell Sam you opened it) · 2 trackers removed"; on a phone without the why), with Load all,
+  and ⋯ for this mail's own
+  choice (No pictures, Only the ones unlikely to tell, All pictures, or back to the usual), its trackers (kept or
+  removed), the sender's rule, and **Details**: how many hosts the loaded ones come from, then every host, its kind,
+  why, what happened to it and its size once the hub has it ("loads when shown" before). Links
+  are not changed: a link can still tell the sender you clicked it. The bar stays when pictures that can tell were
+  loaded ("12 pictures loaded, 2 of them could tell Sam"), so you know, and can take it back.
+  Allowed pictures come through the hub (`GET /api/mail/img/<token>`, `hub/src/mail/images.ts`): the token is an HMAC
+  of the message and the URL with the hub's key, so the proxy fetches only what that message names, and only while
+  the message's policy still loads it. Public addresses only, checked for every address a name resolves to, and the
+  request goes to the address that was checked (a name that changes its answer meanwhile gets nowhere); redirects
+  checked again; no cookies or referrer; 10 MB at most; kept only if the bytes are an image (not SVG); 7 days in the
+  media cache. A picture the cache already has loads under "Ones unlikely to tell" whatever its kind (fetching it again
+  would tell no one).
+- **Sizes of a mail you got.** The message's ▾ details have a Size row: the raw message as the server counts it, its
+  HTML, text and files, and its pictures: how many loaded from how many hosts (`pictures.hosts`: the hosts of the
+  loaded ones; `hostsAll` every picture's) and their bytes, how many load when shown (`unknown`: loaded, but the hub
+  has not fetched them yet; such an item has `cached: false` and no `size`), how many not loaded.
 - **`cid:` pictures** come from the message's own parts and always show.
 - **Files** show under the message as chat's cards; pictures the HTML shows itself are not listed again. They come
   from the server with `mail.attachment` the first time they are opened, go into the media cache, and are looked at
@@ -347,15 +549,16 @@ Opening a thread, from a mail row or the Mail page, is in the activity log as a 
 its row and where the shadow order had it when it came from the inbox. The learned order with mail (slice 10) learns
 from those (inbox.md, "Mail in the learned order").
 Tests: `hub/test/mail-classify.test.ts`, `mail-attention.test.ts`, `web/test/inbox-mail.test.ts`; `verify-inbox.ts`
-(mixed rows) and `verify-mail.ts` (Updates, Ranked, Newest, Everything and an old People link on a phone and a desktop
-in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every scored thread in the
-window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
+(mixed rows) and `verify-mail.ts` (the Updates and Everything chips in the Inbox's sidebar and an old People link on a
+phone and a desktop in both themes, Not a person). Ranked: `mail-attention.test.ts` ("Mail's ranked Inbox": every
+scored thread in the window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts` (`rankedThreads`).
 
 ## Search (slice 7)
 
-- **Where.** Mail's search button (beside the folders) puts a search box in place of the list. A search is a list key,
-  `s:<query>` (protocol `searchList`), so `#/mail/l/s%3A<query>` links to one and a thread opens beside its results as
-  from any list, and back returns to them. Chips: Unread, Starred, Attachment. The search page gets a **Mail** group
+- **Where.** A mail list's search box, the Inbox header's (docs/inbox.md "Mail lists"), searches that list: the query
+  starts with the list's operators (web `mail/model.ts` `listSearch`, read back by `searchIn`). A search is a list key,
+  `s:<query>` (protocol `searchList`), so `#/inbox?mail=s%3A<query>` links to one and a thread opens beside its results
+  as from any list. The search page gets a **Mail** group
   above the chats' results: the hub's own top five threads and the way into Mail's search. It shows only while the hub
   has mail and the query means something in mail (`mailSearchable`), and it is a request of its own, drawn by Mail's
   chunk, so the chats' results never wait for it (docs/search.md).
@@ -374,6 +577,7 @@ window, Inbox paged by date while a score changes), `web/test/mail-model.test.ts
   | `has:attachment` | with a file |
   | `filename:lease` | an attachment's name ("Keeping all mail": for every account, once its body was fetched) |
   | `is:unread`, `is:read`, `is:starred` (or `is:flagged`) | as the hub has it |
+  | `is:update` (or `is:updates`) | mail not from a person, the Updates list's; this hub's own sorting, so servers are not asked it |
   | `account:proton`, `account:me@x.org` | one mail account, by label, address, kind or id |
   | `before:`, `after:`, `during:`, `sort:oldest` | as in chat search, on when the server got it |
 
@@ -1023,11 +1227,12 @@ is fetched by id, and the window stays "missed" until it is read.
   `DITHER_MAIL_HOLD_MS=500` shortens the 10 s Undo for scripts (`verify-notifications.ts` uses it).
 
   verify-mail drives it in headless Chromium on a phone (390 px, touch) and a desktop, in the dark and light themes:
-  no page errors, nothing off the side of the screen, list → thread → back on a phone, the quote fold, read here, and
-  the HTML-only message; the views in one row of chips, every folded message with a snippet (yours too), the phone
-  reader's subject whole or on two lines beside Archive and ⋯, and the reply it sends shown as text. Its `--proton` run
-  (two accounts) also checks the account picker under "Mail". `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip
-  labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
+  no page errors, nothing off the side of the screen; the Inbox's mail list (`#/inbox?mail=…`) with its four chips in
+  one row; a person's mail as messages in their chat (yours too), with the subject tag and its card, the quote behind
+  …, read here, and back on a phone; a thread of three or more as its own chat, its subject on one line beside
+  Archive and ⋯ on a phone; the HTML-only message; and the reply it sends from the chat's box, under the subject pill,
+  shown as text. Its `--proton` run (two accounts) also checks the account wheels over the Everything list.
+  `DITHER_DEMO_MAIL_GMAIL=1` adds a Gmail account (a trip labelled Travel and marked Important, that you answered; Mom's photos under Family; a starred recipe; a booking
   archived under Travel; list mail), and `--gmail` checks it ("Gmail" above). Use a fresh data dir each run: reading marks threads read. With `--html` it also checks the
   frame (slice 3): no script runs in it, not even one put there by hand; no request leaves for anywhere but the hub;
   link clicks go through the opener, and a misleading one asks first; the image banner and the proxy; quotes, `cid:`
@@ -1049,9 +1254,11 @@ is fetched by id, and the window stays "missed" until it is read.
   files by path and by their bytes, a forward's files, From, a recipient or settings refused (422), a clientId sent
   once, a restart mid-send, the server's recipient suggestions).
   `mail-remote.test.ts` sends a reply through the SMTP sink and checks its headers and its copy in the thread.
-  `verify-mail.ts` writes, undoes and sends on a phone (a chip opened and undone, a Markdown reply drawn in the
-  theme) and docks a new message on a desktop (the server's suggestions, a chip edited in place, B, Preview, Ctrl+Z,
-  discard and its Undo), last, since it sends. Start it a few seconds after the demo hub: the demo's two live notices
+  `verify-mail.ts` writes, undoes and sends on a phone (a reply from the chat's box held, undone and sent now; the full
+  editor from a message's menu, a chip opened and undone, a bold reply drawn in the theme) and docks a new message on
+  a desktop (the server's suggestions, a chip edited in place, B, the Markdown and HTML views, Ctrl+Z, a picture pasted in the text, a table and centred text kept through edits in HTML and
+  Markdown, Plain, the reader's choice for one mail, a big newsletter forwarded with Link counting what can tell and
+  its pictures embedded, discard and its Undo), last, since it sends. Start it a few seconds after the demo hub: the demo's two live notices
   arrive 4 s in, and their toasts would take its taps on a phone.
 - `hub/test/mail-remote.test.ts` runs against a real manager with an `imap` account on dither-accounts' Dovecot and
   SMTP sink (ports 18580–18589). It needs the dither-accounts checkout (beside this repo, or `DITHER_ACCOUNTS_REPO`)

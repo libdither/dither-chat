@@ -23,7 +23,7 @@ Devices only send to it.
 |---|---|
 | `id` | made by the device; the device sends the same visit again while it lasts |
 | `device`, `device_label` | a random id per install (localStorage), and "Firefox on Linux" / "Android app" |
-| `view` | `inbox`, `triage`, `conversation` (any open timeline: DM, group, channel, thread), `space`, `person`, `people`, `profile`, `folder`, `spaces`, `search`, `settings`, `accounts`, `directory`, `mail` (the Mail page, or a thread with its id as `conversation_id`, since 2026-11-20) |
+| `view` | `inbox`, `triage`, `conversation` (any open timeline: DM, group, channel, thread), `space`, `person`, `people`, `profile`, `folder`, `spaces`, `search`, `settings`, `accounts`, `directory`, `mail` (a mail thread's chat, or a person's chat on their email route, with the thread's id as `conversation_id`, since 2026-11-20; the Mail page until 2026-11-23) |
 | `conversation_id`, `space_id`, `person_id` | the place: the open conversation, its community, and for a DM the person |
 | `start_at`, `end_at` | when the stay began, and when it was last in use |
 | `active` | seconds in use, by the usage rules: page visible, window focused, input in the last 5 minutes, at most 30 s per tick |
@@ -75,10 +75,13 @@ before 2026-11-12 each such start was logged as another tap of that push, a stay
 "tap" visits, from 4 pushes). Now it is a `start`.
 
 `notification` keeps the kind (`message`, `held` for the quiet-hours summary, `request` for a request waiting on you,
-docs/add.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
+docs/add.md; `ring` for a call ringing you, docs/calls.md; rows of kind `digest` are from before the tiers, when a daily digest notification existed), the message and
 conversation, when it was sent, how many registrations it went to and how many push servers took it, the first
-time any device said each outcome, and the visit the tap led to. `notification_event` keeps each device's word,
-once per device and outcome.
+time any device said each outcome, and the visit the tap led to; for 15 days also the words it went out with
+(`title`, `body`, `look`) and whether a computer was in use, for the Notification calibration page
+([notifications.md](notifications.md#where-you-saw-it)). `notification_device` keeps each registration it went to,
+by its label then. `notification_event` keeps each device's word, once per device and outcome, and with `shown` (or
+`inapp`) where and how it showed (`seen`: the surface, sound, locked, screen on, a page open, the tags beside it).
 
 | Outcome | Web Push (sw.js) | Android app |
 |---|---|---|
@@ -91,11 +94,21 @@ once per device and outcome.
 | `replied` | an answer typed into the notification went out (Chromium only) | same, from the reply action |
 
 Delivery is only confirmed where the device runs code for the push. A push server that took the push
-(`accepted`) does not mean it arrived: a phone that is off or a distributor that is not running drops it.
+(`accepted`) does not mean it arrived: a phone that is off or a distributor that is not running drops it. Whether it
+sounded there (`alert`: an alert starting a burst, a ring, quiet hours' summary) is kept with it for the scorecard's
+sounds a day ([scorecard.md](scorecard.md#the-cost-side)).
 
 A dismissal is also how the inbox knows you saw a notification without opening its conversation: the conversation
 stays unread, and its alert, its boost and its importance stop counting there
 ([inbox.md](inbox.md#unread-alerts-and-importance)).
+
+### `push_skip`: pushes not sent
+
+A push the hub decided against for a message triage sent on (`activity.skipped` in `notify.ts`,
+[notifications.md](notifications.md#one-notification-per-conversation)): `watched`, its chat was open at its newest
+message on a computer in use; `capped`, a silent Conversation within its chat's ten minutes. The message, the
+conversation, `why` and when: count them with `SELECT why, COUNT(*) FROM push_skip WHERE at >= ? GROUP BY why`. Kept
+for the log's retention and deleted with it; nothing is kept while the log is off.
 
 ### `triage_input`: what triage knew when it decided
 
@@ -211,7 +224,7 @@ Settings → Privacy → **Keep an activity log** (on by default):
   retention, at most 200,000 visits and 100,000 notifications are kept, oldest first out (`MAX_VISITS`,
   `MAX_NOTIFICATIONS`). Pruning runs at start and at most every 10 minutes as data arrives.
 - **Export my activity log** and **Export training examples**: the two files above.
-- **Delete activity log…**: everything in `visit`, `notification`, `notification_event` and `triage_input`. Usage
+- **Delete activity log…**: everything in `visit`, `notification`, `notification_event`, `notification_device`, `push_skip` and `triage_input`. Usage
   totals, which order the sidebar, are separate and stay ("Reset Usage History…" in the sort menu clears those).
   The inbox's learned order goes back to its prior within half an hour, since what it learned came from the log.
 

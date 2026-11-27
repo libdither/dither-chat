@@ -35,6 +35,25 @@ const MAX_VISITS = 200_000;
 const MAX_NOTIFICATIONS = 100_000;
 const MAX_FORYOU = 200_000;
 const PRUNE_EVERY = 10 * MIN;
+/**
+ * How long a notification's words (its title, body and lines) are kept beside it, for the Notification calibration
+ * page to draw it again: a little longer than a question waits there (checkin.ts EXPIRE_AFTER). Then they are cleared.
+ */
+export const WORDS_KEPT = 15 * DAY;
+const SURFACES: readonly P.SeenSurface[] = ['heads_up', 'shade', 'lock', 'list_row', 'browser', 'toast'];
+const SOUNDS: readonly P.SeenSound[] = ['sound', 'vibrate', 'silent'];
+
+/** A device's word on where it showed a notification, codes only; null when it said nothing usable. */
+function cleanSeen(v: unknown): P.NotificationSeen | null {
+  if (!v || typeof v !== 'object') return null;
+  const x = v as Record<string, unknown>;
+  const out: P.NotificationSeen = {};
+  if (SURFACES.includes(x.surface as P.SeenSurface)) out.surface = x.surface as P.SeenSurface;
+  if (SOUNDS.includes(x.sound as P.SeenSound)) out.sound = x.sound as P.SeenSound;
+  for (const k of ['locked', 'screenOn', 'pageOpen'] as const) if (typeof x[k] === 'boolean') out[k] = x[k] as boolean;
+  if (Array.isArray(x.beside)) out.beside = x.beside.filter((t): t is string => typeof t === 'string' && t.length > 0 && t.length <= 128).slice(0, 12);
+  return Object.keys(out).length ? out : null;
+}
 
 const EVENT_COLUMN: Partial<Record<P.NotificationEventKind, string>> = {
   delivered: 'delivered_at',
@@ -47,6 +66,25 @@ const EVENT_COLUMN: Partial<Record<P.NotificationEventKind, string>> = {
 
 /** Identities that are you: the accounts' own, and the identities of the person marked as you. */
 const SELF = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL UNION SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1)`;
+
+/** A registration a push went to (push.ts `notify`). */
+export interface SentTo {
+  id: string;
+  label: string;
+  android: boolean;
+  ok: boolean;
+}
+
+/** What a notification looked like beyond its title and body (the payload's grouped lines, its chat, its tier). */
+export interface ComposedLook {
+  network?: string;
+  icon?: string;
+  tier: 'push' | 'quiet' | 'digest';
+  count?: number;
+  conv?: { title: string; shape: 'direct' | 'group' | 'channel' };
+  lines?: { author: string; body: string; ts?: number }[];
+  keep?: boolean;
+}
 
 const str = (v: unknown, max: number): string | null => (typeof v === 'string' && v && v.length <= max ? v : null);
 const int = (v: unknown, lo: number, hi: number): number => Math.min(Math.max(Math.floor(Number(v) || 0), lo), hi);
@@ -228,7 +266,9 @@ export function describeActivity(f: P.PlaceActivity): string | null {
 // ------------------------------------------------------------------ the store
 
 /** `reminder`: a calendar reminder from before calendar accounts, with no message or conversation (old rows; now a reminder is a message). */
-type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder';
+type NotificationKind = 'message' | 'held' | 'digest' | 'request' | 'reminder' | 'ring';
+/** Why a push was not sent (`push_skip`). */
+type PushSkip = 'watched' | 'capped';
 
 export interface Features {
   conversation: P.PlaceActivity;
@@ -301,9 +341,34 @@ export class ActivityStore {
     return id;
   }
 
-  /** How many push registrations it went to, and how many push servers took it. */
-  sent(id: string, r: { devices: number; accepted: number }) {
-    this.db.query('UPDATE notification SET devices = ?, accepted = ? WHERE id = ?').run(r.devices, r.accepted, id);
+  /** A push not sent (`push_skip`): the chat was watched on a computer, or a silent Conversation within its ten minutes. */
+  skipped(s: { messageId: string; conversationId: string; why: PushSkip }, now = Date.now()) {
+    if (!this.enabled) return;
+    this.db.query('INSERT INTO push_skip (message_id, conversation_id, why, at) VALUES (?, ?, ?, ?)').run(s.messageId, s.conversationId, s.why, now);
+  }
+
+  /**
+   * How many push registrations it went to, how many push servers took it, and whether it sounded there (`alert`: an
+   * alert's first push of a burst, a ring; the scorecard's sounds a day, docs/scorecard.md). `to`: each registration,
+   * kept for where you saw it (notification_device).
+   */
+  sent(id: string, r: { devices: number; accepted: number; to?: SentTo[] }, alert?: boolean) {
+    this.db.query('UPDATE notification SET devices = ?, accepted = ?, alert = ? WHERE id = ?').run(r.devices, r.accepted, alert === undefined ? null : +alert, id);
+    if (!r.to?.length) return;
+    const put = this.db.query('INSERT OR REPLACE INTO notification_device (notification_id, device, label, android, sounds, ok) VALUES (?, ?, ?, ?, ?, ?)');
+    this.db.transaction(() => {
+      for (const t of r.to!.slice(0, 50)) put.run(id, t.id, t.label.slice(0, 80), +t.android, +!!alert, +t.ok);
+    })();
+  }
+
+  /**
+   * The words a notification went out with, and the moment (docs/notifications.md, "Where you saw it"): what the
+   * devices drew, so the Notification calibration page can draw it again. Kept WORDS_KEPT, then cleared.
+   */
+  composed(id: string, c: { title: string; body: string; look: ComposedLook; computerInUse: boolean | null }) {
+    this.db
+      .query('UPDATE notification SET title = ?, body = ?, look = ?, computer_in_use = ? WHERE id = ?')
+      .run(c.title.slice(0, 200), c.body.slice(0, 1000), JSON.stringify(c.look), c.computerInUse === null ? null : +c.computerInUse, id);
   }
 
   /** What devices say happened. Each device's first word on each event counts; repeats change nothing. */
@@ -317,7 +382,8 @@ export class ActivityStore {
         const row = this.db.query('SELECT sent_at, conversation_id FROM notification WHERE id = ?').get(id) as Row | null;
         if (!row) continue;
         const at = Math.min(Math.max(Number(e.at) || now, row.sent_at), now);
-        const r = this.db.query('INSERT OR IGNORE INTO notification_event (notification_id, device, event, at) VALUES (?, ?, ?, ?)').run(id, str(e.device, 64) ?? '', e.event!, at);
+        const seen = cleanSeen(e.seen);
+        const r = this.db.query('INSERT OR IGNORE INTO notification_event (notification_id, device, event, at, seen) VALUES (?, ?, ?, ?, ?)').run(id, str(e.device, 64) ?? '', e.event!, at, seen ? JSON.stringify(seen) : null);
         if (!r.changes) continue;
         n++;
         const col = EVENT_COLUMN[e.event as P.NotificationEventKind];
@@ -430,8 +496,12 @@ export class ActivityStore {
       const k = over('notification', caps.notifications);
       if (k) n += this.db.query('DELETE FROM notification WHERE id IN (SELECT id FROM notification ORDER BY sent_at LIMIT ?)').run(k).changes;
       this.db.query('DELETE FROM notification_event WHERE notification_id NOT IN (SELECT id FROM notification)').run();
+      this.db.query('DELETE FROM notification_device WHERE notification_id NOT IN (SELECT id FROM notification)').run();
+      // The words go after WORDS_KEPT: the row and its times stay for their retention.
+      this.db.query('UPDATE notification SET title = NULL, body = NULL, look = NULL WHERE sent_at < ? AND look IS NOT NULL').run(now - WORDS_KEPT);
       this.db.query('DELETE FROM triage_input WHERE at < ?').run(cutoff);
       n += this.db.query('DELETE FROM inbox_action WHERE at < ?').run(cutoff).changes;
+      n += this.db.query('DELETE FROM push_skip WHERE at < ?').run(cutoff).changes;
       // For you's served items and what devices said of them (foryou.ts).
       n += this.db.query('DELETE FROM foryou_item WHERE created_at < ?').run(cutoff).changes;
       const f = over('foryou_item', caps.foryou ?? MAX_FORYOU);
@@ -459,7 +529,7 @@ export class ActivityStore {
 
   /** Everything in the log. Usage totals (place_usage) are separate and stay. */
   clear() {
-    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM triage_input; DELETE FROM inbox_action; DELETE FROM foryou_item; DELETE FROM foryou_event;');
+    this.db.exec('DELETE FROM visit; DELETE FROM notification; DELETE FROM notification_event; DELETE FROM notification_device; DELETE FROM triage_input; DELETE FROM inbox_action; DELETE FROM push_skip; DELETE FROM foryou_item; DELETE FROM foryou_event;');
     this.cache.clear();
   }
 

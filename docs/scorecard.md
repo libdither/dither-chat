@@ -46,6 +46,14 @@ Opens are visits to the chat of 5 s or more in use (`labels.ts` `OPEN_DWELL`), o
 | `needs.predicted`, `needs.answered` | for owed replies whose 3 days ended that day, the mean "needs a reply" chance shown (`needs_prediction`, kept at 15 min, 1 h, 6 h and a day of age) and the share answered within the 3 days ([inbox.md](inbox.md#needs-a-reply)) | chances kept |
 | `needs.brier`, `needs.brier_table` | the same: the Brier score of the chance shown, and of the owed table's chance alone | chances kept |
 | `foryou.clicked`, `foryou.clicked_explore` | of the For you items on screen that day (a `shown` event, [foryou.md](foryou.md)), the share opened from it; and the same for exploration slots alone, which no order chose | items shown, and those from exploration slots |
+| `attn.sounds` | notifications that sounded that day ([below](#the-cost-side)) | notifications a push server took |
+| `attn.sounds_computer_hour` | the sounds in clock hours a computer was in use, over those hours | those hours |
+| `attn.stale` | the share of message notifications sent while that chat was open on a computer in use and read past the message there | message notifications a push server took |
+| `attn.stale_shown` | notifications tapped or swiped away after a stay on a computer read their chat past them | notifications tapped or swiped |
+| `attn.checks` | app opens with nothing at the list or above since the last look | app opens |
+| `people.wait`, `people.wait_p90` | for the replies you gave people that day, the median and the 90th-percentile wait, in hours | those replies |
+| `people.owed_3d` | at the day's end, the people waiting on a reply from you for over 3 days | conversations with people with a turn in the 30 days before |
+| `people.breadth`, `people.breadth_before` | the people you wrote to in the 30 days to the day's end, and in the 30 days before those (`extra.kept`: in both) | the same |
 
 Why each:
 
@@ -62,6 +70,85 @@ Why each:
 - **Needs a reply** is a chance shown on the row, so it should mean what it says: the two lines of the first chart
   close together, and the chance's Brier under the table's. A turn is scored on the day its window ends, which a day
   has always passed by the time it matures; "No reply needed" counts as not answered.
+
+## The cost side
+
+The metrics above say whether the models ranked well; these say what notifying cost, and how the people who write to
+you are doing. They are tracked before any change to how notifications are decided, as the baseline to beat. There is
+no budget: the counts are kept and shown as they are.
+
+- **A sound** is a notification that played a sound where it went: an alert that starts a burst (delivery.ts `alert`:
+  the first push about its chat in five minutes, one after only silent ones, or one to you, and none while a computer
+  was in use in the last two minutes), a call ringing, quiet hours' summary. The hub keeps it with the notification
+  (`notification.alert`, written when the push servers answer: notify.ts `sounded`), and counts it when a push server
+  took the push. Before that was kept, the scorecard plays the hub's rule back over the log: the chat's triage
+  decision, the burst, a mention of you, and the computer stays then; mail's and notices' alerts have no triage row
+  there and are not played back, so days before the column count none of theirs. A device in Do Not Disturb, or a
+  phone set silent, still counts: the hub cannot know.
+- **At a computer** is a stay (`visit`) with time in use from a device whose label is not a phone's (delivery.ts
+  `PHONE`). An hour is a computer hour when such a stay overlaps it.
+- **Stale** (`attn.stale`) is a push that came while the chat was open on a computer: a stay there spanning the push,
+  whose read point (`read_to_ts`, else `seen_to_ts`) reached the message. `attn.stale_shown` is what the devices can say
+  about a notification left up after its chat was read on a computer: only the ones you then tapped or swiped away
+  after such a stay. A phone does not report that a clear closed a notification, a desktop browser is sent one only within
+  limits ([notifications.md](notifications.md#read-elsewhere-gone-here)), and a notification left alone reports
+  nothing, so the count is a floor, not the whole.
+- **A check with nothing new** (`attn.checks`) is an app open, a stay on any device that begins ten minutes or more
+  after every earlier stay ended (`LOOK_GAP`), with no chat message triage put on the list or above, and no such mail,
+  between the end of the last look and the open.
+- **People** are the other side of a DM, or of a group of six or fewer (attention.ts `SMALL_GROUP`), on a network of
+  people: not channels, threads, feeds, mail, the Calendar chat or an agent's threads (`PEOPLE_SQL`); not bots.
+  - **The wait** is how long after a turn addressed to you (owed_turn, [inbox.md](inbox.md#needs-a-reply)) you
+    answered it, for the turns answered that day; a reaction (no known time) and "No reply needed" are left out.
+  - **Owed over 3 days** takes each conversation with people's latest turn begun in the 30 days before the day's end
+    (`OWED_LOOKBACK`), from owed_turn and the turns still open (the fold's state, read once a run), and counts those
+    begun 3 days or more before the end, not answered by then and not marked "No reply needed". Older turns ran out
+    long since and are left out.
+  - **Breadth** is everyone else in the conversations with people you wrote in, by person (or by account where there
+    is none).
+
+## The loudness scale
+
+From the calibration feed's cards ([notifications.md](notifications.md#the-calibration-feed)), and before
+2026-11-25 the check-ins' random half, weighting each answer by one over the chance it had of being drawn (inverse
+propensity), so the rates lean less towards what was worth asking. A card is drawn in proportion to how worth asking it
+is, so each has a chance well above nothing and the weights stay honest, but only over notifications worth asking
+about at all (those over 0.5): the rates say how the model does where it is unsure or surprised, not across every
+sound. A feed answer counts as the old ones did: Sound on one that sounded as worth it, Show or Inbox on it as could
+have waited, Sound on one that did not as wish I'd known sooner, Show or Inbox on it as fine.
+
+- `attn.worth`: of the sounds, the share worth it; `attn.worth_shadow`, the same for those the scale alone would have
+  sounded.
+- `attn.could_wait`, `attn.shouldnt`: of the sounds, could have waited, shouldn't have reached you.
+- `attn.missed`: of the quiet ones, wish I'd known sooner.
+- `attn.asked`: cards drawn that day (with how many were answered and skipped).
+- `foryou.worth`: of For you's asked cards, glad I saw this (until 2026-11-25, when For you stopped asking).
+
+And the scale beside the tiers, while it runs in shadow: `shadow.sounds` (messages loud enough to sound),
+`shadow.agree` (the share in the same band as the tier), and of the messages you answered within 30 minutes, the share
+the scale put at show or louder, 30 and up (`shadow.quick_show`) against the share the tiers made an alert or a Conversation
+(`shadow.quick_show_live`). `SCORE_VERSION` 5 scores the days kept again with Show from 30 (the next look's
+stretch, 30 to 55, now shows; it also agrees with a list row in `shadow.agree`).
+
+## The weekly report
+
+`GET /api/attention/report` (`attnreport.ts`, `AttentionReport`), drawn by the page **Your attention**
+(`ui/AttentionReport.tsx`, a chunk of its own), reached from Settings → Notifications and from How it sorts:
+
+- **Sounds each day** for the last 14 scored days, as bars (hover, a tap or the arrow keys show the day, with its
+  sounds an hour at a computer), and the last 7 days' mean against the 7 before. No budget line.
+- **People waiting on you**: the inbox's owed replies (`owedSince`) in conversations with people, begun in the last
+  30 days, the longest waiting first (8 listed, and how many more); the median and 90th-percentile wait for your
+  replies over the last 7 days against the 7 before (read from owed_turn, not averaged from days); and how many
+  waited over 3 days, on the last scored day against a week before.
+- **Who you talk with**: breadth on the last scored day, against the 30 days before it.
+- **Drifting**: at most one person a week, chosen from the week's Monday (`weekStart`) so it holds all week: someone
+  you wrote to in at least 4 of the 12 weeks before the last 4, with no message either way in any of those
+  conversations since (`conversation.last_message_at`); the one with the most such weeks. It is in the report only:
+  never a push, never a row.
+- **Checks with nothing new** and notifications still up after reading, as totals over 7 days against the 7 before.
+
+The report holds ids for the app to name from what it already has, and numbers; no names and no text.
 
 ## On How it sorts
 
@@ -97,6 +184,21 @@ The loop, for an agent once a week:
 4. Open a pull request only if the change wins in the replay at the same size of list (or fewer notifications), and
    say so in its description with the replay's numbers. After it deploys, the scorecard's next days say whether it
    held live.
+
+## On a real hub: the cost side (copy of 2026-11-24)
+
+Days 2026-11-09 to 11-22 (the log begins 11-03; the column that keeps sounds did not exist yet, so every day is
+played back):
+
+- **Sounds**: 0, 0, 1, 1, 2, 0, 1 a day in the first week, 2, 1, 0, 4, 4, 4, 11 in the second: 3.7 a day against
+  0.7. In computer hours, 0.1 an hour against under 0.1.
+- **Stale pushes**: 10% of 1,144 in the second week (4% of 2,638 the week before, the noisy 11-15 among them);
+  notifications still up after reading: 1 against 7.
+- **Checks with nothing new**: 0 of 38 opens against 2 of 74. Busy channels put something on the list nearly
+  every ten minutes, so an open almost always finds something.
+- **The wait**: median 5 minutes over the last 7 days (4 minutes the week before), 90th percentile 22 hours (3 hours).
+- **Owed over 3 days**: 15 at the end of 11-22, 23 a week before.
+- **Breadth**: 79 people written to in 30 days, against 76 in the 30 before.
 
 ## Seams
 

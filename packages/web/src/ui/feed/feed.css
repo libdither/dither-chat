@@ -306,6 +306,28 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A long-form post's whole body, in the file viewer's Markdown look, at the thread's width. */
+.fv-md.thread-article {
+  max-width: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.thread-article > :first-child {
+  margin-top: 0;
+}
+.thread-article p,
+.thread-article figure {
+  margin: 0 0 0.9em;
+}
+.thread-article .fv-md-img {
+  display: block;
+  height: auto;
+  margin: 0.4em auto;
+  border-radius: var(--radius-sm);
+}
 .thread-focal-time {
   color: var(--text-faint);
   font-size: 13px;

@@ -1,7 +1,7 @@
 /**
  * MessageFact.extra's known keys (protocol extra.ts) as MessageView shows them: a reply's own quote, contact cards, a
- * story reply, the people a send did not reach, files that did not download, a text sent as SMS, and per-attachment
- * notes (docs/messages.md).
+ * story reply, the people a send did not reach, files that did not download, a text sent as SMS, when it was moved,
+ * and per-attachment notes (docs/messages.md).
  * Pure: the store hands in how to name identities and serve media. Anything malformed is left out, never an error.
  */
 import type * as P from '@dither-chat/protocol';
@@ -18,7 +18,7 @@ interface ExtraDeps {
   stored(messageId: string): boolean;
 }
 
-type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms'> & {
+type ExtraView = Pick<P.MessageView, 'quote' | 'contacts' | 'storyReply' | 'failed' | 'missingAttachments' | 'disappears' | 'sms' | 'movedAt' | 'blast'> & {
   /** One per attachment position. */
   notes?: (P.AttachmentNote | null)[];
 };
@@ -48,6 +48,10 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
     };
   }
 
+  // Moved to another topic (Zulip): `movedAt`, or `zulip.movedAt` as its extractor said it before the key was shared.
+  const moved = e.movedAt ?? (extra.zulip as { movedAt?: unknown } | undefined)?.movedAt;
+  if (typeof moved === 'number' && Number.isFinite(moved) && moved > 0) out.movedAt = moved;
+
   const cards = arr<P.SharedContactFact>(e.contacts).filter((c) => c && typeof c.name === 'string');
   if (cards.length)
     out.contacts = cards.map((c) => ({
@@ -66,7 +70,9 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
     out.storyReply = { mine: !!author && d.isSelf(author), authorId: author ? d.identity(author) : null, ...(str(s.emoji) ? { emoji: s.emoji } : {}) };
   }
 
-  const failed = arr<P.SendFailureFact>(e.failed).filter((f) => f && REASONS.has(f.reason));
+  // Someone gone from the network ('unregistered') is left out, as Signal's apps leave them out: they are gone for good,
+  // so every message to their group would say so again. Adapters no longer send it; this hides what was stored before.
+  const failed = arr<P.SendFailureFact>(e.failed).filter((f) => f && REASONS.has(f.reason) && f.reason !== 'unregistered');
   if (failed.length)
     out.failed = failed.map((f) => {
       const identityId = str(f.who) ? d.identity(f.who!) : null;
@@ -80,6 +86,9 @@ export function extraView(extra: Record<string, unknown> | null, replyToId: stri
       ...(str(m.mime) ? { mime: m.mime } : {}),
       ...(typeof m.size === 'number' ? { size: m.size } : {}),
     }));
+
+  // A host's blast to every guest of an event (docs/events.md): an announcement.
+  if (e.blast === true) out.blast = true;
 
   if (typeof e.expiresInSeconds === 'number' && e.expiresInSeconds > 0) out.disappears = e.expiresInSeconds;
   if (e.sms === 'sms' || e.sms === 'mms') out.sms = e.sms;

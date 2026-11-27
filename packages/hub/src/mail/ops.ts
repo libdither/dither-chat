@@ -177,15 +177,23 @@ class MailOps {
   // ---------------------------------------------------------- settings
 
   settings(): P.MailSettings {
-    const v = this.one<{ value: string }>(`SELECT value FROM mail_setting WHERE key = 'markRead'`)?.value;
-    return { markRead: v === 'manual' ? 'manual' : 'view' };
+    const v = (k: string) => this.one<{ value: string }>(`SELECT value FROM mail_setting WHERE key = ?`, k)?.value;
+    const pictures = v('pictures');
+    return {
+      markRead: v('markRead') === 'manual' ? 'manual' : 'view',
+      pictures: pictures === 'none' || pictures === 'all' ? pictures : 'shared',
+      trackers: v('trackers') === 'keep' ? 'keep' : 'remove',
+    };
   }
 
   setSettings(s: Partial<P.MailSettings>): P.MailSettings {
-    if (s.markRead !== undefined) {
-      if (s.markRead !== 'view' && s.markRead !== 'manual') throw new MailCallError('markRead: view or manual', 400);
-      this.run(`INSERT INTO mail_setting (key, value) VALUES ('markRead', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, s.markRead);
-    }
+    const set = (k: string, value: string) => this.run(`INSERT INTO mail_setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, k, value);
+    if (s.markRead !== undefined && s.markRead !== 'view' && s.markRead !== 'manual') throw new MailCallError('markRead: view or manual', 400);
+    if (s.pictures !== undefined && !['none', 'shared', 'all'].includes(s.pictures)) throw new MailCallError('pictures: none, shared or all', 400);
+    if (s.trackers !== undefined && s.trackers !== 'remove' && s.trackers !== 'keep') throw new MailCallError('trackers: remove or keep', 400);
+    if (s.markRead !== undefined) set('markRead', s.markRead);
+    if (s.pictures !== undefined) set('pictures', s.pictures);
+    if (s.trackers !== undefined) set('trackers', s.trackers);
     return this.settings();
   }
 

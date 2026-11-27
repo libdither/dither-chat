@@ -51,8 +51,9 @@ export interface PictureTarget {
 /** What the editor opens on: a file, a picture by its path, or nothing yet (it asks for one). */
 export type PictureStart = { file?: Blob; url?: string };
 
-const TYPES = 'image/png,image/jpeg,image/gif,image/webp';
-const isPicture = (f: Blob) => /^image\/(png|jpeg|gif|webp)$/.test(f.type);
+// JPEG XL where the browser shows it: the picture is drawn again as a PNG or JPEG either way.
+const TYPES = 'image/png,image/jpeg,image/gif,image/webp,image/jxl';
+const isPicture = (f: Blob) => /^image\/(png|jpeg|gif|webp|jxl)$/.test(f.type);
 const netName = (n: P.Network) => NETWORK_META[n].name;
 const names = (ds: PictureDest[]) => {
   const l = ds.map((d) => d.label);
@@ -131,11 +132,12 @@ async function undo(target: PictureTarget, ds: PictureDest[]) {
   else toast({ kind: 'info', title: 'Picture put back', body: '' }, 3000);
 }
 
-/** The menu the big picture opens. */
-export function pictureMenu(e: MouseEvent, target: PictureTarget, open: (s: PictureStart) => void) {
+/** The menu the big picture opens. `view`: shows the picture as it is now full screen, when there is one. */
+export function pictureMenu(e: MouseEvent, target: PictureTarget, open: (s: PictureStart) => void, view?: () => void) {
   const can = target.dests.filter((d) => d.can);
   const had = target.dests.some((d) => d.current);
   const items: MenuEntry[] = groups(
+    [view && { label: 'View Picture', icon: 'image', track: 'picture: view', run: view }],
     [
       { label: 'Upload a Picture…', icon: 'image', track: 'picture: upload', run: () => chooseFile((file) => open({ file })) },
       !!target.chatId && { label: 'From This Chat’s Pictures…', icon: 'media', track: 'picture: from chat', run: () => open({}) },
@@ -296,7 +298,7 @@ export function PictureEditor({ target, start, onClose }: { target: PictureTarge
     setBusy('loading');
     try {
       const b = await blob;
-      if (!isPicture(b)) throw new Error('A picture is a PNG, JPEG, GIF or WebP image.');
+      if (!isPicture(b)) throw new Error('A picture is a PNG, JPEG, GIF, WebP or JPEG XL image.');
       const p = await load(b);
       setPic((old) => (old && URL.revokeObjectURL(old.src), p));
       setAt(centred(p, frame));

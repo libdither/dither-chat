@@ -1,10 +1,10 @@
 /**
- * What scripts/verify-perf.ts and scripts/verify-response.ts read from the page (docs/perf.md).
+ * What scripts/verify-perf.ts, scripts/verify-response.ts and scripts/verify-memory.ts read from the page (docs/perf.md).
  *
  * Marks are always made: `dither:content` and `dither:fresh` (main.tsx, state.ts), and `dither:timeline` once a
  * conversation switched to shows its newest message. Render counts are kept only with ?perf=1 in the address, on
  * window.__ditherPerf; without it each counted component pays one check of a constant, and preact's hooks are left
- * alone.
+ * alone. Also under ?perf=1, `__ditherPerf.held()` says how much the app's caches hold, for verify-memory.ts.
  */
 import { options } from 'preact';
 
@@ -18,6 +18,11 @@ const renders: Record<string, number> = {};
  * answer came in one frame or three, and whatever the click itself put on the page (verify-response.ts).
  */
 const components = { mounts: {} as Record<string, number>, updates: {} as Record<string, number>, live: {} as Record<string, number>, again: {} as Record<string, number> };
+/**
+ * How much the app holds in its own caches, by name (timelines, messages, kept pages): scripts/verify-memory.ts reads
+ * them after many rounds of the same clicks, and a count that keeps growing is a leak. Registered with `sized`.
+ */
+const sizes: Record<string, () => number> = {};
 let epoch = 0;
 const againAt = new WeakMap<object, number>();
 const bornAt = new WeakMap<object, number>();
@@ -27,7 +32,8 @@ function fresh() {
   components.again = {};
 }
 if (counting) {
-  (globalThis as { __ditherPerf?: unknown }).__ditherPerf = { renders, components, fresh };
+  const held = () => Object.fromEntries(Object.entries(sizes).map(([k, f]) => [k, f()]));
+  (globalThis as { __ditherPerf?: unknown }).__ditherPerf = { renders, components, fresh, held };
   // Preact's own hooks, as preact/hooks and preact/signals use them: `__r` before a component renders, `__c` its
   // instance (preact's mangled names for _render and _component).
   type VNode = { type: unknown; __c?: object };
@@ -53,6 +59,11 @@ if (counting) {
   };
 }
 
+/** A cache's size for verify-memory.ts, read under ?perf=1 only. */
+export function sized(name: string, size: () => number) {
+  if (counting) sizes[name] = size;
+}
+
 /** One render of this component, counted under ?perf=1. Call it behind `counting`. */
 export function rendered(name: string) {
   renders[name] = (renders[name] ?? 0) + 1;
@@ -60,5 +71,12 @@ export function rendered(name: string) {
 
 /** A mark once what is on screen now has been painted. */
 export function markPainted(name: string, detail?: unknown) {
-  requestAnimationFrame(() => setTimeout(() => performance.mark(name, { detail })));
+  requestAnimationFrame(() =>
+    setTimeout(() => {
+      // The last of each name is kept: what watches for them (a PerformanceObserver) sees each as it comes, and the
+      // page's list of marks, which nothing else empties, does not grow by one for every chat opened (verify-memory.ts).
+      performance.clearMarks(name);
+      performance.mark(name, { detail });
+    }),
+  );
 }

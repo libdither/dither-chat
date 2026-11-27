@@ -1,6 +1,6 @@
 # The Android app on an emulator (docs/testing.md, "Android on an emulator"): the debug build against demo hubs,
-# through scripts/verify-android.ts (calls and rings, then a push's copy shown offline; rings come through the test's
-# own push distributor, apps/android/testpush). About 5 minutes, so it runs only when the app or the web files that
+# through scripts/verify-android.ts (calls and rings, playing in the background, then a push's copy shown offline;
+# rings come through the test's own push distributor, apps/android/testpush). About 5 minutes, so it runs only when the app or the web files that
 # talk to it change, on main, and every night. It is not part of the
 # required `check` yet: it reports, and becomes required once it has passed 20 runs on main in a row
 # (`bun scripts/android-device-streak.ts`).
@@ -12,6 +12,7 @@ on:
       - 'apps/android/**'
       - 'packages/web/src/android.ts'
       - 'packages/web/src/arrived.ts'
+      - 'packages/web/src/nowplaying.ts'
       - 'scripts/android-device.ts'
       - 'scripts/android-testpush.ts'
       - 'scripts/verify-android*.ts'
@@ -22,6 +23,7 @@ on:
       - 'apps/android/**'
       - 'packages/web/src/android.ts'
       - 'packages/web/src/arrived.ts'
+      - 'packages/web/src/nowplaying.ts'
       - 'scripts/android-device.ts'
       - 'scripts/android-testpush.ts'
       - 'scripts/verify-android*.ts'

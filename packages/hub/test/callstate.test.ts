@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { callLine, DEFAULT_RETENTION, RING } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { callRoute, currentCalls, endedOutcome, ingestCall, markDeclined, onRing, ringMuted, ringStep, ringWords, sweepCalls, voiceChannels, type RingNotice } from '../src/callstate.ts';
+import { callRoute, currentCalls, endedOutcome, ingestCall, markDeclined, onRing, ringGate, ringMuted, ringStep, ringWords, sweepCalls, voiceChannels, type RingNotice } from '../src/callstate.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'dither-callstate-'));
@@ -135,6 +135,26 @@ describe('ringing', () => {
     expect(ringWords(store, view)).toEqual({ title: 'Ann is calling', body: 'Discord call. Answer or decline.' });
     store.setRule('conversation', cid, 'none');
     expect(ringMuted(store, view)).toBe(true);
+  });
+
+  test('quiet hours hold a ring, unless the chat is set to always alert and starred ones may through', () => {
+    hear(fact({ nativeId: 'c7q', ringsSelf: true }));
+    const view = rings[0].call;
+    store.setRule('conversation', cid, null);
+    // 03:00 UTC, inside 22:00-07:00 UTC; noon is outside.
+    const night = Date.UTC(2026, 0, 6, 3, 0);
+    const noon = Date.UTC(2026, 0, 6, 12, 0);
+    store.setQuietHours({ enabled: true, start: '22:00', end: '07:00', timezone: 'UTC', days: [], allowStarred: true });
+    expect(ringGate(store, view, noon)).toBe('ring');
+    expect(ringGate(store, view, night)).toBe('quiet');
+    store.setRule('conversation', cid, 'all');
+    expect(ringGate(store, view, night)).toBe('ring');
+    store.setQuietHours({ enabled: true, start: '22:00', end: '07:00', timezone: 'UTC', days: [], allowStarred: false });
+    expect(ringGate(store, view, night)).toBe('quiet');
+    store.setRule('conversation', cid, 'none');
+    expect(ringGate(store, view, noon)).toBe('muted');
+    store.setRule('conversation', cid, null);
+    store.setQuietHours({ enabled: false, start: '22:00', end: '07:00', timezone: 'UTC', days: [], allowStarred: true });
   });
 
   test('a call in an open message request stays off devices', () => {

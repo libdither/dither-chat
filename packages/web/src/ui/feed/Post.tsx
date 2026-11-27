@@ -132,11 +132,12 @@ export function Pics({ media }: { media?: P.PostMedia[] }) {
 export function Counts({ p, kit, big, network }: { p: P.PostFact; kit: Kit; big?: boolean; network?: P.Network }) {
   const c = p.counts;
   if (!c) return null;
-  // In the network's words: Mastodon's favourites and boosts, Reddit's comments and upvotes, Substack's restacks.
+  // In the network's words: Mastodon's favourites and boosts, Reddit's comments and upvotes, Substack's restacks,
+  // LessWrong's comments and karma.
   const w = kit.feed.reactWords(network);
   const one = (many: string) => many.toLowerCase().replace(/s$/, '');
   const items: [number | undefined, string, string][] = [
-    network === 'reddit' ? [c.replies, 'comment', 'comments'] : [c.replies, 'reply', 'replies'],
+    network === 'reddit' || network === 'lesswrong' ? [c.replies, 'comment', 'comments'] : [c.replies, 'reply', 'replies'],
     [c.reposts, one(w.reposts), w.reposts.toLowerCase()],
     [c.quotes, 'quote', 'quotes'],
     [c.likes, one(w.likes), w.likes.toLowerCase()],

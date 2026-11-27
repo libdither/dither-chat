@@ -1,7 +1,8 @@
 /**
  * Message history (docs/history.md), end to end against a demo hub in headless Chromium: a deleted and a disappeared
- * message kept as collapsed lines that open; an edited message's earlier versions; a pinned message marked, a reaction
- * taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
+ * message kept as one short grey line each, saying how long it stayed and when it went, that a click opens and folds; an edited message's earlier versions, the words its last edit put in
+ * underlined and opening its edits, and its history as one list, latest at the bottom; a pinned message marked, a
+ * reaction taken back, read ticks and who read it; a group's History card with a description change, a member joining and a
  * role given; a person's Activity section with their status changing and their presence over time; hiding kept messages completely from Settings; a network turned off; and
  * forgetting what was kept.
  *
@@ -28,35 +29,81 @@ const check = (ok: unknown, what: string, detail: unknown = '') => {
 const put = (body: unknown) => fetch(`${hub}/api/retention`, { method: 'PUT', headers: { 'content-type': 'application/json', origin: hub }, body: JSON.stringify(body) }).then((r) => r.json()) as Promise<any>;
 
 const { page: p, close } = await launch();
-const lines = () => p.eval<string[]>(`[...document.querySelectorAll('.msg-gone .msg-gone-mark')].map((b) => b.textContent.trim())`);
+const lines = () => p.eval<string[]>(`[...document.querySelectorAll('.msg-gone')].map((g) => g.dataset.how + ' ' + g.querySelector('.msg-gone-mark').textContent.trim())`);
 try {
   await p.size(1280, 900);
   await p.goto(`${hub}/#/c/${climb}`);
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(500);
   const gone = await lines();
-  check(gone.some((l) => l.startsWith('Deleted')) && gone.some((l) => l.startsWith('Disappeared')), 'deleted and disappeared messages marked as such', gone);
-  check((await p.eval<string>(`[...document.querySelectorAll('.msg-gone')].map((g) => g.innerText).join('\\n')`)).includes('wrong chat lol, ignore this'), 'shown in full, what it said with it');
+  const mark = /^(deleted|disappeared) (\d+ (s|min|days?)|\d+h) later · (just now|\d+[mhd] ago)$/;
+  check(gone.some((l) => l.startsWith('deleted')) && gone.some((l) => l.startsWith('disappeared')) && gone.every((l) => mark.test(l)), 'deleted and disappeared messages each say how long they stayed and when they went', gone);
+  const wrong = `[...document.querySelectorAll('.msg-gone')].find((g) => g.innerText.includes('wrong chat lol, ignore this'))`;
+  check(await p.eval<boolean>(`!!(${wrong}) && (${wrong}).getBoundingClientRect().height < 30`), 'one short line, with what it said');
+  await p.eval(`(${wrong}).click()`);
+  await p.until(`(${wrong}).classList.contains('open') && getComputedStyle((${wrong}).querySelector('.msg-gone-text')).whiteSpace === 'normal'`, 3000);
+  check(true, 'a click opens it in place');
+  await p.eval(`(${wrong}).click()`);
+  await p.until(`!(${wrong}).classList.contains('open')`, 3000);
+  check(true, 'another click folds it again');
   if (shots) await p.shot(`${shots}/history-chat.png`);
 
-  await p.eval(`document.querySelector('button.msg-edited.link').click()`);
-  await p.until(`document.querySelectorAll('.edit-version').length >= 2`, 5000);
-  const versions = await p.eval<string[]>(`[...document.querySelectorAll('.edit-version .edit-body')].map((s) => s.textContent)`);
-  check(versions[0] === 'meet at 6' && versions.at(-1) === 'meet at 6:30, traffic', '(edited) lists the versions, oldest first', versions);
+  // Priya's message: what the edit put in is underlined in the chat.
+  const priya = `[...document.querySelectorAll('.msg')].find((m) => m.textContent.includes('meet at 6:30'))`;
+  check((await p.eval<string>(`[...(${priya}).querySelectorAll('.msg-changed')].map((s) => s.textContent).join('|')`)) === '6:30, traffic', 'the words the edit put in are underlined');
+  await p.eval(`(${priya}).querySelector('button.msg-edited.link').click()`);
+  await p.until(`document.querySelectorAll('.mh-pop .mh-row').length >= 2`, 5000);
+  const edits = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())`);
+  check(edits.length === 2 && /sent it/.test(edits[0]) && !/meet/.test(edits[0]) && /edited it meet at 6 ?6:30, traffic/.test(edits[1]), '(edited) opens its edits, oldest first: sent (no words), then the edit as words out and in', edits);
+  check(await p.eval<boolean>(`(() => { const b = document.querySelector('.mh-pop').getBoundingClientRect(); return b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth; })()`), 'the popover sits inside the window once its rows are in');
+  check(!(await p.eval<boolean>(`!!document.querySelector('.mh-pop .mh-more')`)), 'no Whole text when nothing was left out');
   if (shots) await p.shot(`${shots}/history-edits.png`);
-
-  // Pins, receipts and the message's whole history.
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
+  // A right-click on the underlined words opens the same, not the message's menu.
+  await p.eval(`(() => { const c = (${priya}).querySelector('.msg-changed'); const b = c.getBoundingClientRect(); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 2, clientY: b.y + 2 })); })()`);
+  await p.until(`document.querySelectorAll('.mh-pop .mh-row').length >= 2`, 5000);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.cm')`)) && /Edits/i.test(await p.eval<string>(`document.querySelector('.mh-pop .mh-bar')?.innerText ?? ''`)), 'a right-click on the underlined words opens its edits, not the menu');
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
+  // Elsewhere on the message a right-click is its menu, with Message History by its reactions.
+  await p.eval(`(() => { const m = (${priya}).querySelector('.msg-body'); const b = m.getBoundingClientRect(); m.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 2, clientY: b.y + 2 })); })()`);
+  await p.until(`!!document.querySelector('.cm [role="menuitem"]')`, 3000);
+  const menu = await p.eval<string[]>(`[...document.querySelectorAll('.cm > *')].map((e) => (e.classList.contains('cm-sep') ? '|' : e.textContent.trim())).filter(Boolean)`);
+  const at = menu.findIndex((x) => x.startsWith('Message History'));
+  check(at >= 0 && at < menu.indexOf('|', menu.findIndex((x) => x.includes('Reaction'))), 'the message menu has Message History among its reactions', menu.slice(0, 8));
+  await p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent.includes('Message History')).click()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
+  check(!(await p.eval<boolean>(`!!document.querySelector('.mh-pop .mh-bar')`)), 'from the menu it opens on all of it');
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
+
+  // Your message, edited twice: a click on its underlined words opens its edits, and from there all of its history.
+  const mine = `[...document.querySelectorAll('.msg')].find((m) => m.textContent.includes('I can drive'))`;
+  check((await p.eval<string>(`[...(${mine}).querySelectorAll('.msg-changed')].map((s) => s.textContent).join('|')`)) === 'from the gym, room for 3', 'only the last edit is underlined');
+  await p.eval(`(${mine}).querySelector('.msg-changed').click()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-bar .link') && document.querySelectorAll('.mh-pop .mh-row').length > 0`, 5000);
+  check((await p.eval<number>(`document.querySelectorAll('.mh-pop .mh-row').length`)) === 3, 'its edits: sent and two edits');
+  await p.eval(`document.querySelector('.mh-pop .mh-bar .link').click()`);
+  await p.until(`document.querySelectorAll('.mh-pop .mh-row').length > 3`, 5000);
+  const all = await p.eval<string[]>(`[...document.querySelectorAll('.mh-pop .mh-row')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())`);
+  const kinds = all.map((l) => (/sent it/.test(l) ? 'sent' : /edited it/.test(l) ? 'edit' : /^Delivered/.test(l) ? 'delivered' : /^Read by/.test(l) ? 'read' : /reacted/.test(l) ? 'react' : '?'));
+  check(kinds.join() === 'sent,delivered,react,read,edit,react,edit', 'All history: sent, delivered, a reaction, both reads in one row, an edit, a reaction, the last edit', all);
+  check(await p.eval<boolean>(`(() => { const l = document.querySelector('.mh-pop .mh-list'); return l.scrollHeight <= l.clientHeight + 1 || l.scrollTop + l.clientHeight >= l.scrollHeight - 2; })()`), 'scrolled to the latest, at the bottom');
+  if (shots) await p.shot(`${shots}/history-all.png`);
+  await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await p.until(`!document.querySelector('.mh-pop')`, 3000);
+
+  // Pins, receipts and the message's whole history. Nothing is open now: another Escape would leave the chat.
   await p.eval(`document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
   await Bun.sleep(200);
   check(await p.eval<boolean>(`!!document.querySelector('.msg-pin')`), 'a pinned message is marked');
   const ticks = await p.eval<{ cls: string; title: string } | null>(`(() => { const t = document.querySelector('.msg-ticks'); return t ? { cls: t.className, title: t.title } : null; })()`);
   check(ticks?.cls.includes('read') && /Read by 2/.test(ticks.title), 'your message has read ticks: read by two', ticks);
-  await p.eval(`document.querySelector('.msg-ticks').click()`);
-  await p.until(`!!document.querySelector('.modal .msg-history section')`, 5000);
-  const hist = await p.eval<string>(`document.querySelector('.modal .msg-history').innerText`);
-  check(/READ BY 2/i.test(hist) && hist.includes('Alice') && hist.includes('Priya'), 'its history lists who read it', hist.split('\n').slice(0, 5));
-  await p.eval(`document.querySelector('.modal-backdrop')?.click()`);
+  await p.eval(`(() => { const t = document.querySelector('.msg-ticks'); const b = t.getBoundingClientRect(); t.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.x + 2, clientY: b.y + 2 })); })()`);
+  await p.until(`!!document.querySelector('.mh-pop .mh-row')`, 5000);
+  const hist = await p.eval<string>(`document.querySelector('.mh-pop .mh-list').innerText`);
+  check(/Read by\s+Alice Chen and Priya/.test(hist), 'a right-click on the ticks opens its history, with who read it', hist.split('\n').slice(0, 8));
   await p.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
   await Bun.sleep(300);
   const pinned = await p.eval<string>(`document.querySelector('.msg-pin')?.closest('.msg')?.id ?? ''`);
@@ -133,7 +180,7 @@ try {
   await p.until(`document.querySelectorAll('.msg').length > 3`, 15000);
   await Bun.sleep(400);
   const after = await lines();
-  check(!after.some((l) => l.startsWith('Deleted')) && after.some((l) => l.startsWith('Disappeared')), 'the deleted one is now a plain “Message deleted”; the disappeared one stays', after);
+  check(!after.some((l) => l.startsWith('deleted')) && after.some((l) => l.startsWith('disappeared')), 'the deleted one is now a plain “Message deleted”; the disappeared one stays', after);
   check(!p.errors.length, 'no page errors', p.errors);
 } finally {
   await close();

@@ -1,7 +1,8 @@
 /**
  * Every emulator test of the Android app, in one run (CI's android-device workflow, docs/testing.md "Android on an
  * emulator"): verify-android-call.ts against a demo hub of its own (its rings through the device's UnifiedPush
- * distributor, or the test's own where it has none), then verify-android-arrived.ts, which starts its own.
+ * distributor, or the test's own where it has none) and verify-android-media.ts against the same, then
+ * verify-android-arrived.ts, which starts its own.
  *
  *   bun run web:build
  *   (cd apps/android && ./gradlew :app:assembleDebug :uitest:assembleDebug :uitest:assembleDebugAndroidTest :testpush:assembleDebug)
@@ -58,6 +59,7 @@ try {
     await Bun.sleep(200);
   }
   await run('calls and rings (verify-android-call.ts)', ['bun', 'scripts/verify-android-call.ts', hubUrl, '--serial', serial, ...(shots ? ['--shots', shots] : [])]);
+  await run('playing in the background (verify-android-media.ts)', ['bun', 'scripts/verify-android-media.ts', hubUrl, '--serial', serial]);
 } finally {
   hub.kill('SIGKILL');
   await hub.exited;

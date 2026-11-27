@@ -130,7 +130,13 @@ export class MediaInfo {
     if (!path && fetch && !a.url.startsWith('file://')) {
       if (await fetch(a.url, a.account).catch(() => false)) path = this.pathOf(a.url);
     }
-    if (!path) return null;
+    if (!path) {
+      // A picture stored as JPEG XL (jxl.ts) was looked at before it was packed, and only a JPEG or PNG is packed: what
+      // was found then still holds.
+      const key = mediaKey(a.url);
+      if (!a.url.startsWith('file://') && existsSync(join(this.cacheDir, key + '.jxl'))) this.store.db.query('UPDATE media_info SET version = ? WHERE key = ?').run(SNIFF_VERSION, key);
+      return null;
+    }
     const info = await analyze(fileSource(path), { name: a.name, mime: a.mime });
     this.save(mediaKey(a.url), info);
     this.looked++;

@@ -15,6 +15,7 @@ import { HeadOrb } from './Offline.tsx';
 import { DeviceRules } from './DeviceRules.tsx';
 import { percent } from './Marks.tsx';
 import { PushSettings } from './Push.tsx';
+import { LoudnessSettingsLazy } from './LoudnessLazy.tsx';
 import { PrivacySettings } from './Privacy.tsx';
 import { HistorySettings } from './HistorySettings.tsx';
 import { IndexingSettings } from './Indexing.tsx';
@@ -25,7 +26,7 @@ import { SessionSettings } from './Login.tsx';
 import { MailAccessNote, MailAccountRows } from './mail/MailAccounts.tsx';
 import { MailReadSetting } from './mail/MailReadSetting.tsx';
 import { phone } from '../phone.ts';
-import { android } from '../android.ts';
+import { SECTIONS } from './settingsSections.ts';
 import { Sheet } from './Sheet.tsx';
 import { chosenTheme, followsSystem, Swatch, ThemeList } from './Themes.tsx';
 import { themeById } from '../themes.ts';
@@ -33,27 +34,6 @@ import { followsArchive, globalPictures, PICTURE_LABELS, setFollowArchive, setGl
 import { PICTURE_LAYOUTS, type PictureLayout } from '@dither-chat/protocol';
 import { applyCallInput, myInput } from '../call.ts';
 import { TranslateSettings } from './TranslateSettings.tsx';
-
-/** Settings' sections: listed beside them on a desktop, and in a sheet from their header on a phone. */
-export const SECTIONS: [title: string, icon: string, id: string][] = [
-  ['Notifications', 'bell', 'set-notifications'],
-  ['Push and quiet hours', 'bellOff', 'push'],
-  ['Each device', 'phone', 'set-devices'],
-  ['Keywords', 'at', 'set-keywords'],
-  ['Your rules', 'layers', 'set-overrides'],
-  ['Privacy', 'lock', 'set-privacy'],
-  ['Message history', 'clock', 'set-history'],
-  ['Indexing', 'archive', 'set-indexing'],
-  ['Catching up', 'refresh', 'set-catchup'],
-  ['Adversarial features', 'eyeOff', 'set-adversarial'],
-  ['Usage', 'activity', 'set-usage'],
-  ['Appearance', 'eye', 'set-appearance'],
-  ['Translation', 'globe', 'set-translate'],
-  ['Mail', 'mail', 'set-mail'],
-  // The phone app opens links and files in the phone's apps by itself.
-  ...(android ? [] : ([['Desktop helper', 'monitor', 'set-desk']] as [string, string, string][])),
-  ['Signed-in devices', 'lock', 'set-sessions'],
-];
 
 /** Settings → Catching up (CatchUp.tsx): a chunk of its own, loaded when Settings draws it, so the first load does not carry it. */
 function CatchUpLazy() {
@@ -304,11 +284,22 @@ export function SettingsPane() {
             Alerts sound; conversations are people talking with you, silent; the list is everything else that is important enough, silent, the most important first.
           </p>
           <ListLevel />
+          <div id="set-loudness">
+            <LoudnessSettingsLazy />
+          </div>
           <button class="link-row set-sorts" data-track="how it sorts" onClick={() => go({ view: 'model' })}>
             <Icon name="sparkles" size={15} />
             <span>
               <b>How it sorts</b>
               <small>Where each conversation's messages landed this week and why, your marks, and what was learned from them</small>
+            </span>
+            <Icon name="chevronRight" size={15} />
+          </button>
+          <button class="link-row set-sorts" data-track="your attention" onClick={() => go({ view: 'attention' })}>
+            <Icon name="activity" size={15} />
+            <span>
+              <b>Your attention</b>
+              <small>How often notifications sounded, the people waiting on you, and who you talk with, over two weeks</small>
             </span>
             <Icon name="chevronRight" size={15} />
           </button>

@@ -2,65 +2,96 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { effect, untracked } from '@preact/signals';
 import { chatPersonOf, convsUnder, firstChannel, rootCommunity, totalUnread } from '../model.ts';
-import { adoptEntry, api, back, connected, db, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
+import { adoptOpened, api, back, connected, db, firstLoad, go, loaded, pref, previousRoute, readProgress, refresh, rev, route, setListUnder, setRouteFill, type Route } from '../state.ts';
 import { installEscape } from '../escape.ts';
 import { isPage, isTabRoot, listKey, listToWrite, ownList, restAfter, wayBack, type Places } from '../pages.ts';
 import { dropLayer, layerCount, phone, pushLayer } from '../phone.ts';
 import { AccountPane, AccountsSidebar, AddAccount, addingAccount } from './Accounts.tsx';
 import { ConversationDetails, PersonDetails } from './Details.tsx';
-import { DirectoryPane } from './Directory.tsx';
 import { DragLayer } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { ContextMenuLayer } from './ContextMenu.tsx';
 import { TooltipLayer } from './Tooltip.tsx';
 import { feedOn, PlaceKeys } from './PlaceKeys.tsx';
+import { NextUnreadKey } from './NextUnreadLazy.tsx';
 import { ForwardLayer } from './Forward.tsx';
 import { AppsHostLazy } from './apps/lazy.tsx';
 import { SendingLayer } from './SendExtras.tsx';
-import { IndexLayer } from './Indexing.tsx';
+import { indexing } from '../indexjobs.ts';
 import { ForYou, refreshForYou } from './ForYou.tsx';
-import { HowItSorts } from './HowItSorts.tsx';
 import { Palette } from './Palette.tsx';
-import { ReactionLayer } from './Reactions.tsx';
-import { ProfilePane } from './Profile.tsx';
-import { PlaceProfile } from './PlaceProfile.tsx';
+import { loadEmoji } from '../emoji.ts';
+import { pickerFor, reactorsFor } from '../reactions.ts';
 import { SamePane } from './SamePane.tsx';
 import { GraphPane } from './GraphPane.tsx';
-import { MessageHistoryLayer } from './MessageHistory.tsx';
+import { MessageHistoryLayer } from './MessageHistoryLazy.tsx';
 import { ThreadsLayerLazy } from './ThreadsLazy.tsx';
 import { Rail } from './Rail.tsx';
 import { TitleBar } from './TitleBar.tsx';
 import { FindShortcut, SearchPane } from './SearchLazy.tsx';
-import { SECTIONS, SettingsPane } from './Settings.tsx';
+import { SECTIONS } from './settingsSections.ts';
+import { lazyPane, preloadPanes, whenTouched } from './LazyPane.tsx';
 import { showSection } from './bits.tsx';
 import { FolderSidebar, InboxSidebar, PeopleSidebar, SpaceSidebar, SpacesSidebar } from './Sidebar.tsx';
 import { homeRoute } from '../opening.ts';
-import { ConversationPane, PersonPane } from './Timeline.tsx';
 import { Toasts } from './Toasts.tsx';
 import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
 import { barShown, callBarOn } from './CallBar.tsx';
 import { RingCards } from './Ringing.tsx';
-import { Viewer } from './Viewer.tsx';
+import { viewer } from '../viewer.ts';
+import { fileViewer } from '../files.ts';
 import { PEEK, panel, usePager, type Rest } from './Pager.ts';
 import { Boot } from './Loader.tsx';
 import { applyUpdate, updateReady } from '../pwa.ts';
 import { noteChannel, readLastChannels, saveLastChannels, withLastChannel } from '../lastchannel.ts';
 import { counting, rendered } from '../perf.ts';
-import { MailCenterLazy, MailComposerLazy, MailSidebarLazy } from './mail/lazy.tsx';
+import { MailComposerLazy } from './mail/lazy.tsx';
+import { WhyFollowUpLazy } from './LoudnessLazy.tsx';
+import { toInboxChip } from './MailLists.tsx';
+import { convById, isMailPlace } from '../mail/chats.ts';
 import { RequestsPane } from './Requests.tsx';
 import { NoticesPaneLazy } from './Notices.tsx';
+import { CalibrationPaneLazy } from './Calibration.tsx';
 import { CalendarPane } from './calendar/CalendarPane.tsx';
 import { calendarLink, calendarOn } from '../plans.ts';
 import { countKey } from '../clicklog.ts';
 import { FeedPaneLazy, FeedSidebarLazy, ThreadLazy } from './feed/lazy.tsx';
 import { isPostKey } from '../feed.ts';
 
+// Panes not on the first screen, each a chunk of its own (LazyPane.tsx). A conversation's loads as soon as the data is in.
+const ConversationPane = lazyPane(() => import('./Timeline.tsx').then((m) => m.ConversationPane), 'the conversation', { soon: true });
+const PersonPane = lazyPane(() => import('./Timeline.tsx').then((m) => m.PersonPane), 'the conversation', { soon: true });
+const ProfilePane = lazyPane(() => import('./Profile.tsx').then((m) => m.ProfilePane), 'the profile');
+const PlaceProfile = lazyPane(() => import('./PlaceProfile.tsx').then((m) => m.PlaceProfile), 'the page');
+const SettingsPane = lazyPane(() => import('./Settings.tsx').then((m) => m.SettingsPane), 'Settings');
+const DirectoryPane = lazyPane(() => import('./Directory.tsx').then((m) => m.DirectoryPane), 'the directory');
+const HowItSorts = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.HowItSorts), 'How it sorts');
+const AttentionPaneLazy = lazyPane(() => import('./HowItSorts.tsx').then((m) => m.AttentionPaneLazy), 'Your attention');
+// Layers over the app that draw nothing until they are opened: the picture and file viewer, the index dialog.
+const Viewer = lazyPane(() => import('./Viewer.tsx').then((m) => m.Viewer), 'the viewer', { layer: true });
+const IndexDialog = lazyPane(() => import('./Indexing.tsx').then((m) => m.IndexLayer), 'indexing', { layer: true });
+const Reactions = lazyPane(() => import('./Reactions.tsx').then((m) => m.ReactionLayer), 'reactions', { layer: true });
+const ViewerLayer = () => (viewer.value || fileViewer.value ? <Viewer /> : null);
+const IndexLayer = () => (indexing.value ? <IndexDialog /> : null);
+
+/** The reaction picker and who reacted, while one is open. The emoji catalog loads once the app is idle, so even the first picker opens whole rather than filling in. */
+function ReactionLayer() {
+  useEffect(() => {
+    const t = setTimeout(() => void loadEmoji(), 4000);
+    return () => clearTimeout(t);
+  }, []);
+  return pickerFor.value || reactorsFor.value ? <Reactions /> : null;
+}
+
 /** A conversation's details panel: the person's, for a DM of someone reached by several routes (their chat's page). */
-function convDetail(id: string): { kind: 'conv' | 'person'; id: string } {
-  const p = chatPersonOf(db.conversations.get(id));
-  return p ? { kind: 'person', id: p.id } : { kind: 'conv', id };
+function convDetail(id: string): { kind: 'conv' | 'person'; id: string } | undefined {
+  const c = convById(id);
+  const p = chatPersonOf(c);
+  if (p) return { kind: 'person', id: p.id };
+  // A mail thread as a chat of its own has no details pane yet: its people are in its header.
+  return isMailPlace(id) ? undefined : { kind: 'conv', id };
 }
 
 /** What the center pane shows, and whether a details pane is available. */
@@ -70,9 +101,9 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <ForYou /> };
     case 'model':
       return { pane: <HowItSorts onBack={back} /> };
+    case 'attention':
+      return { pane: <AttentionPaneLazy onBack={back} /> };
     case 'inbox':
-      // A mail thread from the inbox opens in the reader, beside the inbox (docs/mail.md).
-      if (r.conv?.startsWith('mth_')) return { pane: <MailCenterLazy thread={r.conv} onBack={back} /> };
       // A post's thread (docs/feed.md "Threads"), beside the inbox as a conversation is.
       if (isPostKey(r.conv)) return { pane: <ThreadLazy key={r.conv} postKey={r.conv!} onBack={back} /> };
       // A group of notices (a notification's conversation, quiet hours' summary) opens under Notices.
@@ -103,12 +134,12 @@ function centerFor(r: Route, back: () => void): { pane: any; detail?: { kind: 'c
       return { pane: <DirectoryPane onBack={back} /> };
     case 'search':
       return r.conv ? { pane: <ConversationPane convId={r.conv} focus={r.msg} onBack={back} />, detail: convDetail(r.conv) } : { pane: <SearchPane q={r.q} onBack={isPage(r) ? back : undefined} /> };
-    case 'mail':
-      return { pane: <MailCenterLazy thread={r.thread} onBack={back} /> };
     case 'requests':
       return { pane: <RequestsPane focus={r.request} onBack={back} /> };
     case 'notices':
       return { pane: <NoticesPaneLazy focus={r.notice} onBack={back} /> };
+    case 'calibration':
+      return { pane: <CalibrationPaneLazy onBack={back} /> };
     case 'calendar':
       return { pane: <CalendarPane at={r.at} /> };
     case 'feed':
@@ -122,7 +153,8 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'model':
       return <InboxSidebar />;
     case 'inbox':
-      return <InboxSidebar activeConv={r.conv} />;
+      // A mail list (Updates, Everything, Starred, Sent, a mailbox, a search) under the Inbox's header (docs/inbox.md "Mail lists").
+      return <InboxSidebar activeConv={r.conv} mail={r.mail} />;
     case 'people':
       return <PeopleSidebar activePerson={r.person} />;
     case 'profile': {
@@ -141,16 +173,16 @@ function sidebarFor(r: Route, onAdd: () => void): ComponentChildren {
     case 'accounts':
       return <AccountsSidebar active={r.account} onAdd={onAdd} />;
     case 'settings':
+    case 'attention':
       return <div class="sidebar-inner settings-side"><SettingsNav /></div>;
     case 'directory':
       return <SpacesSidebar />;
     case 'search':
       // On a phone a conversation opened from search sits on the list it lives in, which a swipe shows (pages.ts).
       return phone.value && isPage(r) ? sidebarFor(ownList(r, places), onAdd) : <InboxSidebar activeConv={r.conv} />;
-    case 'mail':
-      return <MailSidebarLazy list={r.list} active={r.thread} />;
     case 'requests':
     case 'notices':
+    case 'calibration':
       return <InboxSidebar />;
     case 'calendar':
       return null;
@@ -256,14 +288,18 @@ effect(() => {
   untracked(() => go({ view: 'feed', source: acc ? `${acc}:activity` : 'activity' }, true));
 });
 
+/** A mail list in the Inbox's place, no thread open from it. */
+const mailList = (r: Route) => r.view === 'inbox' && !!r.mail && !r.conv;
+
 /**
  * Where Escape leaves for, with no layer open (escape.ts, docs/desktop.md "Escape and back"): a page goes where its
  * back button goes; search and Settings, which are no list's page, back where you came from.
  */
 const escapeApp = {
   layers: layerCount,
-  canLeave: () => isPage(route.value) || route.value.view === 'search' || route.value.view === 'settings',
-  leave: () => (isPage(route.value) ? leave(route.value) : back({ view: 'inbox' })),
+  canLeave: () => isPage(route.value) || route.value.view === 'search' || route.value.view === 'settings' || mailList(route.value),
+  // A mail list goes to the Inbox chip first (docs/inbox.md "Mail lists").
+  leave: () => (isPage(route.value) ? leave(route.value) : mailList(route.value) ? toInboxChip() : back({ view: 'inbox' })),
 };
 
 /** Back from page `r`, by a swipe or its back button: to its list, or off the page it was opened over (pages.ts). */
@@ -275,7 +311,7 @@ function leave(r: Route) {
 
 type Tab = 'home' | 'foryou' | 'feed' | 'search' | 'calendar' | 'you';
 const tabOf = (r: Route): Tab =>
-  r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'feed' ? 'feed' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' ? 'you' : 'home';
+  r.view === 'foryou' || r.view === 'model' ? 'foryou' : r.view === 'feed' ? 'feed' : r.view === 'search' ? 'search' : r.view === 'calendar' ? 'calendar' : r.view === 'settings' || r.view === 'accounts' || r.view === 'attention' ? 'you' : 'home';
 /** The Feed's tab shows where it was left: its source (docs/feed.md "The Feed page"). */
 let lastFeed: Route = { view: 'feed' };
 
@@ -346,9 +382,12 @@ export function App() {
   }, []);
   useEffect(() => installEscape(escapeApp), []);
   // The entry the app opened on takes go()'s shape once there is data to say where its page lives (state.ts).
+  // The panes left out of the first load (LazyPane.tsx): a conversation's at once, the rest at idle a little later; a
+  // tap or key before the data is in starts a conversation's.
   useEffect(() => {
-    if (loaded.value) adoptEntry();
+    if (loaded.value) (adoptOpened(), preloadPanes());
   }, [loaded.value]);
+  useEffect(whenTouched, []);
 
   // On a phone the page you are on is a card over the lists; see Pager.ts.
   const detailRoute = isPage(r);
@@ -392,7 +431,7 @@ export function App() {
 
   if (!loaded.value)
     return (
-      <Boot connected={connected.value} />
+      <Boot connected={connected.value} load={firstLoad} />
     );
 
   const full = r.view === 'directory' || r.view === 'calendar';
@@ -461,6 +500,7 @@ export function App() {
       <ContextMenuLayer />
       <TooltipLayer />
       <PlaceKeys />
+      <NextUnreadKey />
       <ForwardLayer />
       <AppsHostLazy />
       <SendingLayer />
@@ -468,7 +508,8 @@ export function App() {
       <Palette />
       <FindShortcut />
       <MailComposerLazy />
-      <Viewer />
+      <WhyFollowUpLazy />
+      <ViewerLayer />
     </div>
   );
 }

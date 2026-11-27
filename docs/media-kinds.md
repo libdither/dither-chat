@@ -115,6 +115,48 @@ converts a WebP or WebM to one yet, so a found GIF goes to them as a WebP pictur
 
 Off, both show as before: the link and its card, and a video player.
 
+## Videos
+
+A video in a message, a link's video and a video file in the file viewer play in place in the app's own player
+(`ui/VideoPlayer.tsx`), made to work as Discord's does on each kind of device. A GIF sent as a video is not a video:
+it loops silently with no controls (above).
+
+| | With a mouse | On a phone |
+| --- | --- | --- |
+| Before it plays | its first frame, a play button in the middle, its length in the corner; Download in the top corner on hover (its tooltip names the file) | the same; Download shows with the controls |
+| Play and pause | a click anywhere on the picture, or the bar's button | a tap plays; once it plays, a tap shows or hides the controls, and the big button in the middle pauses |
+| The controls | one thin bar along the bottom (36 px), while the pointer is over it or it is paused | the same bar a little taller for a thumb (44 px), shown after a tap, gone by themselves 2.5 s later while it plays |
+| Seeking | a click or drag on the bar; the time under the pointer shows above it | a drag on the bar, which is tall enough for a thumb |
+| Sound | mute, and a volume slider that opens beside it on hover | mute (the phone's buttons set the volume) |
+| Full screen | the button, F or a double click; Escape leaves it | the button; back leaves it, and a wide video turns on its side where the phone allows |
+
+Nothing else is laid over the picture: the name and the file's size show along the top only in full screen, beside the way out.
+
+Keys, while the player has the focus: Space or K plays and pauses, F fills the screen, M mutes, the arrows go 5 s back
+and on and change the volume, J and L go 10 s, Home and End go to the start and the end.
+
+Full screen is the browser's own where it has one. The Android app's WebView and an iPhone have none for a page's
+element, so there the player is put over the whole page instead (a popover, above everything), and back or Escape
+takes it down; the video goes on from where it was either way. Starting a video pauses the one playing before, and the
+volume and mute are remembered for the next video.
+
+The demo world has one video, an invented test pattern in Alice's WhatsApp chat (`packages/hub/src/demo-clip.webm`).
+`scripts/verify-video.ts` plays it with a mouse, keys and a finger, in CI.
+
+## Playing in the background
+
+What plays is tracked in one place, `src/nowplaying.ts`: a listener on the document hears every player's play, pause
+and end, whatever made it (the voice message's player, a sound file's, a video's). Muted and looping ones (GIFs,
+previews) do not count, nor a call's sound (`new Audio()`, never in the page). One plays at a time: starting one pauses
+the one before, and a call starting pauses it.
+
+It gives the system the controls: `navigator.mediaSession` in a browser (the title, "Voice message" or the file's
+name, the sender as artist, the chat as album, the sender's picture; play, pause, seek and stop, so media keys and the
+browser's own controls work), and in the Android app a media notification whose service keeps the sound going with the
+screen off ([android.md](android.md#playing-in-the-background)). A player taken out of the page (its chat closed) is
+paused by the browser, and with it what plays ends: playing on while you read other chats would need one player of the
+app's own outside the message rows, which is not built yet.
+
 ## Protocol
 
 Capabilities: `sendStickers`, `installStickers`, `searchGifs`, `sendGifs`, `sendVoice`, `sendViewOnce`, `stories`.

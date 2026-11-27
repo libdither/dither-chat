@@ -171,14 +171,16 @@ export function rootKeys(all: readonly RootItem[], needle: string, top: readonly
 // ------------------------------------------------------------------ New
 
 /** The rows New shows with nothing typed, before the people. `here`: the group on screen, when you could add people to it. */
-export function newMenu(o: { mode?: NewMode; newGroup: boolean; canAdd: boolean; here?: string | null; groupWith?: string | null }): { key: string; label: string }[] {
+export function newMenu(o: { mode?: NewMode; newGroup: boolean; canAdd: boolean; here?: string | null; groupWith?: string | null; email?: boolean }): { key: string; label: string }[] {
   if (o.mode === 'message') return [];
   if (o.mode === 'join') return [{ key: 'n:scan', label: 'Scan a code' }];
   if (o.mode === 'add') return [{ key: 'n:scan', label: 'Scan a code' }, { key: 'n:mine', label: 'My code' }];
   const add = o.here ? [{ key: 'n:add-here', label: `Add people to ${o.here}` }] : o.canAdd ? [{ key: 'n:add', label: 'Add people to a group' }] : [];
   // A 1:1 DM on screen: a group with that person, first.
   const withThem = o.newGroup && o.groupWith ? [{ key: 'n:group-with', label: `New group with ${o.groupWith}` }] : [];
-  return [...withThem, ...add, ...(o.newGroup ? [{ key: 'n:group', label: 'New group' }] : []), { key: 'n:scan', label: 'Scan a code' }, { key: 'n:mine', label: 'My code' }];
+  // Mail is chats (docs/mail.md "Mail as chats"): a new mail starts here, in the full editor, as a new message does.
+  const email = o.email ? [{ key: 'n:email', label: 'New email' }] : [];
+  return [...withThem, ...email, ...add, ...(o.newGroup ? [{ key: 'n:group', label: 'New group' }] : []), { key: 'n:scan', label: 'Scan a code' }, { key: 'n:mine', label: 'My code' }];
 }
 
 /** Someone New could message: a person, or an identity not merged into one. */

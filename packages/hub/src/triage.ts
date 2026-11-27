@@ -32,13 +32,16 @@
  */
 
 import type * as P from '@dither-chat/protocol';
-import { NETWORK_META, reminderOf } from '@dither-chat/protocol';
+import { mutedNow, NETWORK_META, reminderOf } from '@dither-chat/protocol';
 import { previewText, type Store } from './store.ts';
 import { namedTokens } from './mentionrefs.ts';
 import { describeActivity, type ActivityStore, type Features } from './activity.ts';
 import { alertBar, describeWeight, emptyModel, importance, learnedFrom, predict, prior, THRESHOLDS, tierFrom, TIER_NAME, words, type Facts, type Level, type Model, type Namer, type TierContext } from './learn.ts';
 import { InteractionLog } from './interact.ts';
-import { conversing, CONVERSING_REASON } from './tiers.ts';
+import { conversing, conversingAll, CONVERSING_REASON } from './tiers.ts';
+import { BAND_DECISION, loudness, momentKeys } from './loudness.ts';
+import type { LoudLearner } from './loudlearn.ts';
+import type { StoredLoud } from './store.ts';
 import { blockedByYou, requestHeld } from './add.ts';
 import { quietAuthor } from './accountself.ts';
 import { inQuietHours } from './quiethours.ts';
@@ -72,6 +75,10 @@ export interface Decision {
   unjudged?: boolean;
   /** The candidate model's chances, kept next to the live ones; it never decides (shadow.ts). */
   shadow?: P.TriageProbs;
+  /** The Conversation rule's reasons that hold (tiers.ts conversingAll): features of the loudness. */
+  why?: ReturnType<typeof conversingAll>;
+  /** Its loudness on the one scale (loudness.ts): deciding (DITHER_ATTENTION=on) or worked out beside the tiers. */
+  loud?: StoredLoud;
 }
 
 /** The local model's reading of a message: its chance, 0 to 1, that it cannot wait an hour or two; null when it did not answer. */
@@ -113,6 +120,12 @@ export class Triage {
    * features, only the shadow model weighs them.
    */
   content: ((messageId: string) => Record<string, number>) | null = null;
+  /** The loudness scale's learning and settings (loudlearn.ts); null or mode `tiers`: no loudness. */
+  loud: LoudLearner | null = null;
+  /** The moment a message arrives in: a computer in use, and how long since the last sound (main.ts). */
+  momentOf: ((now: number) => { desk: boolean; sinceSound: number | null }) | null = null;
+  /** The inbox's needs-reply chance for a chat (attention.ts), where it has one. */
+  owedOf: ((conversationId: string) => number | null) | null = null;
   private interactions: InteractionLog | null = null;
   private markedCache: { at: number; convs: Set<string>; authors: Set<string> } | null = null;
 
@@ -265,20 +278,22 @@ export class Triage {
 
   private nativeMute(cid: string, parentId?: string): { level: P.NotifyLevel } | null {
     const now = Date.now();
-    const rows = this.store.raw<Row>(
-      `SELECT native_mute FROM vantage WHERE native_mute IS NOT NULL AND (
-         (target_kind = 'conversation' AND target_id IN (?, ?))
-         OR (target_kind = 'space' AND target_id IN (SELECT parent_id FROM space_edge WHERE child_kind = 'conversation' AND child_id IN (?, ?))))`,
-      cid,
-      parentId ?? cid,
+    const read = (sql: string, ...args: string[]) => this.store.raw<Row>(sql, ...args).map((r) => JSON.parse(r.native_mute) as P.NativeMute);
+    const conv = (id: string) => read(`SELECT native_mute FROM vantage WHERE native_mute IS NOT NULL AND target_kind = 'conversation' AND target_id = ?`, id);
+    const own = conv(cid);
+    // A thread's own setting is its answer over its channel's (a Zulip topic unmuted in a muted channel), as in
+    // nativeLevel: a mute in force, or a level that has not run out.
+    const says = (m: P.NativeMute) => mutedNow(m, now) || (m.level !== undefined && !(m.until !== undefined && m.until <= now));
+    const parent = parentId && parentId !== cid && !own.some(says) ? conv(parentId) : [];
+    const spaces = read(
+      `SELECT native_mute FROM vantage WHERE native_mute IS NOT NULL AND target_kind = 'space' AND target_id IN (SELECT parent_id FROM space_edge WHERE child_kind = 'conversation' AND child_id IN (?, ?))`,
       cid,
       parentId ?? cid,
     );
     let best: P.NotifyLevel | null = null;
-    for (const r of rows) {
-      const m = JSON.parse(r.native_mute) as P.NativeMute;
-      const muted = m.level === 'none' || (m.until !== undefined && m.until > now);
-      const lv: P.NotifyLevel | null = muted ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    for (const m of [...own, ...parent, ...spaces]) {
+      // Muted outright (`muted`, as Zulip and Discord send it), set to nothing, or until a time still ahead.
+      const lv: P.NotifyLevel | null = mutedNow(m, now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
       if (lv && (!best || rank(lv) < rank(best))) best = lv;
     }
     return best ? { level: best } : null;
@@ -296,7 +311,7 @@ export class Triage {
       for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = ? AND target_id = ? AND native_mute IS NOT NULL`, kind, id)) {
         const m = JSON.parse(r.native_mute) as P.NativeMute;
         if (m.until !== undefined && m.until <= now) continue;
-        const lv = m.until !== undefined ? 'none' : m.level;
+        const lv = mutedNow(m, now) ? 'none' : m.level;
         if (lv && (!best || loud[lv] > loud[best])) best = lv;
       }
       return best;
@@ -310,12 +325,32 @@ export class Triage {
     return NATIVE_DEFAULT[c.shape as P.Shape] ?? 'mentions';
   }
 
-  /** Does a space this conversation is in say @everyone and @here do not notify there (NativeMute.suppressEveryone)? */
+  /**
+   * Do @everyone and @here not notify here (NativeMute.suppressEveryone)? The most specific place that says either
+   * way decides: the conversation (a Zulip topic you follow), its parent channel, then its spaces, nearest first (a
+   * Discord server). Across accounts at one place, any that would be notified.
+   */
   suppressesEveryone(c: Row): boolean {
+    return this.suppresses(c, 'suppressEveryone');
+  }
+
+  /** Do mentions of a group you are in (a Discord role) not notify here (NativeMute.suppressRoles)? As suppressesEveryone. */
+  suppressesRoles(c: Row): boolean {
+    return this.suppresses(c, 'suppressRoles');
+  }
+
+  private suppresses(c: Row, key: 'suppressEveryone' | 'suppressRoles'): boolean {
     const parent = c.shape === 'thread' && c.parent_id ? (c.parent_id as string) : null;
-    for (const sp of this.ancestors(parent ?? c.id))
-      for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = 'space' AND target_id = ? AND native_mute IS NOT NULL`, sp.id))
-        if ((JSON.parse(r.native_mute) as P.NativeMute).suppressEveryone === true) return true;
+    const chain: ['conversation' | 'space', string][] = [['conversation', c.id], ...(parent ? [['conversation', parent] as ['conversation', string]] : []), ...this.ancestors(parent ?? c.id).map((sp) => ['space', sp.id] as ['space', string])];
+    for (const [kind, id] of chain) {
+      let said: boolean | null = null;
+      for (const r of this.store.raw<Row>(`SELECT native_mute FROM vantage WHERE target_kind = ? AND target_id = ? AND native_mute IS NOT NULL`, kind, id)) {
+        const v = (JSON.parse(r.native_mute) as P.NativeMute)[key];
+        if (v === false) said = false;
+        else if (v === true && said === null) said = true;
+      }
+      if (said !== null) return said;
+    }
     return false;
   }
 
@@ -323,11 +358,13 @@ export class Triage {
     const d = this.decideByRules(messageId);
     if (d) await this.withActivity(d, messageId, now);
     if (d?.facts) await this.withModel(d, messageId, now);
-    if (d?.decision === 'push' && this.sentSilently(messageId)) {
+    const silently = !!d && d.decision !== 'silent' && this.sentSilently(messageId);
+    if (d?.decision === 'push' && silently) {
       // Its sender asked that it not notify anyone (Discord's @silent): it stays where it would be, silent.
       d.decision = d.facts?.conv ? 'quiet' : 'digest';
       d.reasons.unshift('Sent silently: it never alerts');
     }
+    if (d) this.withLoudness(d, messageId, now, silently);
     if (d?.decision !== 'push') return d;
     const q = this.store.quietHours();
     if (!inQuietHours(q, now) || (q!.allowStarred && d.alwaysNotify)) return d;
@@ -365,8 +402,10 @@ export class Triage {
     const f = d.facts!;
     const m = this.store.one<Row>('SELECT conversation_id, ts, body FROM message WHERE id = ?', messageId)!;
     const fold = this.interact().fold;
-    const why = conversing(f, { lastOwn: fold.lastOwn(m.conversation_id), answerRate: fold.answerRate(m.conversation_id, m.ts) }, m.ts);
+    const part = { lastOwn: fold.lastOwn(m.conversation_id), answerRate: fold.answerRate(m.conversation_id, m.ts) };
+    const why = conversing(f, part, m.ts);
     f.conv = !!why;
+    d.why = conversingAll(f, part, m.ts);
     const marked = this.marked(now);
     const eligible = !f.cap && (f.conv || marked.convs.has(m.conversation_id) || (!!f.author && marked.authors.has(f.author)));
     if (eligible && !d.forced) {
@@ -405,6 +444,64 @@ export class Triage {
       d.reasons.unshift(`${TIER_NAME[tier]}, ${learnedFrom(tier, before)} (was ${TIER_NAME[before]})`, ...said);
       d.decidedBy = 'learned';
     }
+  }
+
+  /**
+   * Its loudness (loudness.ts), worked out after the tiers: stored beside them in shadow, deciding when
+   * DITHER_ATTENTION=on. Your rules stay absolute: Always alert is 100, a muted place 0, List only at most the next
+   * look; a message sent silently never sounds.
+   */
+  private withLoudness(d: Decision, messageId: string, now: number, silently: boolean) {
+    const L = this.loud;
+    if (!L || L.mode === 'tiers') return;
+    const live = L.mode === 'on';
+    if (d.decision === 'silent' || !d.facts) {
+      d.loud = { loudness: 0, band: 'unread', live, rule: 'Silenced', reasons: [{ text: d.reasons[0] ?? 'Silenced', by: 0 }] };
+      return;
+    }
+    const f = d.facts;
+    const m = this.store.one<Row>('SELECT conversation_id, body FROM message WHERE id = ?', messageId);
+    if (!m) return;
+    const q = this.store.quietHours();
+    const quiet = inQuietHours(q, now) && !(q!.allowStarred && d.alwaysNotify);
+    const prefs = L.prefs();
+    const mo = this.momentOf?.(now) ?? { desk: false, sinceSound: null };
+    const moment = { desk: prefs.computerFirst && mo.desk, hour: new Date(now).getHours(), sinceSound: mo.sinceSound, quiet };
+    const probs = d.probs ?? prior(f);
+    const out = loudness(
+      {
+        facts: f,
+        words: words(m.body ?? ''),
+        importance: probs.important,
+        ...(f.judge !== undefined ? { alert: probs.alert } : {}),
+        why: d.why ?? [],
+        owed: this.owedOf?.(m.conversation_id) ?? null,
+        moment,
+        ...(d.forced ? { rule: 'always' as const } : f.cap ? { rule: 'list' as const } : {}),
+      },
+      L.model,
+      prefs.readily,
+      this.namer,
+    );
+    if (silently && out.band === 'sound') {
+      out.band = 'show';
+      out.loudness = 79;
+      out.reasons.unshift({ text: 'Sent silently: it never sounds', by: 0 });
+    }
+    d.loud = {
+      loudness: out.loudness,
+      band: out.band,
+      live,
+      parts: out.parts,
+      reasons: out.reasons.slice(0, 10),
+      why: d.why ?? [],
+      moment: momentKeys(moment),
+      ...(d.forced ? { rule: 'Always alert' } : f.cap ? { rule: 'List only' } : {}),
+    };
+    if (!live || d.forced) return;
+    d.decision = BAND_DECISION[out.band];
+    d.decidedBy = 'model';
+    d.reasons.unshift(...out.reasons.filter((r) => r.by !== 0 || r === out.reasons[0]).slice(0, 3).map((r) => (r.by ? `${r.text} (${r.by > 0 ? '+' : ''}${r.by})` : r.text)));
   }
 
   /** Ask the local model, for at most `judgeTimeoutMs`. null: it has no answer; undefined: it did not answer in time. */
@@ -458,8 +555,10 @@ export class Triage {
       spaces: this.ancestors(parent ?? c.id).map((x) => x.id as string),
       author: author?.person_id ?? author?.id ?? null,
       bot: !!author?.is_bot,
-      mention: !!m.mentions_self && !m.mentions_all,
+      mention: !!m.mentions_self && !m.mentions_all && !m.mentions_group,
       everyone: !!m.mentions_self && !!m.mentions_all,
+      // A group you are in (a Zulip user group, a Discord role you hold), not you by name: absent where it was not.
+      ...(m.mentions_self && !m.mentions_all && m.mentions_group ? { group: true } : {}),
       reply: !!repliedTo && s.isSelf(repliedTo.author_id),
       question: /\?\s*$|\?\s/.test(m.body),
       urgent: URGENT.test(m.body),
@@ -478,6 +577,7 @@ export class Triage {
     let score = 0.15;
     const why: string[] = [];
     if (f.mention) (score += 0.5), why.push('mentions you');
+    else if (f.group) (score += 0.35), why.push('mentions a group you are in');
     else if (f.everyone) (score += 0.2), why.push('pings @everyone');
     if (f.reply) (score += 0.4), why.push('replies to you');
     const addressed = f.mention || f.reply || c.shape === 'direct';
@@ -561,8 +661,9 @@ export class Triage {
     const how = this.addressed(f, c);
     const native = this.nativeLevel(c);
     const net = NETWORK_META[c.network as P.Network].name;
-    // @everyone and @here in a server set to suppress them (Discord's own setting) would not have notified you.
-    const about = f.mention || f.reply || (f.everyone && !this.suppressesEveryone(c));
+    // @everyone and @here where they are suppressed (a Discord server's setting, a Zulip channel's) would not have
+    // notified you, nor a role's mention in a server that suppresses those.
+    const about = f.mention || f.reply || (!!f.group && !this.suppressesRoles(c)) || (!!f.everyone && !this.suppressesEveryone(c));
     // Would the network itself have notified you? Replies to you ping on Discord, @everyone wherever mentions do. A
     // place you once set to mentions only says the same of itself.
     const mentionsOnly = eff.level === 'mentions' && !eff.native;
@@ -604,7 +705,7 @@ export class Triage {
     if (author?.is_bot) reasons.push('From a bot');
     if (feedType) reasons.push(`${NETWORK_META[c.network as P.Network].name} notifications: ${FEED_REASON[feedType]}, kept to the list (at most a silent row)`);
     else if (cap) reasons.push(eff.native ? `Muted in ${net}: kept to the list` : `List only: ${eff.source}`);
-    else if (notify) reasons.push(mentionsOnly || native !== 'all' ? (f.mention ? 'Mentions you' : f.reply ? 'Replies to your message' : 'Pings @everyone') : `${net} notifies every message here`);
+    else if (notify) reasons.push(mentionsOnly || native !== 'all' ? (f.mention ? 'Mentions you' : f.reply ? 'Replies to your message' : f.group ? 'Mentions a group you are in' : 'Pings @everyone') : `${net} notifies every message here`);
     else {
       reasons.push(mentionsOnly ? `Mentions only: ${eff.source}` : native === 'none' ? `Muted in ${net}` : `${net} notifies only mentions here`);
       if (how.why.length) reasons.push(`About you: ${how.why.join(', ')}`);

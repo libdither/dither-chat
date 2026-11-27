@@ -12,11 +12,11 @@ import type { JSX } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { type ActiveCall, activeCall, callControls, callName, callStatus, featuredSpeaker } from '../call.ts';
 import { barKinds, barShows, idleFaces } from '../callbar.ts';
-import { communitiesOf, convTitle, inboxKeyOf } from '../model.ts';
+import { communitiesOf, convTitle, faceOf, inboxKeyOf } from '../model.ts';
 import { PANE_DEFAULT, paneWidths } from '../panes.ts';
 import { useLayer } from '../phone.ts';
 import { callIn } from '../ringing.ts';
-import { db, go } from '../state.ts';
+import { db, go, metaRev } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
@@ -52,6 +52,7 @@ function ConvFace({ c, size }: { c: P.ConversationView; size: number }) {
 
 /** Whose face the bar shows: whoever talks (call.ts featuredSpeaker), else a few of the others (or the chat's picture) with the call's phase. */
 function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
+  metaRev.value; // names and pictures change without `call` changing
   const lead = featuredSpeaker.value;
   const talker = lead ? call.participants.find((p) => p.id === lead) : undefined;
   if (talker) return <CallAvatar {...callMarks(call, talker)} size={32} />;
@@ -64,8 +65,8 @@ function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
     <span class={`call-bar-idle n${faces.length}`}>
       {faces.length
         ? faces.map((id) => {
-            const i = db.identities.get(id);
-            return <Avatar id={i?.personId ?? id} name={callName(id)} url={i?.avatar ?? null} size={faces.length === 1 ? 32 : 22} />;
+            const f = faceOf(id);
+            return <Avatar id={f.id} name={callName(id)} url={f.url} size={faces.length === 1 ? 32 : 22} />;
           })
         : c && <ConvFace c={c} size={32} />}
       <i class={`call-bar-phase call-dot ${phase === 'reaching' ? 'connecting' : phase}`} />
@@ -78,6 +79,7 @@ function BarFace({ call, phase }: { call: ActiveCall; phase: string }) {
  * from where a thumb rests. `now` ticks once a second (CallDock).
  */
 export function CallBar({ call, now }: { call: ActiveCall; now: number }) {
+  metaRev.value; // the chat's name changes without `call` changing
   const c = db.conversations.get(call.conversationId);
   const title = c ? convTitle(c) : 'Call';
   const status = callStatus(call, now);

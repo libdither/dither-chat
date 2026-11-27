@@ -4,13 +4,15 @@
  * communities (a channel or category counts toward its server) and group chats. Links come from:
  *  - server members seen, only while the adversarial `members` setting records them;
  *  - the mutual servers a fetched profile named;
- *  - the participants of groups, and of channels inside a server.
+ *  - the participants of groups, and of channels inside a server;
+ *  - the authors of a thread (a Zulip topic, a Discord thread), through its channel, to the server it is in.
  * Each person also says which of your accounts have a direct chat with them, and which list them as a friend or contact.
  * Only people and places with a link are sent, and people you have a direct chat with; you are sent apart (`me`).
  * Ids, names, indexes and pictures (signed media links, as a chat list has them), never message text.
  */
 import type * as P from '@dither-chat/protocol';
 import { GRAPH_SOURCE, GRAPH_WEIGHT_KEYS } from '@dither-chat/protocol';
+import { voiceLogged } from './voicetime.ts';
 import { hubId } from '@dither-chat/protocol/ids';
 import type { Store } from './store.ts';
 
@@ -106,6 +108,26 @@ export function peopleGraph(s: Store): P.PeopleGraph {
 
   for (const r of db.query(`SELECT p.conversation_id, p.identity_id, c.shape FROM participant p JOIN conversation c ON c.id = p.conversation_id WHERE c.shape IN ('group', 'channel')`).all() as Row[])
     link(r.identity_id, r.shape === 'group' ? r.conversation_id : (convSpace.get(r.conversation_id) ?? null), GRAPH_SOURCE.participant);
+
+  // Who wrote in a thread: a Zulip channel names nobody, its topics are threads, and a thread lists no participants.
+  for (const r of db
+    .query(
+      `SELECT DISTINCT c.id, c.parent_id, m.author_id FROM conversation c JOIN message m ON m.conversation_id = c.id AND m.author_id IS NOT NULL WHERE c.shape = 'thread'`,
+    )
+    .all() as Row[])
+    link(r.author_id, (r.parent_id && convSpace.get(r.parent_id)) || convSpace.get(r.id) || null, GRAPH_SOURCE.author);
+
+  // Who was in one of a server's voice channels, while the voice log is kept (adversarial).
+  if (voiceLogged(db))
+    for (const r of db.query(`SELECT DISTINCT target_id, new FROM change_log WHERE target_kind = 'identity' AND field = 'voice' AND new IS NOT NULL`).all() as Row[]) {
+      let conv: unknown;
+      try {
+        conv = JSON.parse(r.new);
+      } catch {
+        continue;
+      }
+      if (typeof conv === 'string') link(r.target_id, convSpace.get(conv) ?? null, GRAPH_SOURCE.voice);
+    }
 
   // Which accounts see each place, and which have a direct chat with each person.
   const push = (l: number[], x: number | undefined) => x !== undefined && !l.includes(x) && l.push(x);
@@ -231,5 +253,6 @@ function cleanTuning(t: any): P.GraphTuning | null {
   }
   const f = t.fitted;
   const fitted = f && inRange(f.at, 0, 1e15) && inRange(f.before, 0, 1) && inRange(f.after, 0, 1) ? { at: f.at, before: f.before, after: f.after } : undefined;
-  return { weights, fade: t.fade, ...(fitted ? { fitted } : {}) };
+  if (t.voice !== undefined && !inRange(t.voice, 0, 3)) return null;
+  return { weights, fade: t.fade, ...(t.voice !== undefined ? { voice: t.voice } : {}), ...(fitted ? { fitted } : {}) };
 }

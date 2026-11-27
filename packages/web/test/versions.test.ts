@@ -2,8 +2,8 @@
 import { expect, test } from 'bun:test';
 import { effect, signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { changed, dataVersion, flush, metaDataVersion, metaRev, onceListed, rev, timelineChanged, timelineRev } from '../src/versions.ts';
-import { conversationMetaChanged, emptyDb, identityVersion, putIdentity } from '../src/syncmodel.ts';
+import { changed, convsChangedSince, dataVersion, flush, metaDataVersion, metaRev, onceListed, placesDataVersion, rev, timelineChanged, timelineRev } from '../src/versions.ts';
+import { applyEventTo, conversationMetaChanged, emptyDb, identityVersion, onlyOpens, prefKey, putIdentity } from '../src/syncmodel.ts';
 import { sameProps } from '../src/ui/memo.ts';
 
 /** How many times each signal moved while `fn` ran and the flush after it. */
@@ -51,6 +51,27 @@ test('how things look moves metaRev but not what is where; a read moves neither'
   changed('meta');
   flush();
   expect(metaDataVersion()).toBe(m + 1);
+});
+
+test('a folder opened or closed moves what is where, and nothing a row or a message shows', () => {
+  const m = metaDataVersion();
+  expect(moves(() => changed('open'))).toEqual({ rev: 1, metaRev: 0 });
+  expect(metaDataVersion()).toBe(m + 1);
+});
+
+test("the hub's place settings are only a folder opening when nothing else in them differs", () => {
+  const db = emptyDb();
+  const pref = (id: string, extra: Partial<P.PlacePrefView> = {}): P.PlacePrefView => ({ kind: 'folder', id, position: 1, pinned: false, hidden: false, open: false, railed: false, ...extra });
+  for (const p of [pref('f1'), pref('f2', { pinned: true })]) db.placePrefs.set(prefKey(p.kind, p.id), p);
+  expect(onlyOpens(db, [pref('f1', { open: true }), pref('f2', { pinned: true })])).toBe(true);
+  // The same again: nothing changed, which is no meta change either.
+  expect(onlyOpens(db, [pref('f1'), pref('f2', { pinned: true })])).toBe(true);
+  // Moved, pinned, a setting added, one missing or one more: a meta change.
+  expect(onlyOpens(db, [pref('f1', { open: true, position: 2 }), pref('f2', { pinned: true })])).toBe(false);
+  expect(onlyOpens(db, [pref('f1'), pref('f2')])).toBe(false);
+  expect(onlyOpens(db, [pref('f1', { pictures: 'grid' } as Partial<P.PlacePrefView>), pref('f2', { pinned: true })])).toBe(false);
+  expect(onlyOpens(db, [pref('f1')])).toBe(false);
+  expect(onlyOpens(db, [pref('f1'), pref('f2', { pinned: true }), pref('f3')])).toBe(false);
 });
 
 test('the signals move by themselves', async () => {
@@ -103,6 +124,18 @@ test('a new message or read state in a conversation leaves names alone; anything
   expect(conversationMetaChanged(two, conv({ participantIds: ['i1', 'i2', 'i3'] }))).toBe(true);
 });
 
+test('a conversation sent again as it was keeps its object; a changed one replaces it', () => {
+  const db = emptyDb();
+  applyEventTo(db, { t: 'conversation', conversation: conv() });
+  const first = db.conversations.get('c1')!;
+  // A rule changed: the hub sends every conversation again.
+  applyEventTo(db, { t: 'conversation', conversation: conv() });
+  expect(db.conversations.get('c1')).toBe(first);
+  applyEventTo(db, { t: 'conversation', conversation: conv({ name: 'random' }) });
+  expect(db.conversations.get('c1')!.name).toBe('random');
+  expect(db.conversations.get('c1')).not.toBe(first);
+});
+
 test('props are the same when each value is, arrays item by item', () => {
   const m = {};
   const f = () => {};
@@ -144,4 +177,36 @@ test('onceListed runs at once when the list has it already, and only then', asyn
   changed('list');
   flush();
   expect(runs).toBe(1);
+});
+
+test('what a message or a read changed is kept by version, and anything else is "anything"', () => {
+  const v0 = placesDataVersion();
+  expect(convsChangedSince(v0)).toEqual(new Set());
+  changed('list', new Set(['a']));
+  changed('list', new Set());
+  changed('list', new Set(['b']));
+  expect(convsChangedSince(v0)).toEqual(new Set(['a', 'b']));
+  expect(convsChangedSince(v0 + 2)).toEqual(new Set(['b']));
+  // Who wrote and the inbox move no place: nothing in the log.
+  changed('identity');
+  changed('inbox');
+  expect(convsChangedSince(v0 + 2)).toEqual(new Set(['b']));
+  // A list change that does not say what changed, or any other kind: anything may have.
+  const v1 = placesDataVersion();
+  changed('list');
+  expect(convsChangedSince(v1)).toBeNull();
+  expect(convsChangedSince(v0)).toBeNull();
+  const v2 = placesDataVersion();
+  changed('meta', new Set(['c']));
+  expect(convsChangedSince(v2)).toBeNull();
+  // Too many at once, and too long ago: anything.
+  const v3 = placesDataVersion();
+  changed('list', new Set(Array.from({ length: 100 }, (_, i) => `x${i}`)));
+  expect(convsChangedSince(v3)).toBeNull();
+  const v4 = placesDataVersion();
+  for (let i = 0; i < 70; i++) changed('list', new Set(['d']));
+  expect(convsChangedSince(v4)).toBeNull();
+  expect(convsChangedSince(placesDataVersion() - 3)).toEqual(new Set(['d']));
+  // The signals move now, not in the next test.
+  flush();
 });

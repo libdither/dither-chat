@@ -10,6 +10,7 @@ import { Icon } from './icons.tsx';
 
 const WHY_ICON: Record<PlanStep['rule'], string> = { network: 'layers', word: 'hash' };
 
+// redraws: OrganizeServers makes `plan` again on every `rev`, so it is new when folders or accounts change.
 export function SuggestedLayout({ plan }: { plan: FolderPlan }) {
   const [off, setOff] = useState<ReadonlySet<string>>(new Set());
   const [personas, setPersonas] = useState(true);

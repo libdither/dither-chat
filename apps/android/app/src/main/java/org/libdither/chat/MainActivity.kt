@@ -105,6 +105,8 @@ class MainActivity : Activity() {
     private var loadAt = 0L
     var callActive = false
         private set
+    /** The page plays something (MediaService.kt): like a call, it keeps running in the background. */
+    private var mediaPlaying = false
     private var notifyAsked = false
     private var backCallback: Any? = null
     /** The system splash stays up until the page has drawn its own sphere in the same place, or for 1.5 s at most. */
@@ -127,7 +129,9 @@ class MainActivity : Activity() {
         hub = Hub.origin(this)
         val h = hub
         if (h == null) showSetup(null, null) else showWeb(h, hashFrom(intent))
-        answerFrom(intent)
+        // Only a fresh tap answers: an activity brought back after Android stopped the app comes with the intent it
+        // first started from, Answer and all, and answering that again called the other side anew.
+        if (savedInstanceState == null) answerFrom(intent)
     }
 
     /**
@@ -136,8 +140,10 @@ class MainActivity : Activity() {
      */
     private fun answerFrom(i: Intent?) {
         val raw = i?.getStringExtra(EXTRA_ANSWER) ?: return
-        // Once: a later recreation of the activity from the same intent must not join again.
+        // Once: a later recreation of the activity from the same intent must not join again. Removing the extra holds
+        // only while this process lives; opening the app from Recents hands back the first intent, so that is no tap.
         i.removeExtra(EXTRA_ANSWER)
+        if (i.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val a = runCatching { JSONObject(raw) }.getOrNull() ?: return
         Notifications.cancel(this, a.optString("tag").ifEmpty { "call:${a.optString("call")}" })
         Log.i(TAG, "answering call ${a.optString("call")}")
@@ -570,12 +576,15 @@ class MainActivity : Activity() {
         resumed = null
         // The hub's session cookie to disk now, so the app's own requests (Hub.authorize) and the next start have it.
         runCatching { CookieManager.getInstance().flush() }
-        // A call keeps the page running. Otherwise pause what can be (animations, sensors); JS and the socket go on.
-        if (!callActive) web?.onPause()
+        // A call, or something playing, keeps the page running. Otherwise pause what can be (animations, sensors); JS
+        // and the socket go on.
+        if (!callActive && !mediaPlaying) web?.onPause()
     }
 
     override fun onDestroy() {
         if (current == this) current = null
+        // The page that played is gone with this activity (swiped from Recents): so is its notification.
+        MediaService.stop(this)
         dropWeb()
         super.onDestroy()
     }
@@ -606,7 +615,7 @@ class MainActivity : Activity() {
         callActive = active
         if (!active) notifyAsked = false
         // During a call the renderer keeps its priority with the screen off, so Android does not reclaim it first.
-        web?.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, !active)
+        keepRenderer()
         CallService.update(this, m)
         // Android 13+ hides a foreground service's notification without this, and with it the hang-up button.
         // A notification posted before the grant stays hidden, so post it again after. Asked once a call is live: by
@@ -617,6 +626,17 @@ class MainActivity : Activity() {
             notifyAsked = true
             ensureNotifications { granted -> if (granted && callActive) CallService.update(this, m) }
         }
+    }
+
+    /** What the page plays changed (packages/web/src/nowplaying.ts): `playing`, `paused` or `none`. */
+    fun onMedia(m: JSONObject) {
+        mediaPlaying = m.optString("state") == "playing"
+        keepRenderer()
+        MediaService.update(this, m)
+    }
+
+    private fun keepRenderer() {
+        web?.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, !(callActive || mediaPlaying))
     }
 
     fun changeHub() = showSetup(hub?.toString(), null)

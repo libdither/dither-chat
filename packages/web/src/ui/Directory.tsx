@@ -4,14 +4,15 @@ import { NETWORK_META, NETWORKS } from '@dither-chat/protocol';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
 import { activityOfSpace, allCommunities, categoriesOf, convsUnder, convTitle, folderConvs, kindLabel, memberOf, netName, placePref, railEntries, spaceUnread, sumUnread, unreadOf, visibleConv, type RailEntry } from '../model.ts';
-import { api, db, go, pref, rev, setPrefs, toast, type DirectorySort } from '../state.ts';
+import { api, db, go, metaRev, pref, rev, setPrefs, toast, type DirectorySort } from '../state.ts';
+import { memo, sameProps } from './memo.ts';
 import { AccountChip, Avatar, Count, Empty, Modal, NetBadge } from './bits.tsx';
 import { dragProps, dropClass } from './dnd.tsx';
 import { Icon } from './icons.tsx';
 import { HeadOrb } from './Offline.tsx';
 import { dropPlace } from './Organize.tsx';
 import { openPlaceMenu } from './menus.tsx';
-import { saveThreshold, thresholdOf } from './Reorganize.tsx';
+import { saveThreshold, thresholdOf } from './OrganizeServers.tsx';
 import { pct, Sensitivity } from './Sensitivity.tsx';
 
 interface Place {
@@ -67,75 +68,84 @@ function open(p: Place) {
   else go({ view: 'inbox', conv: p.id });
 }
 
-function Card({ place: p, week, drag, onCategories }: { place: Place; week: number; drag: boolean; onCategories: (p: Place) => void }) {
-  const pref = placePref(p.kind, p.id);
-  const cats = p.kind === 'folder' ? [] : categoriesOf(p.kind, p.id);
-  const props = dragProps({ key: p.key, label: p.name, group: 'directory', axis: 'x', onDrop: drag ? dropPlace : undefined, onMenu: (x, y) => openPlaceMenu(p.key, p.name, x, y) });
-  const accounts = p.accountIds.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
-  return (
-    <article class={`dir-card ${pref.hidden ? 'hidden-place' : ''} ${dropClass(p.key)}`} {...props}>
-      <button class="dir-card-main" onClick={() => open(p)}>
-        <span class="dir-card-icon">
-          {p.kind === 'folder' ? (
-            <span class="folder-row-icon"><Icon name="folder" /></span>
-          ) : (
-            <Avatar id={p.id} name={p.name} url={p.icon} size={48} square />
-          )}
-        </span>
-        <span class="dir-card-text">
-          <span class="dir-card-name">
-            {p.name}
-            {pref.pinned && <Icon name="star" size={12} class="row-star" />}
-          </span>
-          <span class="dir-source">
-            {p.network ? (
-              <>
-                <NetBadge network={p.network} size={15} /> {netName(p.network)} {p.noun}
-              </>
+type CardProps = { place: Place; week: number; drag: boolean; onCategories: (p: Place) => void };
+/**
+ * Drawn again only when what it shows changes (memo.ts): places are made again on each render, so the same is each
+ * field the same. Names, settings and categories it reads from `metaRev`.
+ */
+const Card = memo(
+  function Card({ place: p, week, drag, onCategories }: CardProps) {
+    metaRev.value;
+    const pref = placePref(p.kind, p.id);
+    const cats = p.kind === 'folder' ? [] : categoriesOf(p.kind, p.id);
+    const props = dragProps({ key: p.key, label: p.name, group: 'directory', axis: 'x', onDrop: drag ? dropPlace : undefined, onMenu: (x, y) => openPlaceMenu(p.key, p.name, x, y) });
+    const accounts = p.accountIds.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+    return (
+      <article class={`dir-card ${pref.hidden ? 'hidden-place' : ''} ${dropClass(p.key)}`} {...props}>
+        <button class="dir-card-main" onClick={() => open(p)}>
+          <span class="dir-card-icon">
+            {p.kind === 'folder' ? (
+              <span class="folder-row-icon"><Icon name="folder" /></span>
             ) : (
-              <>Across networks · {p.noun}</>
+              <Avatar id={p.id} name={p.name} url={p.icon} size={48} square />
             )}
           </span>
-          {p.topic && <span class="dir-topic">{p.topic}</span>}
-        </span>
-        <Count n={p.badge} />
-      </button>
-      {accounts.length > 0 && (
-        <div class="dir-accounts">
-          {accounts.map((a) => (
-            <AccountChip account={a} small />
-          ))}
-        </div>
-      )}
-      <div class="dir-foot">
-        <span class="dir-stats">
-          {p.last ? `Last message ${ago(p.last)}` : 'No messages stored'}
-          {p.kind === 'space' && ` · ${p.convs.length} channels`}
-          {week > 0 && ` · ${week} this week`}
-        </span>
-        <span class="dir-actions">
-          {p.kind !== 'folder' && (
-            <button class="icon-btn small" title="Categories" aria-label={`Categories for ${p.name}`} onClick={() => onCategories(p)}>
-              <Icon name="layers" size={14} />
-            </button>
-          )}
-          <button class="icon-btn small" title="Arrange" aria-label={`Arrange ${p.name}`} onClick={(e) => openPlaceMenu(p.key, p.name, (e as MouseEvent).clientX, (e as MouseEvent).clientY)}>
-            <Icon name="settings" size={14} />
-          </button>
-        </span>
-      </div>
-      {cats.length > 0 && (
-        <div class="dir-cats">
-          {cats.map((c) => (
-            <span class="cat-chip" style={{ '--cat': c.color ?? '#8b93a7' } as any}>
-              {c.name}
+          <span class="dir-card-text">
+            <span class="dir-card-name">
+              {p.name}
+              {pref.pinned && <Icon name="star" size={12} class="row-star" />}
             </span>
-          ))}
+            <span class="dir-source">
+              {p.network ? (
+                <>
+                  <NetBadge network={p.network} size={15} /> {netName(p.network)} {p.noun}
+                </>
+              ) : (
+                <>Across networks · {p.noun}</>
+              )}
+            </span>
+            {p.topic && <span class="dir-topic">{p.topic}</span>}
+          </span>
+          <Count n={p.badge} />
+        </button>
+        {accounts.length > 0 && (
+          <div class="dir-accounts">
+            {accounts.map((a) => (
+              <AccountChip account={a} small />
+            ))}
+          </div>
+        )}
+        <div class="dir-foot">
+          <span class="dir-stats">
+            {p.last ? `Last message ${ago(p.last)}` : 'No messages stored'}
+            {p.kind === 'space' && ` · ${p.convs.length} channels`}
+            {week > 0 && ` · ${week} this week`}
+          </span>
+          <span class="dir-actions">
+            {p.kind !== 'folder' && (
+              <button class="icon-btn small" title="Categories" aria-label={`Categories for ${p.name}`} onClick={() => onCategories(p)}>
+                <Icon name="layers" size={14} />
+              </button>
+            )}
+            <button class="icon-btn small" title="Arrange" aria-label={`Arrange ${p.name}`} onClick={(e) => openPlaceMenu(p.key, p.name, (e as MouseEvent).clientX, (e as MouseEvent).clientY)}>
+              <Icon name="settings" size={14} />
+            </button>
+          </span>
         </div>
-      )}
-    </article>
-  );
-}
+        {cats.length > 0 && (
+          <div class="dir-cats">
+            {cats.map((c) => (
+              <span class="cat-chip" style={{ '--cat': c.color ?? '#8b93a7' } as any}>
+                {c.name}
+              </span>
+            ))}
+          </div>
+        )}
+      </article>
+    );
+  },
+  (a: CardProps, b: CardProps) => a.week === b.week && a.drag === b.drag && a.onCategories === b.onCategories && sameProps(a.place as any, b.place as any),
+);
 
 function PlaceCategories({ place: p, onClose }: { place: Place; onClose: () => void }) {
   rev.value;
@@ -301,7 +311,7 @@ export function DirectoryPane({ onBack }: { onBack: () => void }) {
             )}
             <div class="dir-grid">
               {s.places.map((p) => (
-                <Card place={p} week={week(p)} drag={manual && !showHidden} onCategories={setEditing} />
+                <Card key={p.key} place={p} week={week(p)} drag={manual && !showHidden} onCategories={setEditing} />
               ))}
             </div>
           </section>

@@ -19,7 +19,7 @@
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
-import { MATCH_FAINT, MATCH_SHOWN, NETWORK_META } from '@dither-chat/protocol';
+import { isEventNetwork, MATCH_FAINT, MATCH_SHOWN, NETWORK_META } from '@dither-chat/protocol';
 
 type Row = Record<string, any>;
 type Network = P.Network;
@@ -36,6 +36,9 @@ export interface MatchRun {
   pictures: { identityId: string; url: string; via: string | null }[];
   ms: number;
 }
+
+/** Event hosts' and guests' pictures hashed in one run, after everyone else's: a party's list can be hundreds long. */
+const EVENT_PICTURES = 300;
 
 // ------------------------------------------------------------------ reading names
 
@@ -108,6 +111,11 @@ const SITES: { re: RegExp; site: string; network?: Network }[] = [
   { re: /(?:^|[\s/(])(?:www\.)?reddit\.com\/u(?:ser)?\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
   { re: /(?:^|[\s(])\/?u\/([A-Za-z0-9_-]{3,20})\b/g, site: 'reddit', network: 'reddit' },
   { re: /(?:^|[\s/(])substack\.com\/@([A-Za-z0-9_-]{2,40})\b/g, site: 'substack', network: 'substack' },
+  { re: /(?:^|[\s/(])(?:www\.)?lesswrong\.com\/users\/([A-Za-z0-9_-]{1,64})\b/g, site: 'lesswrong', network: 'lesswrong' },
+  { re: /(?:^|[\s/(])(?:www\.)?(?:luma\.com|lu\.ma)\/(?:user|u)\/([A-Za-z0-9_.-]{2,64})\b/g, site: 'luma', network: 'luma' },
+  { re: /(?:^|[\s/(])(?:www\.)?partiful\.com\/u\/([A-Za-z0-9_-]{2,64})\b/g, site: 'partiful', network: 'partiful' },
+  { re: /(?:^|[\s/(])(?:www\.)?linkedin\.com\/in\/([A-Za-z0-9_-]{3,100})\b/g, site: 'linkedin' },
+  { re: /(?:^|[\s/(])(?:www\.)?tiktok\.com\/@([A-Za-z0-9_.]{2,24})\b/g, site: 'tiktok' },
   { re: /(?:^|[\s/(])(?:www\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})\b/g, site: 'twitch' },
   { re: /(?:^|[\s/(])(?:www\.)?youtube\.com\/@([A-Za-z0-9_.-]{3,30})\b/g, site: 'youtube' },
   { re: /(?:^|[\s/(])steamcommunity\.com\/(?:id|profiles)\/([A-Za-z0-9_-]{2,32})\b/g, site: 'steam' },
@@ -128,12 +136,16 @@ const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
   bluesky: { site: 'bluesky', network: 'bluesky' },
   reddit: { site: 'reddit', network: 'reddit' },
   substack: { site: 'substack', network: 'substack' },
+  lesswrong: { site: 'lesswrong', network: 'lesswrong' },
   lemmy: { site: 'lemmy', network: 'lemmy' },
   twitch: { site: 'twitch' },
   youtube: { site: 'youtube' },
   steam: { site: 'steam' },
   spotify: { site: 'spotify' },
   tiktok: { site: 'tiktok' },
+  linkedin: { site: 'linkedin' },
+  luma: { site: 'luma', network: 'luma' },
+  partiful: { site: 'partiful', network: 'partiful' },
   mastodon: { site: 'mastodon', network: 'mastodon' },
   domain: { site: 'domain' },
   website: { site: 'domain' },
@@ -148,6 +160,16 @@ const LABEL_SITES: Record<string, { site: string; network?: Network }> = {
   discord: { site: 'discord', network: 'discord' },
   email: { site: 'email', network: 'email' },
 };
+
+/**
+ * A handle as a name compares it: Zulip's handle is the address people sign in with, whose own part is the name they
+ * picked (sam.lee@example.org is sam.lee) and whose domain everyone at that place shares. Mail's is no name at all.
+ */
+export function nameHandle(network: Network, handle: string | null | undefined): string | null {
+  if (!handle || network === 'email') return null;
+  if (network === 'zulip' && handle.includes('@')) return handle.slice(0, handle.lastIndexOf('@')) || null;
+  return handle;
+}
 
 /** A handle as a key compares it: lower case, no leading @. */
 const handleKey = (s: string) => s.trim().replace(/^@/, '').toLowerCase();
@@ -225,6 +247,11 @@ export function ownKeys(i: { network: Network; native_id: string; handle?: strin
   if (site && h) out.push({ key: `${site}:${h}`, text: `${net} ${i.handle}` });
   if (i.network === 'matrix') out.push({ key: `matrix:${i.native_id.toLowerCase()}`, text: `Matrix ${i.native_id}` });
   if (i.network === 'email') out.push({ key: `email:${i.native_id.toLowerCase()}`, text: i.native_id.toLowerCase() });
+  // Event sites (docs/events.md): Luma's profile link is its username, Partiful's the user id itself.
+  if (i.network === 'luma' && h) out.push({ key: `luma:${h}`, text: `Luma ${i.handle}` });
+  if (i.network === 'partiful') out.push({ key: `partiful:${i.native_id.toLowerCase()}`, text: `Partiful ${i.handle ?? i.native_id}` });
+  // Zulip's handle is an address (none where the organization keeps addresses from members: the extractor sends none).
+  if (i.network === 'zulip' && i.handle && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(i.handle.trim())) out.push({ key: `email:${i.handle.trim().toLowerCase()}`, text: i.handle.trim().toLowerCase() });
   const phone =
     i.network === 'whatsapp'
       ? phoneKey(i.native_id.split('@')[0])
@@ -378,8 +405,9 @@ function load(db: Database, now = Date.now()): Loaded {
     s.idents.push(i);
     s.networks.add(i.network);
     sideOf.set(i.id, sid);
-    for (const n of [i.display_name, i.nickname, i.network === 'email' ? null : i.handle]) addName(s, n);
-    if (i.handle && i.network !== 'email') s.handles.add(norm(i.handle));
+    const handle = nameHandle(i.network, i.handle);
+    for (const n of [i.display_name, i.nickname, handle]) addName(s, n);
+    if (handle) s.handles.add(norm(handle));
     // A Matrix id's own part is the handle people pick (@mothlight:matrix.org is mothlight); a bridge's stand-in is not.
     const local = i.network === 'matrix' && !puppetOf(i.native_id) ? /^@([^:]+):/.exec(i.native_id)?.[1] : undefined;
     if (local) s.handles.add(norm(local));
@@ -411,7 +439,9 @@ function load(db: Database, now = Date.now()): Loaded {
     try {
       const a = JSON.parse(r.data) as P.PersonAbout;
       addName(s, a.displayName);
-      if (a.handle) s.handles.add(norm(a.handle));
+      const net = s.idents.find((i) => i.id === r.identity_id)?.network;
+      const h = net === 'zulip' ? nameHandle(net, a.handle) : a.handle;
+      if (h) s.handles.add(norm(h));
       for (const c of claimsOf(a)) if (!s.claims.some((x) => x.key === c.key)) s.claims.push(c);
     } catch {}
   }
@@ -421,6 +451,7 @@ function load(db: Database, now = Date.now()): Loaded {
     const s = sides.get(sideOf.get(r.identity_id) ?? '');
     if (!s || !/^[0-9a-f]{16}$/.test(r.hash)) continue;
     const h = BigInt('0x' + r.hash);
+    if (flat(h)) continue;
     if (!s.hashes.includes(h)) {
       s.hashes.push(h);
       hashCount.set(h, (hashCount.get(h) ?? 0) + 1);
@@ -477,11 +508,12 @@ function addName(s: Side, n: string | null | undefined) {
 }
 
 function addProfile(s: Side, a: P.PersonAbout, identityId: string, sideOf: Map<string, string>) {
+  const from = s.idents.find((i) => i.id === identityId)?.network;
   addName(s, a.displayName);
-  if (a.handle) s.handles.add(norm(a.handle));
+  const h = from === 'zulip' ? nameHandle(from, a.handle) : a.handle;
+  if (h) s.handles.add(norm(h));
   if (a.username?.name) s.handles.add(norm(a.username.name));
   for (const f of a.facts ?? []) if (/originally known as/i.test(f.label)) addName(s, f.value.replace(/#\d{4}$/, ''));
-  const from = s.idents.find((i) => i.id === identityId)?.network;
   for (const c of claimsOf(a)) if (!s.claims.some((x) => x.key === c.key)) s.claims.push({ ...c, ...(from ? { from } : {}) });
   if (a.bio) {
     s.bioText = a.bio;
@@ -507,6 +539,14 @@ const popcount = (x: bigint) => {
   }
   return n;
 };
+
+/**
+ * A difference hash with few cells brighter than the next: a mostly flat picture, one colour with initials or a small
+ * mark (a network's letter picture). Every such picture hashes within a few bits of every other, so it tells nobody
+ * apart: unrelated people's letter pictures came out "Nearly the same profile picture".
+ */
+const FLAT_BITS = 12;
+const flat = (h: bigint) => popcount(h) < FLAT_BITS;
 
 /** Pairs worth comparing, from keys they share. */
 function candidates(L: Loaded): Set<string> {
@@ -698,7 +738,10 @@ function compare(L: Loaded, a: Side, b: Side, df: Map<string, number>): Scored {
 
 /** The network of a side's account with this handle (or name). */
 function whereNamed(s: Side, n: string, handle: boolean): Network {
-  for (const i of s.idents) if (handle ? norm(i.handle) === n : [i.display_name, i.nickname, i.handle].some((x) => norm(x) === n)) return i.network;
+  for (const i of s.idents) {
+    const h = nameHandle(i.network, i.handle);
+    if (handle ? norm(h) === n : [i.display_name, i.nickname, h].some((x) => norm(x) === n)) return i.network;
+  }
   return s.idents[0].network;
 }
 
@@ -707,7 +750,7 @@ const rarity = (n: number) => Math.max(0.3, Math.min(1, 1.4 - 0.4 * Math.log2(Ma
 
 /** The name as they wrote it, for the card, rather than squashed. */
 function shown(s: Side, n: string): string {
-  for (const i of s.idents) for (const x of [i.display_name, i.nickname, i.handle]) if (x && norm(x) === n) return x;
+  for (const i of s.idents) for (const x of [i.display_name, i.nickname, nameHandle(i.network, i.handle)]) if (x && norm(x) === n) return x;
   return n;
 }
 
@@ -759,8 +802,9 @@ function partOf(s: Side, n: Network): Side {
   const idents = s.idents.filter((i) => i.network === n);
   const p: Side = { ...s, id: `${s.id}#${n}`, idents, networks: new Set([n]), names: new Set(), handles: new Set(), words: new Set(), keys: new Map(), claims: [], bio: new Set(), hashes: [] };
   for (const i of idents) {
-    for (const x of [i.display_name, i.nickname, i.network === 'email' ? null : i.handle]) addName(p, x);
-    if (i.handle && i.network !== 'email') p.handles.add(norm(i.handle));
+    const h = nameHandle(i.network, i.handle);
+    for (const x of [i.display_name, i.nickname, h]) addName(p, x);
+    if (h) p.handles.add(norm(h));
     for (const k of ownKeys(i)) p.keys.set(k.key, k.text);
   }
   // Claims and bios are the side's as a whole; kept only on the part whose network made them would need the source.
@@ -794,6 +838,9 @@ function sideView(s: Side): P.MatchSide {
   };
 }
 
+/** A side seen only on Luma or Partiful, with no chat or group of yours around them: a guest at someone's party. */
+const eventStranger = (s: Side) => !s.direct && !s.around.size && s.idents.every((i) => isEventNetwork(i.network));
+
 export function run(db: Database, opts: { now?: number; limit?: number } = {}): MatchRun {
   const t0 = performance.now();
   const now = opts.now ?? Date.now();
@@ -814,6 +861,8 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     const a = L.sides.get(x);
     const b = L.sides.get(y);
     if (!a || !b) continue;
+    // Two people met only on event sites' guest lists: strangers to you both, no one to merge (docs/events.md).
+    if (eventStranger(a) && eventStranger(b)) continue;
     const d = L.decisions.get(k);
     if (d && d.decision !== 'yes') continue;
     const s = compare(L, a, b, df);
@@ -865,7 +914,9 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     ask.push({ key: s.key, card: c, hash: h });
   }
 
-  // Pictures to hash: the sides of pairs first, then people you have direct chats or groups with.
+  // Pictures to hash: the sides of pairs first, then people you have direct chats or groups with, then event hosts and
+  // guests (docs/events.md), the latest seen first and EVENT_PICTURES at most, so a guest who is someone you know can
+  // turn up in Same person? by their picture alone.
   const pictures: MatchRun['pictures'] = [];
   const hashed = new Map<string, string>((db.query('SELECT identity_id, url FROM picture_hash').all() as Row[]).map((r) => [r.identity_id, r.url]));
   const seen = new Set<string>();
@@ -881,6 +932,16 @@ export function run(db: Database, opts: { now?: number; limit?: number } = {}): 
     want(s.b);
   }
   for (const s of L.sides.values()) if (s.direct || s.around.size) want(s);
+  let guests = 0;
+  for (const r of db.query('SELECT identity_id, MAX(seen_at) AS at FROM event_seen GROUP BY identity_id ORDER BY at DESC LIMIT ?').all(EVENT_PICTURES * 2) as Row[]) {
+    if (guests >= EVENT_PICTURES) break;
+    const s = L.sides.get(L.sideOf.get(r.identity_id) ?? '');
+    const i = s?.idents.find((x) => x.id === r.identity_id);
+    if (!s || !i || seen.has(i.id) || !i.avatar_url || hashed.get(i.id) === i.avatar_url || pictures.length >= 2000) continue;
+    seen.add(i.id);
+    pictures.push({ identityId: i.id, url: i.avatar_url, via: i.seen_via });
+    guests++;
+  }
 
   const decided = [...L.decisions.values()];
   return {

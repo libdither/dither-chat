@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, NETWORK_META, RULE_LABEL, RULE_LEVELS } from '@dither-chat/protocol';
 import { useRef, useState } from 'preact/hooks';
 import { fullTime } from '../format.ts';
-import { AUTOMATIC, convTitle, deepLink, effectiveLevel, heldHere, netName, OLDER_RULE, ruleHelp, ruleOn, unreadOf } from '../model.ts';
+import { AUTOMATIC, channelsUnder, convTitle, deepLink, effectiveLevel, heldHere, netName, OLDER_RULE, ruleHelp, ruleOn, spaceLink, unreadOf } from '../model.ts';
 import { api, db, go, href, isSelfIdentity, markRead, openMessage, rev, setRule } from '../state.ts';
 import { AccountChip, Empty, variantIcon } from './bits.tsx';
 import { copy } from './ContextMenu.tsx';
@@ -18,13 +18,12 @@ import { HistoryCard } from './HistoryCard.tsx';
 import { retention, setShowIn } from '../history.ts';
 import { Icon } from './icons.tsx';
 import { conversationMenu, spaceMenu } from './menus.tsx';
-import { placeConvs } from './Organize.tsx';
-import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag } from './ProfileShell.tsx';
+import { Action, Card, Columns, Facts, Hero, ProfilePage, Tag, viewPicture } from './ProfileShell.tsx';
 import { openConv } from '../opening.ts';
 import { Loading } from './Loader.tsx';
 import { peopleExtras } from './peopleExtras.ts';
 import { ResetSessionCard } from './ResetSession.tsx';
-import { canIndex, startIndexing } from './Indexing.tsx';
+import { canIndex, startIndexing } from '../indexjobs.ts';
 import { NetworkMute } from './NetworkMute.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { useServerParts } from './ServerPartsLazy.tsx';
@@ -80,8 +79,9 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
   const accountIds = conv ? conv.vantages.map((v) => v.accountId) : (space?.accountIds ?? []);
   const members = view?.members ? (view.members.total ?? view.members.list.length) : (conv?.participantIds.length ?? 0);
   const peer = conv?.shape === 'direct' && conv.peerPersonId ? db.persons.get(conv.peerPersonId) : null;
-  const children = space ? placeConvs('space', space.id) : [];
-  const link = conv ? (deepLink(conv) ?? `${location.origin}${location.pathname}${href({ view: 'inbox', conv: conv.id })}`) : space?.network === 'discord' ? `https://discord.com/channels/${space.nativeId}` : space?.network === 'matrix' ? `https://matrix.to/#/${encodeURIComponent(space.nativeId)}` : null;
+  // Its channels, not the threads and topics under them, latest first.
+  const channels = space ? channelsUnder(space.id) : [];
+  const link = conv ? (deepLink(conv) ?? `${location.origin}${location.pathname}${href({ view: 'inbox', conv: conv.id })}`) : space ? spaceLink(space) : null;
   const ruleOf = ruleOn(kind, id);
   const eff = conv ? effectiveLevel(conv) : null;
   const unread = conv ? unreadOf(conv).unread : 0;
@@ -100,13 +100,13 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
       picture={picture}
       square={conv?.shape !== 'direct'}
       network={network}
-      onPicture={picTarget ? (e) => pe!.pictureMenu(e, picTarget, setPicturing) : undefined}
+      onPicture={picTarget ? (e) => pe!.pictureMenu(e, picTarget, setPicturing, picture ? () => viewPicture(picture, title) : undefined) : undefined}
       title={<EditableText setting={f.name} fallback={title} label="Name" busy={busy === 'name'} big onSave={(v) => change({ key: 'name', value: v }, 'Name changed')} max={ABOUT_RULES[network].nameMax} />}
       sub={
         <span class="pf-kind">
           {netName(network)} {noun.toLowerCase()}
           {members > 0 && ` · ${members.toLocaleString()} member${members === 1 ? '' : 's'}`}
-          {space && children.length > 0 && ` · ${children.length} channel${children.length === 1 ? '' : 's'}`}
+          {space && channels.length > 0 && ` · ${channels.length} channel${channels.length === 1 ? '' : 's'}`}
         </span>
       }
       tags={
@@ -180,12 +180,10 @@ export function PlaceProfile({ kind, id, onBack }: { kind: AboutTarget['kind']; 
         </div>
       )}
 
-      {space && children.length > 0 && (
-        <Card title="Channels" icon="hash" count={children.length}>
+      {space && channels.length > 0 && (
+        <Card title="Channels" icon="hash" count={channels.length}>
           <div class="pf-rows">
-            {children
-              .slice()
-              .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
+            {channels
               .slice(0, 12)
               .map((c) => (
                 <button class="pf-row" onClick={() => openConv(c)}>

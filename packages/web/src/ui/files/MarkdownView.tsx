@@ -3,8 +3,8 @@
  * says ever reaches the page as markup: raw HTML is shown as text, links are plain web links (they open the way any
  * link in the app does, through the desktop helper when it is on), and a picture from elsewhere loads only when asked.
  */
-import type { ComponentChildren } from 'preact';
-import { useMemo, useState } from 'preact/hooks';
+import { createContext, type ComponentChildren } from 'preact';
+import { useContext, useMemo, useState } from 'preact/hooks';
 import { Lexer, type Token, type Tokens } from 'marked';
 import type { FileViewProps } from '../Viewer.tsx';
 import { highlight, toLines } from './highlight.ts';
@@ -39,7 +39,22 @@ export function SourceToggle({ source, set }: { source: boolean; set: (v: boolea
   );
 }
 
-function Rendered({ text }: { text: string }) {
+/**
+ * Markdown that is a post's own words (a Substack or LessWrong post's `article`, docs/feed.md): rendered the same way,
+ * its pictures shown at once as the post's other pictures are, since they are the network's own.
+ */
+export function MarkdownBody({ text, cls }: { text: string; cls?: string }) {
+  return (
+    <ShowPictures.Provider value={true}>
+      <Rendered text={text} cls={cls} />
+    </ShowPictures.Provider>
+  );
+}
+
+/** Pictures from elsewhere load at once (a post's), rather than on a click (a file's). */
+const ShowPictures = createContext(false);
+
+function Rendered({ text, cls }: { text: string; cls?: string }) {
   const tokens = useMemo(() => {
     try {
       return Lexer.lex(text, { gfm: true });
@@ -48,7 +63,7 @@ function Rendered({ text }: { text: string }) {
     }
   }, [text]);
   if (!tokens) return <Code text={text} language="markdown" />;
-  return <article class="fv-md">{blocks(tokens)}</article>;
+  return <article class={`fv-md${cls ? ` ${cls}` : ''}`}>{blocks(tokens)}</article>;
 }
 
 const NAMED: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: '\u00a0', copy: '©', reg: '®', hellip: '…', mdash: '—', ndash: '–', larr: '←', rarr: '→' };
@@ -219,12 +234,17 @@ function inline(tokens: Token[] | undefined): ComponentChildren[] {
 
 /** A picture in the file: inline data shows; one from elsewhere waits for a click, since loading it tells that host. */
 function Picture({ img }: { img: Tokens.Image }) {
+  const shown = useContext(ShowPictures);
   const [load, setLoad] = useState(false);
   const alt = entities(img.text || '');
   if (/^data:image\/(png|jpeg|gif|webp|avif);base64,/i.test(img.href)) return <img class="fv-md-img" src={img.href} alt={alt} title={img.title ?? undefined} />;
+  // A post's picture: through the hub's own media path (hub feed.ts articleView), or drawn inline (the demo world's;
+  // an <img> never runs what an SVG holds).
+  if (shown && /^data:image\/svg\+xml[;,]/i.test(img.href)) return <img class="fv-md-img" loading="lazy" src={img.href} alt={alt} />;
+  if (shown && /^\/media\/[\w-]+\/[\w-]+(\?a=[\w-]+)?$/.test(img.href)) return <img class="fv-md-img" loading="lazy" src={img.href} alt={alt} title={img.title ?? undefined} />;
   const href = safeHref(img.href);
   if (!href || href.startsWith('mailto:')) return <span class="fv-md-nolink">{alt ? `[${alt}]` : '[picture]'}</span>;
-  if (load) return <img class="fv-md-img" src={href} alt={alt} title={img.title ?? undefined} referrerpolicy="no-referrer" />;
+  if (load || shown) return <img class="fv-md-img" loading="lazy" src={href} alt={alt} title={img.title ?? undefined} referrerpolicy="no-referrer" />;
   return (
     <button class="fv-md-load" onClick={() => setLoad(true)} title={href}>
       Show picture{alt ? ` “${alt}”` : ''} from {new URL(href).host}

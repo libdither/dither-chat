@@ -8,7 +8,7 @@ import type * as P from '@dither-chat/protocol';
 import { ABOUT_LABEL, ABOUT_RULES, durationLabel, HISTORY_LABEL, JOIN_RULE_LABEL, WHO_LABEL } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { authorName, identityName, plainBody } from '../model.ts';
-import { api, db, isSelfIdentity, openProfile, toast } from '../state.ts';
+import { api, db, isSelfIdentity, metaRev, openProfile, toast } from '../state.ts';
 import { Avatar } from './bits.tsx';
 import { groups, Menuable, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { noteTimer } from './Disappearing.tsx';
@@ -380,6 +380,7 @@ export function PinnedSection({ p, network, onOpen, onUnpin }: { p: NonNullable<
 const SHOWN = 120;
 
 export function MembersSection({ m, adding, onAdd, extra }: { m: NonNullable<P.AboutView['members']>; adding?: P.AboutAdding; onAdd?: () => void; extra?: (member: NonNullable<P.AboutView['members']>['list'][number]) => MenuEntry[] }) {
+  metaRev.value; // members' names, which also sort them
   const [all, setAll] = useState(false);
   // Grouped by role, highest first, as Discord's member list does.
   const sorted = [...m.list].sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0) || identityName(a.identityId).localeCompare(identityName(b.identityId)));
@@ -416,7 +417,7 @@ export function MembersSection({ m, adding, onAdd, extra }: { m: NonNullable<P.A
               <Menuable build={() => withExtra(identityMenu(x.identityId), extra?.(x) ?? [])}>
                 {(ctx) => (
                   <button class="member" onClick={() => openProfile(x.identityId)} {...ctx}>
-                    <Avatar id={p?.id ?? x.identityId} name={name} url={p?.avatar ?? i?.avatar} size={28} />
+                    <Avatar id={p?.id ?? x.identityId} name={name} url={p?.avatar ?? i?.avatar} size={28} presence={self ? undefined : { identity: x.identityId }} />
                     <span>
                       <b style={x.color ? { color: x.color } : undefined}>{name}</b>
                       <small>{x.label ? `${x.label.emoji ?? ''} ${x.label.text ?? ''}`.trim() : (i?.handle ?? i?.nativeId ?? '')}</small>

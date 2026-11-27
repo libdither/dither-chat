@@ -34,8 +34,12 @@ export type VisitView =
   /** Notices (docs/notices.md). */
   | 'notices'
   /** The Feed page (docs/feed.md "The Feed page"): a source, or a post's thread on it. */
-  | 'feed';
-export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests', 'calendar', 'notices', 'feed'];
+  | 'feed'
+  /** Your attention (docs/scorecard.md, "The weekly report"). */
+  | 'attention'
+  /** Notification calibration (docs/notifications.md, "Check-ins"). */
+  | 'calibration';
+export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', 'conversation', 'space', 'person', 'people', 'profile', 'folder', 'spaces', 'search', 'settings', 'accounts', 'directory', 'mail', 'requests', 'calendar', 'notices', 'feed', 'attention', 'calibration'];
 
 /**
  * How the user got there. `notification`: a tap on a push (sw.js, the Android app); `toast`: on the in-app
@@ -47,6 +51,21 @@ export const VISIT_VIEWS: readonly VisitView[] = ['inbox', 'triage', 'foryou', '
  */
 export type VisitSource = 'notification' | 'toast' | 'inbox' | 'triage' | 'foryou' | 'rail' | 'list' | 'search' | 'link' | 'back' | 'forward' | 'start' | 'resume' | 'other';
 export const VISIT_SOURCES: readonly VisitSource[] = ['notification', 'toast', 'inbox', 'triage', 'foryou', 'rail', 'list', 'search', 'link', 'back', 'forward', 'start', 'resume', 'other'];
+
+/**
+ * What a page tells the hub over its socket (not an HTTP call) whenever it changes, and again every `WATCH_EVERY`
+ * while it holds a chat: the chats it shows at their newest message while the page is in use (visible, focused, used
+ * in the last five minutes), none otherwise. The hub sends no push about those chats unless a rule of yours made it
+ * an alert (docs/notifications.md, "Read here, not pushed there").
+ */
+export interface ClientWatching {
+  t: 'watching';
+  /** The device's label, as its visits say: only a computer's (not a phone's) counts. */
+  label: string;
+  conversationIds: string[];
+}
+/** A page says what it watches again this often while it watches something; the hub forgets it after twice that. */
+export const WATCH_EVERY = 30_000;
 
 /** One stay, as the device sends it. Sent again while it lasts, with the same id: the hub keeps the latest. */
 export interface VisitRecord {
@@ -139,6 +158,8 @@ export interface NotificationEvent {
   /** The push registration (sw.js, the Android app), or the page's device id. */
   device?: string;
   at?: number;
+  /** With `shown` (or `inapp`): where and how it showed (docs/notifications.md, "Where you saw it"). */
+  seen?: import('./loudness.ts').NotificationSeen;
 }
 
 export interface ActivitySettings {

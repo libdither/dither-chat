@@ -19,11 +19,18 @@ read from tables that already exist:
 
 - `person:<id>` is every direct conversation (`conversation.shape = 'direct'`) that has one of the person's identities
   among its participants. One route is listed for each of your accounts with a vantage on that conversation.
+  Mail with them alone adds a route by email for each of your mail accounts and address of theirs,
+  `email:<account>:<address>`, read with the chat but sent through mail's own send (docs/mail.md "Mail as chats").
 - A conversation id on its own is that conversation as a chat, one route per account of yours in it.
 
 So a merge, a split, a new account or a new DM changes the chat as soon as the tables change. There is nothing to keep
 in step. Group chats that are "the same group on two networks" would need a stored link. That is not built (see
 [Not yet](#not-yet)).
+
+A network can say two of its own ids are one account (IdentityFact `sameAs`: Partiful files a chat's people under the
+chat service's ids, `stream:<id>`, beside their user ids). The hub keeps the pair (`identity_same`) and, the first time
+it hears it, puts the two with one person, the user id's; a split you make after that stays. An id said to be the same
+as your own is you: your person, and its messages are yours.
 
 ## Where a message goes
 
@@ -39,7 +46,8 @@ except while a draft waits in the picked route's box, so the box never changes u
 
 The page adds guesses in front of that, because it knows things the hub doesn't. From first to last:
 
-1. the route of the message you are replying to;
+1. the route of the message you are editing or replying to (Edit on a page whose address is not that DM opens the DM,
+   and its message box takes the edit: `scripts/verify-edit.ts`);
 2. the route you picked on this page (a tag in the timeline, the message box's line, the list under the name), while
    the page stays at the address it was picked at;
 3. **the DM the address names**: opened as one of their DMs (from the inbox, a notification, search, a link), the
@@ -80,17 +88,36 @@ shows, the nickname shows instead: an account's name as you see it is your nickn
 else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` in `model.ts`, `shownName` and `SHOWN`
 in the hub's `store.ts`).
 
-**A person's name is made of their accounts' names**, never set on the person:
+**A person is shown by one of their accounts, their face** (`person.face_id`, `faceId` on a PersonView): its name as
+you see it is their name, and its picture is their picture. Name and picture never come from two accounts, and both
+follow that account as it changes, unless you chose another of their accounts for the picture (docs/profile.md
+"Which account speaks for them"). Neither is ever set on the person:
 
-- one account: that account's name as you see it, so a nickname for it is their name everywhere (header, inbox row,
-  people list, message box, notifications), and the network renaming the account changes nothing while it has one;
-- several accounts: the name a merge kept, one of their accounts' names. It follows the account it was taken from:
-  giving that account a nickname, or taking it away, renames them. A nickname on another of their accounts names only
-  that account, so telling one alt apart ("Kit, raid nights") does not rename Kit.
+- one account: it is their face, so a nickname for it is their name everywhere (header, inbox row, people list,
+  message box, notifications), and the network renaming the account changes nothing while it has one;
+- several accounts: one of them is their face. A nickname on another of their accounts names only that account, so
+  telling one alt apart ("Kit, raid nights") does not rename Kit.
 
-Merging two people keeps the name of the one kept; the nicknames are the accounts' and go along with them. Splitting
-an account off keeps its nickname, which names the new person; the person it left takes their name from their
-accounts again when one is left, or when the name was the account's that went.
+Where the face has no picture, the picture of another of their accounts stands in (the one you talked with last) until
+it has one. **Choosing the face.** The hub keeps the face it has. It chooses one when there is none: when a merge
+brings together people who had none, when the face is split off, and when you ask. It takes the one you talked with
+last (its latest message, or the latest in a direct conversation with it), else one with a picture (`chooseFace` in
+`store.ts`). A nickname does not count, since one that tells an alt apart must not name them. You can choose yourself:
+each account row on a merged person's profile has **Make Main Account** (`PATCH /api/persons/:id` `{ face: <identity
+id> }`, `facePinned`), and on the main account it shows checked, **Main Account**, where pressing it again
+(`{ face: null }`) asks the hub to choose again. The row that is their face is marked **Main**; the line under the rows
+says whether you chose it or the hub did.
+
+Merging two people keeps the face of the one kept; the nicknames are the accounts' and go along with them. Splitting
+an account off keeps its nickname, which names the new person; the person it left keeps their face, or has another
+chosen when the face was the one that went.
+
+**One face everywhere.** Wherever a person's account shows outside its own tile (message heads in a group or channel,
+reactions, call faces, the ringing card, search results, feed posts), it is drawn with the person's picture and the
+initials' colour of the person, not the account (`faceOf` in `model.ts`). In a message head the picture gets the
+network's badge only when it came from another network's account, so a Discord message from Kit with Kit's Telegram
+picture says it was written on Discord. A group with no name of its own is titled with its first three people's names
+as their messages name them (`convTitle`).
 
 The chat has one name, the person's: the header, the inbox row, the people list and the message box's line ("Message
 Kit on Telegram") say it. **The messages name accounts.** On a page of several routes every message head shows the
@@ -123,7 +150,12 @@ empty takes the nickname away. Your own accounts take none.
 | value | means |
 | --- | --- |
 | `network` | one account: its name as you see it, kept up to date |
-| `merge` | several accounts: the name a merge kept, one account's |
+| `merge` | several accounts: their face's name as you see it, kept up to date |
+
+Until 2026-11-23 a merged person's name followed the account it was taken from, but their picture stayed whatever it
+was at the merge, so it went stale, and could be another account's than the name. On its first start with faces the
+hub gives each person one, once (`facesOnce`, meta `person_faces`; MIGRATIONS 6 → 7): the account whose name they have
+(as you see it, else its display name or handle), else one chosen as above; then their name and picture are its.
 
 Until 2026-11-11 a nickname was the person's (`user`), set with `PATCH /api/persons/:id` or `PATCH
 /api/chats/person:<id>` with `name`, and it stood for every account's name in the chat's title while the messages
@@ -157,7 +189,9 @@ and dither-calendar.
 
 A person's timeline spans conversations, so two messages can share a millisecond. Paging by time alone (`ts < before`)
 skipped the other one. `before` is now `<ts>:<message id>`, the oldest message held. Messages are ordered by
-`(ts, id)`, and a page holds what comes before that pair. A cursor with only a time still works the old way.
+`(ts, id)`, and a page holds what comes before that pair. A cursor with only a time still works the old way. A
+channel's stream (`k:<channel>`, `GET /api/conversations/:id/stream`, docs/threads.md "The channel stream") spans
+conversations too and pages with the same cursor.
 
 ## The page
 
@@ -171,7 +205,8 @@ route among the chat's routes, what tells it apart. Of the routes on the same ne
 
 - it is the only one: the **network** alone (`Signal`);
 - they differ in their account: **their account's name** there (`kit.work`);
-- they differ in yours: **your account's name** (`via zyn.alt`);
+- they differ in yours: **your account's name** (`via zyn.alt`); an email route's is its mail account's label, else
+  its address (`via Home mail`), as mail accounts are not among the chat accounts;
 - both differ: both (`kit.work ⇄ zyn.alt`).
 
 The network's icon goes in front only when the chat spans more than one network. So Sam, on Signal and Matrix, has
@@ -261,6 +296,21 @@ text as the row has room for, ending in "…", with the whole of it as the line'
 lines. A reply to you that pinged you (`mentionsSelf`) shows your name as a mention, "@You", in the same colours as an
 @mention of you in the text. Whether a reply to someone else pinged them is not known yet: the hub keeps only whether
 a message pinged you.
+
+The pointer on a quote line lights up the message it points to, when that one is drawn (`.quoted-hover`), so you can
+see which it is before clicking. A click brings the quoted message to the middle of the view and lights it up for two
+seconds once it gets there (`.flash`), as Discord does; a message on screen already is lit up too. One more than a
+screen and a half away is jumped to most of the way at once and glides the rest, so a far one takes no longer than a
+near one (`bringToCenter` in `ui/Timeline.tsx`; with reduced motion it jumps).
+
+**Following the newest.** At the newest end, or within 32 px of it, the timeline follows the newest message: one coming
+in, or one growing (a picture loading), stays on screen. The browser's scroll anchoring otherwise holds what is in view
+still whenever the view is not exactly at the end, so a message arriving a pixel above it came in below the view. A
+ResizeObserver puts the view back at the end before it is painted. Further up, what you are reading stays where it is,
+not even half a pixel off, whether a message comes in below or a row above grows: each row is rounded up to a whole
+number of pixels tall (`calc-size()` on `.timeline-inner`'s rows), since text makes fractional heights and the browser's
+anchoring scrolls by whole pixels. A message you send goes to the newest end from wherever you were.
+`scripts/verify-timeline-scroll.ts` checks all of this on a computer and a phone, in CI.
 
 ## Not yet
 

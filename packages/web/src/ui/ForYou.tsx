@@ -14,7 +14,7 @@ import { countKey } from '../clicklog.ts';
 import { ago, fullTime } from '../format.ts';
 import { authorName, convLabel, crumbs, plainBody } from '../model.ts';
 import { phone } from '../phone.ts';
-import { adoptIdentities, api, db, go, rev, route } from '../state.ts';
+import { adoptIdentities, api, db, go, metaRev, rev, route } from '../state.ts';
 import { inUse } from '../usage.ts';
 import { viewer, type ViewerImage } from '../viewer.ts';
 import { Avatar } from './bits.tsx';
@@ -359,12 +359,14 @@ function authorAvatar(id: string | null) {
 }
 
 function Item({ it, quoted, focused, mark: marked }: { it: P.ForYouItem; quoted?: P.MessageView; focused: boolean; mark?: 'more' | 'less' }) {
+  metaRev.value; // names, pictures and places
   const m = it.message;
   const c = db.conversations.get(m.conversationId);
   const place = c ? crumbs(c) : [];
   const where = c ? convLabel(c) : 'this chat';
   const text = plainBody(m.body, m.network);
   const [all, setAll] = useState(false);
+  // For you's one check-in a day (docs/foryou.md, "Worth seeing"): answered here, it goes.
   const long = text.length > 420 || text.split('\n').length > 6;
   const images = m.attachments.filter(isImage);
   const files = m.attachments.filter((a) => !isImage(a));

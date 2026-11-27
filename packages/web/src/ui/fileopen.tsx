@@ -5,6 +5,8 @@
 import { showsInline } from '@dither-chat/protocol';
 import { android } from '../android.ts';
 import { appsFor, openFile } from '../desk.ts';
+import type { DownloadAs } from '@dither-chat/protocol';
+import { hubMedia, mediaAs } from '../download.ts';
 import { fileKind, fileMime, type FileSource } from '../files.ts';
 import { toast } from '../state.ts';
 import { menuPoint, openMenu } from './ContextMenu.tsx';
@@ -16,9 +18,13 @@ const GENERIC = /^(application\/(octet-stream|binary|unknown|x-download|force-do
 /** The type the hub serves the file as: the network's, or the bytes' when the network said nothing useful. */
 const served = (a: FileRef) => (GENERIC.test((a.mime ?? '').split(';')[0].trim().toLowerCase()) ? (a.info?.mime ?? a.mime) : a.mime);
 
-export function save(url: string, name?: string | null) {
+/**
+ * Saves a file. A hub media link is saved as it came (`as`: or in another form), named with the right extension
+ * (download.ts): a plain one may be a JPEG XL of a JPEG.
+ */
+export function save(url: string, name?: string | null, as: DownloadAs = 'original') {
   const a = document.createElement('a');
-  a.href = url;
+  a.href = hubMedia(url) ? mediaAs(url, as, name) : url;
   a.download = name ?? '';
   document.body.appendChild(a);
   a.click();

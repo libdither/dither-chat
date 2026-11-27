@@ -65,10 +65,10 @@ patch takes it away. The menu's first entry is what the chat would inherit, and 
 A run of two or more pictures can be switched where it is (`ui/PictureSwitch.tsx`). The way chosen is saved for
 that chat, as its Pictures menu would (`place_pref.pictures`), with no toast: the run redrawn says it.
 
-- **A computer**: a rail of the five ways stands to the right of the run, in the room the chat leaves there (the
-  run is drawn 40 px narrower for it). It can't be seen until you point at the message; then only the way in use
-  shows, faint, in its place on the rail. Pointing at that (or tabbing to it) brings in the other four, in full;
-  each way says its name beside it. A right-click on a picture of a run has the same choice, as "Show Pictures As".
+- **A computer**: a rail of the five ways stands in the message's gutter, left of the run and level with its top,
+  under the avatar. It can't be seen until you point at the message; then only the way in use shows, faint, at the
+  rail's top. Pointing at that (or tabbing to it) brings in the other four below it, in order, in full; each way says
+  its name beside it. A right-click on a picture of a run has the same choice, as "Show Pictures As".
 - **A phone**: a chip at the top right of the run's first row, its words wrapping round it, says the way in use. It
   is one line of a wheel of the five, in order from smallest to biggest: Small, Fold, Six, All, Rows
   (`PICTURE_ORDER`). Drag it up or down, scroll on it, or pinch the pictures with two fingers, and the run slides
@@ -79,6 +79,10 @@ that chat, as its Pictures menu would (`place_pref.pictures`), with no toast: th
   saves it if it is a new one. A tap opens the list of the five, with the one in use where the chip was.
 
 While a slide is under way the timeline is scrolled to keep the chip (or, for a pinch, the run's top) under the
-finger: the timeline keeps its bottom still, and the run grows or shrinks below it. A second finger on a message
+finger: the timeline keeps its bottom still, and the run grows or shrinks below it. It is put back in the same
+frame, before paint (`keepStill`, from the run's layout effect), and once more as the run takes its new way. Meanwhile
+the browser's scroll anchoring is off (`.pics-holding`) and the timeline doesn't snap back to the newest message:
+either would move the chat on its own, which showed as a jump of the run's whole change in height when it settled. A
+second finger on a message
 is a pinch, so it never opens the message's long-press menu.
 

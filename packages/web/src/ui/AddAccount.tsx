@@ -94,6 +94,37 @@ const NET_HELP: Record<P.Network, { adapter: string; blurb: string; fields: { ke
     blurb: 'Brings your Bluesky Following and Discover feeds, threads and notifications to the Feed page, where you can reply, like, repost and quote. It runs in dither-accounts; after you add it, sign in to Bluesky there.',
     fields: [],
   },
+  lesswrong: {
+    adapter: 'lesswrong',
+    blurb: 'Brings LessWrong\'s front page, the posts you subscribe to, whole posts with their comment threads, and replies to you to the Feed page, where you can upvote and comment. New posts are written on LessWrong itself. It runs in dither-accounts; after you add it, sign in to LessWrong there.',
+    fields: [],
+  },
+  // Runs only in dither-accounts (its docs/zulip.md): the organization's address and email are settings, the key a secret.
+  zulip: {
+    adapter: 'zulip',
+    blurb: "Talks to your Zulip organization with Zulip's own API, as its apps do. Channels come as forums whose topics are threads, with your direct messages, reactions, polls, starred messages and reminders. Give it an API key (Zulip: Personal settings → Account & privacy → API key), or your password once, which it swaps for a key and forgets.",
+    fields: [
+      { key: 'server', label: 'Organization URL', placeholder: 'https://chat.example.org' },
+      { key: 'email', label: 'Email', placeholder: 'you@example.org' },
+      { key: 'apiKey', label: 'API key', secret: true, optional: true },
+      { key: 'password', label: 'Password (instead of an API key)', secret: true, optional: true },
+    ],
+    config: ['server', 'email'],
+  },
+  // Event sites (docs/events.md), run only in dither-accounts (its docs/luma.md, docs/partiful.md). The city is a setting:
+  // the site's own place slug or words, empty for the site's default listing; Explore reads work before you sign in.
+  luma: {
+    adapter: 'luma',
+    blurb: "Brings Luma's events to the Feed page: Explore, the listing for your city, and the events you are going to or hosting, with who is going as Luma shows it, and RSVP after you confirm. Your Luma chats and each event's chat come as chats. It runs in dither-accounts; Explore works before you sign in, and you sign in there with the code Luma emails you.",
+    fields: [{ key: 'city', label: 'City (optional)', placeholder: "Luma's place, like sf or london", optional: true }],
+    config: ['city'],
+  },
+  partiful: {
+    adapter: 'partiful',
+    blurb: "Brings Partiful's parties to the Feed page: Explore, the listing for your city, and the parties you are going to, hosting or invited to, with who is going as Partiful shows it, and RSVP after you confirm. Each party's comments and text blasts come as its chat, with Partiful's own chats. It runs in dither-accounts; Explore works before you sign in, and you sign in there with the code Partiful texts you.",
+    fields: [{ key: 'city', label: 'City (optional)', placeholder: "Partiful's place, like sf or nyc", optional: true }],
+    config: ['city'],
+  },
   // Runs only in dither-accounts, beside T3 Code on the same machine (its docs/t3.md).
   t3: {
     adapter: 't3',
@@ -190,6 +221,7 @@ export function AddAccount({ onClose }: { onClose: () => void }) {
  * manager on this hub's grant; or, while this hub may not add the kind, asking for that on its page.
  */
 function ManagedAdd({ kind: k, onClose, onAsked }: { kind: P.ManagedKindView; onClose: () => void; onAsked: () => void }) {
+  rev.value; // the manager's page comes and goes with `db.accountsManager`, which moves only `rev`
   const [label, setLabel] = useState('');
   const [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -300,6 +332,7 @@ function ManagedAdd({ kind: k, onClose, onAsked }: { kind: P.ManagedKindView; on
 
 /** Adding a chat account: the hub makes it (in dither-accounts, when it runs them) from its network's form. */
 function AddChat({ network, onClose }: { network: P.Network; onClose: () => void }) {
+  rev.value; // whether dither-accounts runs it (`db.accountsManager`) moves only `rev`
   const [label, setLabel] = useState('');
   const [homeserver, setHomeserver] = useState('https://matrix.org');
   const [calendarUrl, setCalendarUrl] = useState(CALENDAR_URL_DEFAULT);
@@ -310,13 +343,17 @@ function AddChat({ network, onClose }: { network: P.Network; onClose: () => void
     setBusy(true);
     try {
       const secret: Record<string, string> = {};
-      for (const f of help.fields) if (fields[f.key]) secret[f.key] = fields[f.key];
+      const settings: Record<string, string> = {};
+      for (const f of help.fields) if (fields[f.key]) {
+        if (help.config?.includes(f.key)) settings[f.key] = fields[f.key].trim();
+        else secret[f.key] = fields[f.key];
+      }
       const account = await api<P.AccountView>('/api/accounts', {
         body: {
           network,
           adapter: help.adapter,
           label: label.trim() || undefined,
-          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : {},
+          config: network === 'matrix' ? { homeserver } : network === 'calendar' ? { url: calendarUrl.trim() } : settings,
           secret,
         },
       });

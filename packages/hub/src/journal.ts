@@ -95,6 +95,11 @@ export function changesOf(events: P.ClientEvent[]): Change[] {
       case 'mail.lists':
         for (const k of e.stale) out.push({ kind: 'mailList', id: k });
         break;
+      case 'presence':
+        if (e.replace) out.push({ kind: 'presence', id: '*' });
+        for (const v of e.items) out.push({ kind: 'presence', id: v.identityId });
+        for (const id of e.removed) out.push({ kind: 'presence', id, removed: true });
+        break;
       case 'usage':
         if (e.replace) out.push({ kind: 'usage', id: '*' });
         for (const u of e.places) out.push({ kind: 'usage', id: `${u.kind}:${u.id}` });
@@ -151,19 +156,56 @@ export class Journal {
     })();
   }
 
-  /** One frame's changes at the next position. Returns it, or null when nothing here is kept. */
+  /**
+   * Changes a write could not keep (a full disk, a file that would not open), by `kind:id`. They go in with the next
+   * frame that is written, at its position; until then a client resuming from before them has not missed them, because
+   * the position they would have had was never handed out.
+   */
+  private held = new Map<string, Change>();
+
+  /**
+   * One frame's changes at the next position. Returns it, or null when nothing here is kept, or when the write failed:
+   * the changes are then held for the next frame, and the frame goes out with no position. Never throws for a failed
+   * write, because the frame still has to reach the devices that are connected (server.ts flush).
+   */
   record(changes: Change[], now = Date.now()): number | null {
     if (!changes.length) return null;
-    const seq = ++this.seq;
+    const all = this.held.size ? [...this.held.values(), ...changes] : changes;
+    const seq = this.seq + 1;
     const put = this.db.query(
       `INSERT INTO sync_change (kind, id, seq, conv, removed, at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (kind, id) DO UPDATE SET seq = excluded.seq, conv = COALESCE(excluded.conv, conv), removed = excluded.removed, at = excluded.at`,
     );
-    this.db.transaction(() => {
-      for (const c of changes) put.run(c.kind, c.id, seq, c.conv ?? null, c.removed ? 1 : 0, now);
-      this.setMeta('sync_seq', seq);
-    })();
+    try {
+      this.db.transaction(() => {
+        for (const c of all) put.run(c.kind, c.id, seq, c.conv ?? null, c.removed ? 1 : 0, now);
+        this.setMeta('sync_seq', seq);
+      })();
+    } catch (e) {
+      // Only the newest change of an object matters (the journal is compacted), so what is held stays one per object.
+      for (const c of changes) this.held.set(`${c.kind}:${c.id}`, c);
+      if (now - this.heldLogged >= 60_000) {
+        this.heldLogged = now;
+        console.error(`journal: ${this.held.size} changes not written; held for the next frame`, e);
+      }
+      return null;
+    }
+    this.held.clear();
+    this.seq = seq;
     return seq;
+  }
+  private heldLogged = -Infinity;
+
+  /**
+   * Where the journal stands, for a caller that records inside a transaction of its own: when that transaction is rolled
+   * back, `undo` puts back what it believed written (the position and what was held), since the rows went with it.
+   */
+  mark(): { seq: number; held: Change[] } {
+    return { seq: this.seq, held: [...this.held.values()] };
+  }
+  undo(m: { seq: number; held: Change[] }) {
+    this.seq = m.seq;
+    for (const c of m.held) if (!this.held.has(`${c.kind}:${c.id}`)) this.held.set(`${c.kind}:${c.id}`, c);
   }
 
   /** Why a client at this position cannot resume, or null when it can. */
@@ -176,9 +218,17 @@ export class Journal {
     return null;
   }
 
-  /** Objects changed after `seq`, messages aside. */
+  /** Objects changed after `seq`, messages and what left a conversation aside. */
   since(seq: number): ChangeRow[] {
-    return this.db.query(`SELECT kind, id, seq, conv, removed FROM sync_change WHERE seq > ? AND kind != 'message' ORDER BY seq`).all(seq) as ChangeRow[];
+    return this.db.query(`SELECT kind, id, seq, conv, removed FROM sync_change WHERE seq > ? AND kind NOT IN ('message', 'movedOut') ORDER BY seq`).all(seq) as ChangeRow[];
+  }
+
+  /**
+   * A message moved out of `conv` (MessageFact.moved): a client's copy of it from before now holds one that is not there,
+   * which a delta of what changed in it cannot say (sync.ts timeline answers such a copy with a fresh page).
+   */
+  movedOut(conv: string, now = Date.now()) {
+    this.record([{ kind: 'movedOut', id: conv, conv }], now);
   }
 
   /** Drop what is too old or too much. Everything before the newest dropped row is then out of reach. */
@@ -197,6 +247,10 @@ export class Journal {
 
   /** At a clean shutdown, after the last flush: the next start can trust what is here. */
   close() {
+    // Held changes that still cannot be written: the journal cannot vouch for them, so it stays open and the next start
+    // begins a new epoch.
+    if (this.held.size) this.record([...this.held.values()]);
+    if (this.held.size) return;
     this.setMeta('sync_open', '0');
   }
 }

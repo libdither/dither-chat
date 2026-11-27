@@ -19,6 +19,7 @@ import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines } from './
 import { calendarLink } from './plans.ts';
 import { changed, dataVersion, mailChanged, timelineChanged } from './versions.ts';
 import { bodies as mailBodies, details as mailDetails } from './mail/held.ts';
+import { sized } from './perf.ts';
 
 declare const __SNAPSHOT_SCHEMA__: string;
 const SCHEMA = typeof __SNAPSHOT_SCHEMA__ === 'string' ? __SNAPSHOT_SCHEMA__ : 'dev';
@@ -62,6 +63,8 @@ interface Snapshot {
   /** JSON text. Parsing text is faster than structured clone for this many small objects. */
   bootstrap: string;
   rest: string;
+  /** When the rest was written, where it is newer than the bootstrap (readSnapshot). */
+  restAt?: number;
 }
 
 // ------------------------------------------------------------------ building (pure, tested)
@@ -135,6 +138,7 @@ function currentBootstrap(): P.Bootstrap {
     devices: db.devices,
     reactionUsage: db.reactionUsage,
     attention: [...db.attention.values()],
+    presence: [...db.presence.values()],
     requests: db.requests,
     ...(calendarLink.value ? { calendar: calendarLink.value } : {}),
     now: Date.now(),
@@ -146,6 +150,10 @@ function currentBootstrap(): P.Bootstrap {
             accounts: [...db.mail.accounts.values()],
             mailboxes: [...db.mail.mailboxes.values()],
             threads: [...db.mail.threads.values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, MAX_MAIL_WINDOW),
+            // Mail as chats (mail/chats.ts): a cold start resumes with people's email routes and the rungs you chose,
+            // which only a bootstrap brings whole.
+            chats: [...db.mail.chats.values()],
+            rungs: [...db.mail.rungs.values()],
           },
         }
       : {}),
@@ -211,6 +219,15 @@ function tx<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T
 /** The kept message pages (keptpages.ts): read with the snapshot, opened from here. */
 export const pages = new PageCache(SCHEMA);
 
+// What the app holds, for verify-memory.ts (docs/perf.md "Memory"): read under ?perf=1 only.
+sized('timelines', () => timelines.size);
+sized('messagesHeld', () => [...timelines.values()].reduce((s, t) => s + t.messages.length, 0));
+sized('quoted', () => quoted.size);
+sized('keptPages', () => pages.count);
+sized('identities', () => db.identities.size);
+sized('mailBodies', () => mailBodies.size);
+sized('mailDetails', () => mailDetails.size);
+
 /**
  * A conversation or person gone from the hub (an account removed with them) takes its kept page along. Added at the
  * first read, not when this module loads: state.ts imports this one, so its hooks may not exist yet then.
@@ -245,15 +262,17 @@ export async function readSnapshot(): Promise<Snapshot | null> {
     .catch(() => [undefined, undefined, [] as (PageRecord | IndexRecord)[]] as const);
   pages.adopt(kept);
   if (!s || s.schema !== SCHEMA) return null;
-  // savedAt stays the bootstrap's.
-  return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest } : s;
+  // savedAt stays the bootstrap's; restAt says how recent the copy is.
+  return r && r.schema === SCHEMA && r.savedAt > s.savedAt ? { ...s, rest: r.rest, restAt: r.savedAt } : s;
 }
 
-export const dropSnapshot = () =>
+export const dropSnapshot = () => (
+  keepSyncFrom(null),
   tx('readwrite', (st) => {
     st.delete(REST_KEY);
     return st.delete(KEY);
-  }).catch(() => {});
+  }).catch(() => {})
+);
 
 /** Every kept page too: what a start that could not render drops (main.tsx). */
 export const dropPages = () =>
@@ -273,6 +292,8 @@ export const dropPages = () =>
 
 /** Set while what is on screen came from this device, not yet from the hub. */
 export let fromSnapshot = false;
+/** When the copy shown was written, while it came from this device's snapshot: "saved 8:02" (ui/InboxStatus.tsx). */
+export let copyAt = 0;
 
 /** The kept end of a conversation, given once, to show while its first page loads. */
 export function cachedTimeline(key: string): KeptPage | undefined {
@@ -293,6 +314,7 @@ export function restore(s: Snapshot, apply: (b: P.Bootstrap) => void, putIdentit
   if (rest.timelines?.length) pages.adoptLegacy(legacyPages(rest));
   if (loaded.value) return false;
   bootstrapAt = s.savedAt;
+  copyAt = Math.max(s.savedAt, s.restAt ?? 0);
   apply(JSON.parse(s.bootstrap) as P.Bootstrap);
   putIdentities(rest.identities);
   rest.quoted.forEach((m) => quoted.set(m.id, m));
@@ -331,7 +353,20 @@ let savedRev = -1;
 let bootstrapAt = 0;
 /** How old the stored bootstrap gets while the app stays in sight before a quiet moment writes it again. */
 const BOOTSTRAP_EVERY_MS = 10 * 60_000;
-let pending: { text: string; rev: number } | null = null;
+let pending: { text: string; rev: number; sync: P.SyncPosition | null } | null = null;
+
+/**
+ * The stored bootstrap's journal position, where index.html reads it before the app's script has come, to have the
+ * live socket bring the catch-up from it (docs/sync.md "On the socket"). Written once the bootstrap is stored, so it is
+ * never ahead of it; state.ts checks it against the snapshot all the same.
+ */
+const SYNC_FROM_KEY = 'dither-chat:sync-from';
+function keepSyncFrom(sync: P.SyncPosition | null) {
+  try {
+    if (sync) localStorage.setItem(SYNC_FROM_KEY, JSON.stringify({ v: sync.v, epoch: sync.epoch, seq: sync.seq }));
+    else localStorage.removeItem(SYNC_FROM_KEY);
+  } catch {}
+}
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** When the first save not yet written was asked for. */
 let askedAt = 0;
@@ -339,6 +374,8 @@ let askedAt = 0;
 let urgent = false;
 /** However often things keep changing (a run of chats fetched ahead), a save asked for is written within this. */
 export const SAVE_WITHIN_MS = 5000;
+/** And the hub's first answer on a device that keeps nothing yet, within this, at its first idle moment. */
+const FIRST_WITHIN_MS = 1000;
 
 /**
  * How long a save asked for now waits: `ms` after the last ask, but never past SAVE_WITHIN_MS after the first one not
@@ -355,7 +392,7 @@ export function saveDelay(o: { now: number; askedAt: number; ms: number; first: 
  * bootstrap is serialized again from `db`, which is what happens when the app goes out of sight.
  */
 export function persistSoon(bootstrapText?: string, ms = 1500) {
-  if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion() };
+  if (bootstrapText) pending = { text: bootstrapText, rev: dataVersion(), sync: db.sync };
   if (bootstrapText && !bootstrapAt) urgent = true;
   const now = Date.now();
   if (timer === undefined) askedAt = now;
@@ -364,9 +401,10 @@ export function persistSoon(bootstrapText?: string, ms = 1500) {
     () => {
       timer = undefined;
       const idle = (globalThis as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => void) | undefined;
-      // The first answer is written now, not at the next idle moment: a start is rarely idle, and until it is written an
-      // offline start has nothing to show.
-      if (idle && !urgent) idle(() => void persistNow(false), { timeout: 3000 });
+      // The first answer is written within a second (until it is written an offline start has nothing to show), but at
+      // the first idle moment in it: storing the 4–5 MB text holds the main thread for about 60 ms at 4× CPU, and right
+      // after the answer comes the list is still being drawn (docs/perf.md "The first snapshot").
+      if (idle) idle(() => void persistNow(false), { timeout: urgent ? FIRST_WITHIN_MS : 3000 });
       else void persistNow(false);
     },
     saveDelay({ now, askedAt, ms, first: urgent }),
@@ -386,12 +424,15 @@ async function persistNow(full = true) {
   urgent = false;
   if (!loaded.value || fromSnapshot) return;
   let text: string | null = null;
+  /** The position of the bootstrap stored here. */
+  let sync: P.SyncPosition | null = null;
   if (pending) {
     // What the hub sent, as it sent it. Anything since is caught by the save when the app goes out of sight.
-    ({ text, rev: savedRev } = pending);
+    ({ text, rev: savedRev, sync } = pending);
     pending = null;
   } else if (savedRev !== dataVersion() && (full || Date.now() - bootstrapAt > BOOTSTRAP_EVERY_MS)) {
     savedRev = dataVersion();
+    sync = db.sync;
     text = JSON.stringify(currentBootstrap());
   }
   // Both writes are on their way before anything is awaited: on pagehide the page can be gone before one finishes.
@@ -411,7 +452,10 @@ async function persistNow(full = true) {
     tx('readwrite', (st) => {
       st.delete(REST_KEY);
       return st.put(s, KEY);
-    }).catch((e) => console.warn('snapshot not saved', e)),
+    }).then(
+      () => keepSyncFrom(sync),
+      (e) => console.warn('snapshot not saved', e),
+    ),
   ]);
 }
 
@@ -424,7 +468,7 @@ async function savePages() {
       const t = timelines.get(k);
       return t ? { ...t, sync: t.from ?? (t.fetchedAt && !t.loading ? (db.sync ?? undefined) : undefined) } : undefined;
     },
-    exists: (k) => (k.startsWith('c:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
+    exists: (k) => (k.startsWith('c:') || k.startsWith('k:') ? db.conversations.has(k.slice(2)) : k.startsWith('p:') && db.persons.has(k.slice(2))),
     identities: db.identities,
     quoted,
   });

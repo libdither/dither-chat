@@ -31,6 +31,15 @@ test('no tag character is ever sent: what is left of a broken chip goes', () => 
   expect(toBody('plain text, no chips')).toBe('plain text, no chips');
 });
 
+test("a flag made of tags (England's, Scotland's, Wales') is sent whole, beside a chip too", () => {
+  const england = '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}';
+  expect(toBody(`go ${england} ${alice}`)).toBe(`go ${england} <@123456789012345678>`);
+  expect(toPlain(`go ${england} ${alice}`)).toBe(`go ${england} @Alice`);
+  expect(chipsIn(`${england}${alice}`).map((c) => c.label)).toEqual(['@Alice']);
+  // A stray tag after a black flag that does not end a flag still goes.
+  expect(toBody('\u{1F3F4}\u{E0067} x')).toBe('\u{1F3F4} x');
+});
+
 test('a name cannot open code or a new line, and a token not in ASCII stays as written', () => {
   const odd = chipText('<@1>', '@A`b\nc');
   expect(toPlain(odd)).toBe("@A b c");

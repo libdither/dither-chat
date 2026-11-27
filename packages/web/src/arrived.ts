@@ -17,7 +17,7 @@
  */
 import type * as P from '@dither-chat/protocol';
 import { db, inbox, timelines, type Timeline } from './store.ts';
-import { mergeInbox, upsertInto } from './syncmodel.ts';
+import { conversationMetaChanged, mergeInbox, upsertInto } from './syncmodel.ts';
 import { changed, timelineChanged } from './versions.ts';
 
 /** As public/sw.js and Arrived.kt keep them. */
@@ -129,12 +129,19 @@ export function openArrived(fromSnapshot: boolean) {
 function apply() {
   const before = (id: string) => swapped.get(id)?.before ?? db.conversations.get(id);
   const plan = planOverlay(records, before);
+  /** The conversations put or put back: only their last messages and counts change (versions.ts `changed`), or null. */
+  let touched: Set<string> | null = new Set();
+  const swap = (id: string, from: P.ConversationView, to: P.ConversationView) => {
+    db.conversations.set(id, to);
+    if (conversationMetaChanged(from, to)) touched = null;
+    else touched?.add(id);
+  };
   // Rows: as the plan says now, and those it no longer changes as they were. One the hub replaced meanwhile (frames
   // released after a failed catch-up) is the hub's from then on.
   for (const [id, { before: b, put }] of swapped) {
     const now = db.conversations.get(id);
     if (now !== put) yielded.add(id);
-    else if (!plan.convs.has(id)) db.conversations.set(id, b);
+    else if (!plan.convs.has(id)) swap(id, put, b);
     else continue;
     swapped.delete(id);
   }
@@ -143,7 +150,7 @@ function apply() {
     const b = before(id);
     if (!b) continue;
     const put = { ...b, ...st };
-    db.conversations.set(id, put);
+    swap(id, db.conversations.get(id) ?? b, put);
     swapped.set(id, { before: b, put });
   }
   const fresh = plan.messages.filter((m) => !shown.some((x) => x.id === m.id));
@@ -157,13 +164,17 @@ function apply() {
     inbox.value = next;
   }
   for (const t of timelines.values()) arrivedInto(t);
-  changed('list');
+  changed('list', touched ?? undefined);
 }
 
 /** The copies that belong in a timeline, put in it: one opened while the layer shows (state.ts fillTimeline). */
 export function arrivedInto(t: Timeline) {
   if (phase !== 'open' || !shown.length || t.detached) return;
-  const convIds = t.key.startsWith('c:') ? [t.key.slice(2)] : (t.conversationIds ?? [...db.conversations.values()].filter((c) => c.shape === 'direct' && `p:${c.peerPersonId}` === t.key).map((c) => c.id));
+  const convIds = t.key.startsWith('c:')
+    ? [t.key.slice(2)]
+    : t.key.startsWith('k:')
+      ? [t.key.slice(2), ...(db.threads.get(t.key.slice(2)) ?? [])]
+      : (t.conversationIds ?? [...db.conversations.values()].filter((c) => c.shape === 'direct' && `p:${c.peerPersonId}` === t.key).map((c) => c.id));
   let added = false;
   for (const m of shown) {
     if (!convIds.includes(m.conversationId) || t.messages.some((x) => x.id === m.id)) continue;

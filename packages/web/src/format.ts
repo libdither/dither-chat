@@ -8,10 +8,18 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
   const d = now - ts;
   if (d < MIN) return 'now';
   if (d < HOUR) return `${Math.floor(d / MIN)}m`;
-  if (d < DAY && new Date(ts).getDate() === new Date(now).getDate()) return `${Math.floor(d / HOUR)}h`;
-  if (d < 6 * DAY) return (weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts);
-  return (dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts);
+  const at = new Date(ts);
+  if (d < DAY && at.getDate() === new Date(now).getDate()) return `${Math.floor(d / HOUR)}h`;
+  // A day's label depends on its local date alone, so each is formatted once: a list draws hundreds of rows, and a
+  // formatter's call costs more than the rest of this together (docs/perf.md "Times in lists").
+  if (d < 6 * DAY) return (weekdayLabels[at.getDay()] ??= (weekdayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short' })).format(ts));
+  const key = at.getFullYear() * 512 + at.getMonth() * 32 + at.getDate();
+  let s = dayLabels.get(key);
+  if (s === undefined) dayLabels.set(key, (s = (dayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })).format(ts)));
+  return s;
 }
+const weekdayLabels: string[] = [];
+const dayLabels = new Map<number, string>();
 /** How long, compactly: "now", "20m", "5h", "3d". */
 export function since(ts: number, now = Date.now()): string {
   const d = Math.max(0, now - ts);
@@ -19,6 +27,15 @@ export function since(ts: number, now = Date.now()): string {
   if (d < HOUR) return `${Math.floor(d / MIN)}m`;
   if (d < DAY) return `${Math.floor(d / HOUR)}h`;
   return `${Math.floor(d / DAY)}d`;
+}
+/** How long something lasted, for a line: "10 s", "2 min", "5h", "3 days". */
+export function gap(ms: number): string {
+  const d = Math.max(0, ms);
+  if (d < MIN) return `${Math.max(1, Math.floor(d / 1000))} s`;
+  if (d < HOUR) return `${Math.floor(d / MIN)} min`;
+  if (d < DAY) return `${Math.floor(d / HOUR)}h`;
+  const n = Math.floor(d / DAY);
+  return `${n} day${n === 1 ? '' : 's'}`;
 }
 // Made once: toLocale*String builds a formatter per call, which a long list or timeline pays thousands of times per render.
 let weekdayFmt: Intl.DateTimeFormat | undefined;
@@ -47,6 +64,33 @@ export function stamp(ts: number, now = Date.now()): string {
   return `${(yearDayFmt ??= new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })).format(ts)}, ${t}`;
 }
 let yearDayFmt: Intl.DateTimeFormat | undefined;
+
+/** Minutes a time zone is ahead of UTC at that moment, or null for a zone this browser does not know. */
+export function zoneOffset(zone: string, ts: number): number | null {
+  try {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(ts);
+    const n = (t: string) => Number(p.find((x) => x.type === t)?.value);
+    return Math.round((Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute')) - Math.floor(ts / 60_000) * 60_000) / 60_000);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Someone's local time from their IANA time zone, with how far it is from yours: "Tue 3:41 PM · Europe/Berlin, 7 hours
+ * ahead". Null for a zone this browser does not know.
+ */
+export function localTime(zone: string, now = Date.now()): string | null {
+  const theirs = zoneOffset(zone, now);
+  if (theirs === null) return null;
+  const t = new Intl.DateTimeFormat(undefined, { timeZone: zone, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(now);
+  const d = theirs + new Date(now).getTimezoneOffset();
+  const h = Math.floor(Math.abs(d) / 60);
+  const m = Math.abs(d) % 60;
+  const span = m ? `${h ? `${h} h ` : ''}${m} min` : `${h} hour${h === 1 ? '' : 's'}`;
+  const gap = d === 0 ? 'your time' : `${span} ${d > 0 ? 'ahead' : 'behind'}`;
+  return `${t} · ${zone.replace(/_/g, ' ')}, ${gap}`;
+}
 
 export function fullTime(ts: number): string {
   return (fullFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })).format(ts);

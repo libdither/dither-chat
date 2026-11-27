@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS mail_account (
   storage      TEXT,                            -- JSON {text, used, total}: what the status says of the account's storage
   writes       TEXT,                            -- JSON ['seen', 'flagged', 'move', 'trash', 'junk']: status.details.writes, what it writes now; NULL: not said
   contacts     INTEGER,                         -- status.details.contacts: 1 mail.contacts answers now (the server's own recipient suggestions)
+  inline_parts INTEGER,                         -- status.details.inlineParts: 1 mail.send takes pictures inside the HTML (OutgoingFile.contentId)
   hidden      INTEGER NOT NULL DEFAULT 0,
   gone_at      INTEGER,                         -- access ended: everything of it goes 24 h later
   created_at   INTEGER NOT NULL
@@ -118,7 +119,7 @@ CREATE TABLE IF NOT EXISTS mail_message (
   addressed       TEXT NOT NULL DEFAULT 'hidden', -- to | cc | hidden | self
   class           TEXT,                         -- slice 8
   class_why       TEXT,
-  images_allowed  INTEGER NOT NULL DEFAULT 0,   -- slice 3
+  images_allowed  INTEGER NOT NULL DEFAULT 0,   -- slice 3: pictures (bits 0-1: 1 all, 2 shared, 3 none) | trackers (4 keep, 8 remove)
   email_id        TEXT                          -- the server's id for it in every mailbox (Gmail's X-GM-MSGID), when it has one
 );
 CREATE INDEX IF NOT EXISTS mail_message_thread ON mail_message(thread_id, received_at);

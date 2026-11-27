@@ -3,8 +3,8 @@ import { mailSearchable, NETWORKS, parseSearch, searchOp, searchOps, setSearchOp
 import type { ComponentType } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
-import { authorName, communitiesOf, convLabel, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
-import { api, back, db, go, mailRev, openMessage, openProfile, rev } from '../state.ts';
+import { authorName, communitiesOf, convLabel, faceOf, convTitle, netName, plainBody, plainMarkdown, resolveTokens, visibleConv } from '../model.ts';
+import { api, back, db, go, mailRev, metaRev, openMessage, openProfile, rev } from '../state.ts';
 import { retention } from '../history.ts';
 import { Avatar, Empty, NetBadge, NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -17,7 +17,8 @@ import { preloadMail } from './mail/lazy.tsx';
 import { Loading } from './Loader.tsx';
 import { MoreResults } from './more.tsx';
 import { jumpMatches, jumpTargets, type JumpTarget } from '../jump.ts';
-import { focusSearch } from './SearchLazy.tsx';
+import { phone } from '../phone.ts';
+import { hasOperators, namesMatch, typedWords } from '../inboxfilter.ts';
 import './search.css';
 
 /** Split a snippet into text and matches. It is plain text, so it stays out of innerHTML. */
@@ -97,6 +98,7 @@ function dateLabel(q: string): string | null {
 }
 
 /** A name to search by (From, In): what Ctrl+K would jump to for it, or what was typed. */
+// redraws: what it offers is read once as it opens (a memo), and it is open only while you pick.
 function NamePick({ kinds, placeholder, pick }: { kinds: JumpTarget['kind'][]; placeholder: string; pick: (v: string) => void }) {
   const [t, setT] = useState('');
   const all = useMemo(() => jumpTargets().filter((j) => kinds.includes(j.kind)), []);
@@ -136,6 +138,7 @@ type Chip = 'from' | 'in' | 'date' | 'network' | 'more' | 'sort';
  * a picker; a set chip shows its value and an × that clears it. They edit operators in the text, as typing them would.
  */
 function FilterBar({ q, set }: { q: string; set: (q: string) => void }) {
+  metaRev.value; // the names on its chips, and your accounts' networks
   const [open, setOpen] = useState<Chip | null>(null);
   const bar = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -321,7 +324,7 @@ function Line({ m, hit, snippet, why }: { m: P.MessageView; hit?: boolean; snipp
     );
   return (
     <Menuable build={() => messageMenu(m)}>{(ctx) => <button class="search-hit" onClick={open} {...ctx}>
-      <Avatar id={m.authorId ?? m.id} name={authorName(m.authorId)} url={db.identities.get(m.authorId ?? '')?.avatar} size={30} network={m.network} />
+      <Avatar id={faceOf(m.authorId).id || m.id} name={authorName(m.authorId)} url={faceOf(m.authorId).url} size={30} network={m.network} />
       <span class="search-hit-main">
         <span class="search-hit-top">
           <b>{authorName(m.authorId)}</b>
@@ -560,6 +563,95 @@ const TAB_HAS: Partial<Record<Tab, string>> = { pictures: 'image', links: 'link'
 /** How long after the last key the search goes out (docs/search.md, "In the app"). */
 const TYPE_PAUSE_MS = 150;
 
+/** How many messages the inbox shows while you type; the rest are on the search page. */
+const INBOX_HITS = 3;
+
+/**
+ * What the inbox finds beyond its own rows while you type in its box (docs/search.md "In the inbox"): places it does
+ * not list (a server's channels, a hidden chat, a community), from what the app holds, and the newest few messages,
+ * asked of the hub a moment after the last key. `skip`: what the inbox's rows already stand for.
+ */
+export function InboxFound({ q, skip, onFull }: { q: string; skip: Set<string>; onFull: () => void }) {
+  rev.value;
+  const targets = useMemo(jumpTargets, []);
+  const words = typedWords(q);
+  const text = words.join(' ');
+  // By the inbox's rule (every word starts a word of the name), not Jump to's looser one, so the two lists agree.
+  const elsewhere = hasOperators(q)
+    ? []
+    : jumpMatches(targets, text, 24)
+        .filter((j) => namesMatch([j.label, ...(j.also ?? [])], words) && !skip.has(j.key) && !(j.person && skip.has(j.person.id)) && !(j.conv && skip.has(j.conv.id)))
+        .slice(0, 4);
+  const [page, setPage] = useState<{ q: string; p: P.SearchPage } | null>(null);
+  useEffect(() => {
+    if (!q.trim()) return;
+    const ctl = new AbortController();
+    const asked = searchOp(q, 'sort') ? q : setSearchOp(q, 'sort', 'newest');
+    // typing=1: the hub skips its slow fallbacks (the scan inside words, the spelling fix), as the search page does as
+    // you type; Full results runs them.
+    const t = setTimeout(() => {
+      api<P.SearchPage>(`/api/search?q=${encodeURIComponent(asked)}&limit=${INBOX_HITS}&typing=1`, { signal: ctl.signal }).then(
+        (p) => {
+          if (ctl.signal.aborted) return;
+          p.identities.forEach((i) => db.identities.set(i.id, i));
+          setPage({ q, p });
+        },
+        () => {},
+      );
+    }, TYPE_PAUSE_MS);
+    // A newer key gives up this one's ask, sent or not.
+    return () => (clearTimeout(t), ctl.abort());
+  }, [q]);
+  const fresh = page?.q === q;
+  const hits = (page?.p.hits ?? []).filter((h) => {
+    const c = db.conversations.get(h.message.conversationId);
+    return !!c && visibleConv(c);
+  });
+  return (
+    <div class={`inbox-found ${fresh ? '' : 'waiting'}`}>
+      {elsewhere.length > 0 && (
+        <>
+          <h3 class="search-sec">Not in the inbox</h3>
+          <JumpTo found={elsewhere} text={text} onGo={() => rememberSearch(q)} />
+        </>
+      )}
+      <div class="inbox-found-head">
+        <h3 class="search-sec">Messages</h3>
+        <button class="link-btn inbox-found-full" data-track="inbox search: full results" onClick={onFull}>
+          Full results
+        </button>
+      </div>
+      {!page && <p class="inbox-found-note">Searching…</p>}
+      {page && !hits.length && fresh && <p class="inbox-found-note">No messages found yet. Full results looks inside words too.</p>}
+      {hits.map((h) => {
+        const m = h.message;
+        const c = db.conversations.get(m.conversationId)!;
+        const com = c.shape === 'direct' ? undefined : communitiesOf(c)[0];
+        return (
+          <Menuable build={() => messageMenu(m)}>{(ctx) => <button class="inbox-hit" data-track="inbox search: message" onClick={() => (rememberSearch(q), openMessage(c.id, m.id))} {...ctx}>
+            <Avatar id={faceOf(m.authorId).id || m.id} name={authorName(m.authorId)} url={faceOf(m.authorId).url} size={28} network={m.network} />
+            <span class="inbox-hit-main">
+              <span class="inbox-hit-top">
+                <span class="inbox-hit-where">
+                  {c.shape === 'direct' ? convTitle(c) : `${convLabel(c)}${com ? ` · ${com.name}` : ''}`}
+                  {c.shape !== 'direct' && <> · {authorName(m.authorId)}</>}
+                </span>
+                <span class="inbox-hit-time">{dayLabel(m.ts)}</span>
+              </span>
+              <span class="inbox-hit-body"><Snippet text={h.snippet ?? ''} network={m.network} /></span>
+            </span>
+          </button>}</Menuable>
+        );
+      })}
+      {fresh && page!.p.next && (
+        <button class="btn ghost small inbox-found-more" data-track="inbox search: more" onClick={onFull}>
+          More messages
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** `onBack` when searching is a page (one conversation's): App knows where that goes back to. */
 export default function SearchPane({ q, onBack }: { q: string; onBack?: () => void }) {
   rev.value;
@@ -581,24 +673,47 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
   const sent = useRef(q);
   const absorb = (p: P.SearchPage) => p.identities.forEach((i) => db.identities.set(i.id, i));
   const asked = TAB_HAS[tab] ? setSearchOp(q, 'has', TAB_HAS[tab]!) : q;
-  const ask = (query: string, cursor?: string) => api<P.SearchPage>(`/api/search?q=${encodeURIComponent(query)}&context=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+  // typing: sent as you type, so the hub skips the slow fallbacks (inside words, corrections) that Enter asks for.
+  const ask = (query: string, cursor?: string, typing = false) => api<P.SearchPage>(`/api/search?q=${encodeURIComponent(query)}&context=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${typing ? '&typing=1' : ''}`);
+  // The query the pause after the last key sent, and a count of Enters that ask again for what typing left empty.
+  const typedQ = useRef<string | null>(null);
+  const [entered, setEntered] = useState(0);
   useEffect(() => {
     if (q !== sent.current) (sent.current = q, setDraft(typed));
   }, [q]);
+  // A chat's id in the box (opened before the chats had loaded) moves to the chip once they have.
+  useEffect(() => {
+    if (scope && searchOp(draft, 'in') === scope.id) setDraft(setSearchOp(draft, 'in', null));
+  }, [scope?.id]);
+  const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // The box's words as a query: an in: typed there replaces the chip's, and with none the chip's still holds.
+  const full = (t: string) => (scope && !searchOp(t, 'in') ? setSearchOp(t, 'in', scope.id) : t);
+  // A chat picked from in:'s suggestions comes in as its id: it becomes the chip at once, and the box keeps the words.
+  const edit = (t: string) => {
+    const id = searchOp(t, 'in');
+    if (!id || !(db.conversations.has(id) || db.persons.has(id))) return setDraft(t);
+    // The words typed before the pick are still waiting to go out: they would put the id back. (An effect's cleanup
+    // runs after the next paint, too late to stop them.)
+    clearTimeout(pending.current);
+    const words = setSearchOp(t, 'in', null);
+    setDraft(words && /\s$/.test(t) ? words + ' ' : words);
+    set(setSearchOp(words, 'in', id));
+  };
   // As you type: the search goes out a moment after the last key, no Enter needed.
   useEffect(() => {
-    const next = scope ? setSearchOp(draft, 'in', scope.id) : draft;
+    const next = full(draft);
     if (next === q) return;
-    const t = setTimeout(() => set(next), TYPE_PAUSE_MS);
-    return () => clearTimeout(t);
-  }, [draft]);
-  const focusAsked = focusSearch.value;
+    pending.current = setTimeout(() => ((typedQ.current = next), set(next)), TYPE_PAUSE_MS);
+    return () => clearTimeout(pending.current);
+  }, [draft, scope?.id]);
+  // The cursor starts in the box on a computer. A phone opens this page from Full results or a link, to read: its
+  // keyboard would cover what was found.
   useEffect(() => {
     const el = box.current;
-    if (!el) return;
+    if (!el || phone.value) return;
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
-  }, [focusAsked]);
+  }, []);
   useEffect(() => {
     if (!q.trim()) {
       setPage(null);
@@ -609,18 +724,22 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
     let live = true;
     setLoading(true);
     // What was found for the last query stays, dimmed, until this one's answer replaces it.
-    ask(asked)
+    ask(asked, undefined, typedQ.current === q)
       .then((p) => {
         if (!live) return;
         absorb(p);
         setPage(p);
         setHits(p.hits);
       })
+      // One a newer search replaced (the hub calls off a queued one as you type) is no longer wanted.
+      .catch((e) => {
+        if (live) throw e;
+      })
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
-  }, [asked]);
+  }, [asked, entered]);
   const [moreBusy, setMoreBusy] = useState(false);
   const asking = useRef<string | null>(null);
   const current = useRef(asked);
@@ -671,14 +790,18 @@ export default function SearchPane({ q, onBack }: { q: string; onBack?: () => vo
           class="search-main"
           inputRef={box}
           value={draft}
-          setValue={setDraft}
+          setValue={edit}
           onDown={first}
           busy={loading}
           placeholder={scope ? `Search in ${scope.label}` : 'Search messages, people and places'}
           submit={(t) => {
-            const next = scope ? setSearchOp(t, 'in', scope.id) : t;
+            const next = full(t);
             rememberSearch(next);
+            // Enter searches in full: inside words and corrections too, when typing found nothing.
+            const again = typedQ.current === q && next === q && !!page && !page.hits.length;
+            typedQ.current = null;
             set(next);
+            if (again) setEntered((n) => n + 1);
           }}
         />
         <HeadOrb />

@@ -42,7 +42,8 @@ export interface ThreadAction {
   id: string;
   label: string;
   icon: string;
-  place: 'head' | 'bar';
+  /** 'menu': only in a mail message's menu in a chat (ChatMail.tsx), not as a button. */
+  place: 'head' | 'bar' | 'menu';
   show?: (t: P.MailThreadView, account: P.MailAccountView | undefined) => boolean;
   run: (t: P.MailThreadView) => void;
 }

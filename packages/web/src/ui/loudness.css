@@ -1,0 +1,146 @@
+/* The loudness scale (Loudness.tsx): a message's Why, the follow-up and its settings. */
+/* css-scope: LoudnessLazy.tsx draws the same box while this chunk loads */
+.loud-why {
+  padding: 6px 8px 4px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+/* css-scope: LoudnessLazy.tsx draws it while this chunk loads */
+.loud-why.loading {
+  min-height: 40px;
+}
+.loud-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.loud-head small {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.loud-num {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+.loud-scale {
+  margin: 6px 0 2px;
+}
+.loud-bar {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  height: 8px;
+}
+.loud-seg {
+  border-radius: 3px;
+  background: var(--bg-hover);
+}
+.loud-seg.on {
+  background: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.loud-mark {
+  position: absolute;
+  top: -3px;
+  width: 3px;
+  height: 14px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.loud-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.loud-rule {
+  color: var(--text-dim);
+  margin: 4px 0;
+}
+.loud-reasons {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+.loud-reasons li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 2px 0;
+  color: var(--text-dim);
+}
+.loud-reasons li:first-child {
+  color: var(--text);
+}
+.loud-by {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.loud-reasons li.up .loud-by {
+  color: var(--accent);
+}
+.loud-say {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+.loud-learned-link {
+  font-size: 11.5px;
+}
+.loud-follow-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 16px 16px;
+}
+.loud-follow-body h3 {
+  margin: 0;
+}
+.loud-follow-body small {
+  color: var(--text-faint);
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.loud-until {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.loud-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.loud-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.loud-settings > small {
+  color: var(--text-faint);
+}
+.loud-learned {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12.5px;
+}
+.loud-learned li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border-soft);
+}

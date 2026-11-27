@@ -52,6 +52,19 @@ group('ties', () => {
     expect(w(0, 3)).toBeGreaterThan(0);
     expect(w(2, 7)).toBeGreaterThan(0);
   });
+  test('time in voice together ties two people, times your voice weight, and says how much of the tie it is', () => {
+    const vact: P.GraphActivity = { ...act, ties: { ...act.ties!, voice: run(10, 11, 30) } };
+    const vw = (tt: ReturnType<typeof ties>, a: number, b: number) => {
+      for (let k = tt.start[a]; k < tt.start[a + 1]; k++) if (tt.to[k] === b) return [tt.w[k], tt.voice[k]];
+      return [0, 0];
+    };
+    const on = ties(ix, vact, now, DEFAULT_TUNING.fade);
+    expect(vw(on, 10, 11)[0]).toBeGreaterThan(0);
+    expect(vw(on, 10, 11)[1]).toBeCloseTo(1, 6);
+    expect(vw(on, 0, 1)[1]).toBe(0);
+    expect(vw(ties(ix, vact, now, DEFAULT_TUNING.fade, 3), 10, 11)[0]).toBeGreaterThan(vw(on, 10, 11)[0]);
+    expect(vw(ties(ix, vact, now, DEFAULT_TUNING.fade, 0), 10, 11)[0]).toBe(0);
+  });
   test('close to your people: tied to someone you talk with', () => {
     const base = new Float32Array(N);
     base[0] = 1;

@@ -289,7 +289,7 @@ function AttentionBlock({ a }: { a: P.AccountView }) {
         </p>
       )}
       {at.kind === 'captcha' && !!(at.detail as { captcha?: P.CaptchaCheck } | undefined)?.captcha?.url && <SolveCaptcha account={a} check={(at.detail as { captcha: P.CaptchaCheck }).captcha} />}
-      {at.kind === 'login' && !at.liveView && (a.network === 'gmessages' ? <SignInWith account={a} what="cookies" /> : a.network === 'telegram' || a.network === 'matrix' ? <SignInWith account={a} what="password" /> : null)}
+      {at.kind === 'login' && !at.liveView && (a.network === 'gmessages' ? <SignInWith account={a} what="cookies" /> : a.network === 'telegram' || a.network === 'matrix' ? <SignInWith account={a} what="password" /> : a.network === 'zulip' ? <SignInWith account={a} what="password" placeholder="Password, or an API key" /> : null)}
       {at.liveView && (
         <button class="btn primary" onClick={() => setLive(true)}>
           <Icon name="monitor" size={15} /> Open live view
@@ -402,7 +402,8 @@ function SignInCode({ account, code }: { account: P.AccountView; code: { length?
 }
 
 /** A sign-in that lapsed or needs one more step: a password (Telegram's two-step one, Matrix), or Google's cookies (Google Messages). */
-function SignInWith({ account, what }: { account: P.AccountView; what: 'password' | 'cookies' }) {
+/** `placeholder`: what the field takes, where it is more than a password (Zulip's takes an API key too). */
+function SignInWith({ account, what, placeholder = 'Password' }: { account: P.AccountView; what: 'password' | 'cookies'; placeholder?: string }) {
   const [value, setValue] = useState('');
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -415,7 +416,7 @@ function SignInWith({ account, what }: { account: P.AccountView; what: 'password
       {what === 'cookies' ? (
         <textarea class="input" rows={3} spellcheck={false} placeholder="Cookies of messages.google.com, signed in: “Copy as cURL” from the browser's network tab, a cookie export, or SID=…; HSID=…" value={value} onInput={(e) => setValue((e.target as HTMLTextAreaElement).value)} />
       ) : (
-        <input class="input" type="password" autocomplete="current-password" placeholder="Password" value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
+        <input class="input" type="password" autocomplete="current-password" placeholder={placeholder} value={value} onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
       )}
       <button class="btn primary" disabled={busy || !value.trim()} onClick={submit}>
         {what === 'cookies' ? 'Pair with Google' : 'Sign in'}

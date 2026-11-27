@@ -8,12 +8,14 @@
  * An account the hub may only read shows none of these; one that answered 501 to an op loses that op's buttons, and
  * one whose status lists the writes it makes (`writes`: Gmail's, a kind at a time) shows only those (canWrite).
  */
+import { isMailThread } from '../../mail/chats.ts';
 import type * as P from '@dither-chat/protocol';
+import { computed } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { lockAxis, rubber } from '../../gesture.ts';
 import { archivedInAll } from '../../mail/filing.ts';
 import { canWrite, clearSelected, destination, lastMove, markRead, move, moveKind, moveTargets, selected, star, starMessage, toggleSelected, waiting } from '../../mail/ops.ts';
-import { haptic, phone, reducedMotion } from '../../phone.ts';
+import { haptic, reducedMotion } from '../../phone.ts';
 import { connected, db, go, mailRev, route } from '../../state.ts';
 import { groups, onMenu, openMenu, type MenuEntry, type MenuSpec } from '../ContextMenu.tsx';
 import { Icon } from '../icons.tsx';
@@ -23,6 +25,17 @@ import { countKey } from '../../clicklog.ts';
 import { noteRowRead } from '../../activity.ts';
 
 const acc = (t: P.MailThreadView) => db.mail.accounts.get(t.accountId);
+/**
+ * What a row's swipes are offered from, as a string: each mail account's writes and its mailboxes' roles. It follows
+ * `mailRev`, and the rows draw again only when it changes, not for every thread that moves (docs/perf.md "What
+ * redraws").
+ */
+const filingSource = computed(() => {
+  mailRev.value;
+  const accs = [...db.mail.accounts.values()].map((a) => `${a.id} ${a.level} ${a.writes ?? ''} ${a.ops?.unsupported ?? ''}`);
+  const boxes = [...db.mail.mailboxes.values()].map((b) => `${b.id} ${b.accountId} ${b.role ?? ''}`);
+  return `${accs.join('|')}#${boxes.join('|')}`;
+});
 const inInbox = (t: P.MailThreadView) => t.roles.includes('inbox');
 const only = (t: P.MailThreadView, role: string) => t.roles.length > 0 && t.roles.every((r) => r === role || r === 'sent' || r === 'drafts');
 /** Filing it there is offered: the mailbox is there, and the account makes that kind of move (archive, trash, junk). */
@@ -34,7 +47,7 @@ const canMove = (t: P.MailThreadView, to: P.MailMoveTarget) => {
 /** Leaving the open thread after it was filed away: back to its list. */
 function leave(ids: string[]) {
   const r = route.value;
-  if (r.view === 'mail' && r.thread && ids.includes(r.thread)) go({ view: 'mail', list: r.list }, true);
+  if (r.view === 'inbox' && r.conv && ids.includes(r.conv)) go({ view: 'inbox', ...(r.mail ? { mail: r.mail } : {}) }, true);
 }
 
 function file(ts: P.MailThreadView[], to: P.MailMoveTarget) {
@@ -83,8 +96,6 @@ function threadMenu(ts: P.MailThreadView[], from: 'row' | 'reader' | 'selection'
 // ------------------------------------------------------------------ the reader
 
 const leaveAfter = (t: P.MailThreadView, to: P.MailMoveTarget) => file([t], to);
-/** On a phone the subject gets the room: Archive stays a button, Trash and Star are in ⋯ (threadMenu has both). */
-const roomy = () => !phone.value;
 
 export const FILING_THREAD_ACTIONS: ThreadAction[] = [
   { id: 'archive', label: 'Archive', icon: 'archive', place: 'head', show: (t) => inInbox(t) && canMove(t, 'archive'), run: (t) => leaveAfter(t, 'archive') },
@@ -96,9 +107,9 @@ export const FILING_THREAD_ACTIONS: ThreadAction[] = [
     show: (t) => !inInbox(t) && (t.roles.some((r) => r === 'archive' || r === 'junk' || r === 'trash') || archivedInAll(db.mail.mailboxes, t)) && canMove(t, 'inbox'),
     run: (t) => leaveAfter(t, 'inbox'),
   },
-  { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'head', show: (t) => roomy() && !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
-  { id: 'star', label: 'Star', icon: 'star', place: 'head', show: (t, a) => roomy() && !t.flagged && canWrite(a, 'flagged'), run: (t) => star([t.id], true) },
-  { id: 'unstar', label: 'Unstar', icon: 'star', place: 'head', show: (t, a) => roomy() && t.flagged && canWrite(a, 'flagged'), run: (t) => star([t.id], false) },
+  // Trash and Star are in ⋯ (threadMenu): a thread's chat header keeps one filing button, Archive, as a chat keeps its
+  // own buttons. A chat's message menu has them too.
+  { id: 'trash', label: 'Move to the trash', icon: 'trash', place: 'menu', show: (t) => !only(t, 'trash') && canMove(t, 'trash'), run: (t) => leaveAfter(t, 'trash') },
   {
     id: 'more',
     label: 'More',
@@ -117,16 +128,27 @@ export const FILING_MESSAGE_ACTIONS: MessageAction[] = [
 // ------------------------------------------------------------------ a row
 
 const ARM = 88;
-/** When a long press or a swipe ended: the click the browser makes of it is not a tap, wherever it lands. */
-let swallowUntil = 0;
+/**
+ * Where and until when a long press or a swipe ended: the click the browser makes of it, landing where the finger
+ * lifted, is not a tap, whichever row is there by then (an archived row slides away). A tap somewhere else is a tap,
+ * however soon: picking a second row right after the long press that picked the first.
+ */
+let lifted = { until: 0, x: 0, y: 0 };
+/** The lift's click, once: a lift makes one click at most, and the next one there is a tap. */
+const liftClick = (e: MouseEvent) => {
+  const it = Date.now() < lifted.until && Math.hypot(e.clientX - lifted.x, e.clientY - lifted.y) <= 16;
+  if (it) lifted = { until: 0, x: 0, y: 0 };
+  return it;
+};
 
 /** Around each thread row: swipes, selection, the menu. */
 export const FilingRow: RowWrapper = ({ thread: t, children }) => {
+  filingSource.value; // what the account may do (`acc`) changes without the thread changing
   const picking = selected.value.size > 0;
   const on = selected.value.has(t.id);
   const fg = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
-  const g = useRef<{ x0: number; y0: number; mode: null | 'x' | 'y'; dx: number; w: number; side: string; timer?: ReturnType<typeof setTimeout>; armed: boolean } | null>(null);
+  const g = useRef<{ x0: number; y0: number; x: number; y: number; mode: null | 'x' | 'y'; dx: number; w: number; side: string; timer?: ReturnType<typeof setTimeout>; armed: boolean } | null>(null);
   const a = acc(t);
   const right = inInbox(t) && canMove(t, 'archive');
   const left = canWrite(a, 'flag.seen');
@@ -141,20 +163,23 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
   const onTouchStart = (e: TouchEvent) => {
     if (e.touches.length !== 1) return;
     const p = e.touches[0];
-    g.current = { x0: p.clientX, y0: p.clientY, mode: null, dx: 0, w: 0, side: '', armed: false };
+    g.current = { x0: p.clientX, y0: p.clientY, x: p.clientX, y: p.clientY, mode: null, dx: 0, w: 0, side: '', armed: false };
     // A long press picks it.
     g.current.timer = setTimeout(() => {
-      if (!g.current || g.current.mode) return;
+      const s = g.current;
+      if (!s || s.mode) return;
       g.current = null;
       haptic(10);
       toggleSelected(t.id);
-      swallowUntil = Date.now() + 600;
+      lifted = { until: Date.now() + 600, x: s.x, y: s.y };
     }, 450);
   };
   const onTouchMove = (e: TouchEvent) => {
     const s = g.current;
     if (!s) return;
     const p = e.touches[0];
+    s.x = p.clientX;
+    s.y = p.clientY;
     const dx = p.clientX - s.x0;
     const dy = p.clientY - s.y0;
     if (!s.mode) {
@@ -187,7 +212,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
     if (!s) return;
     clearTimeout(s.timer);
     if (s.mode !== 'x') return;
-    swallowUntil = Date.now() + 500;
+    lifted = { until: Date.now() + 500, x: s.x, y: s.y };
     box.current?.classList.remove('armed');
     if (s.armed && s.dx > 0) {
       setX(s.w || 400, 180);
@@ -207,7 +232,7 @@ export const FilingRow: RowWrapper = ({ thread: t, children }) => {
       e.preventDefault();
       e.stopPropagation();
     };
-    if (Date.now() < swallowUntil) return pick();
+    if (liftClick(e)) return pick();
     const avatar = (e.target as HTMLElement).closest('.row-avatar');
     if (picking || avatar || e.ctrlKey || e.metaKey || e.shiftKey) {
       pick();
@@ -350,11 +375,12 @@ export function FilingBar({ list }: { list: string }) {
 
 addEventListener('keydown', (e) => {
   const r = route.value;
-  if (r.view !== 'mail' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+  // In a mail list or a thread's chat (docs/mail.md "Mail as chats").
+  if (r.view !== 'inbox' || !(r.mail || isMailThread(r.conv)) || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   const el = e.target as HTMLElement | null;
   if (el?.closest?.('input, textarea, select, [contenteditable], .cm, .sheet-layer, .modal-backdrop, .switcher-back')) return;
   if (e.key === 'Escape' && selected.value.size) return void (clearSelected(), e.preventDefault());
-  const ids = selected.value.size ? [...selected.value] : r.thread ? [r.thread] : [];
+  const ids = selected.value.size ? [...selected.value] : isMailThread(r.conv) ? [r.conv] : [];
   const ts = ids.map((id) => db.mail.threads.get(id)).filter((x): x is P.MailThreadView => !!x);
   if (!ts.length) return;
   const all = (kind: P.MailWriteKind) => ts.every((t) => canWrite(acc(t), kind));

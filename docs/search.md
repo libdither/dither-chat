@@ -12,15 +12,16 @@ Discord's search and adds a few things Discord lacks:
 | Recent searches | yes | yes, on this device |
 | Results | grouped by channel, with jump-to | the same, with the line before and after each hit |
 | Sort | newest, oldest, relevant | the same, and by default the three best matches above the newest |
-| Misspellings | no | corrected when nothing matches as typed |
+| Misspellings | no | corrected when nothing matches as typed, on Enter |
 | Inside words, CJK | no | yes, as a fallback |
 | Keyboard | — | Up and Down walk the results, Enter opens one; Ctrl+F in a chat searches that chat |
 
 Code: `packages/protocol/src/search.ts` (`parseSearch` and the operator helpers), `packages/hub/src/store.ts`
 (`search`, `searchOnce`, `matchPool`, `rankMatches`, `fillSearchIndexSteps`, `findPeople`, `surround`, `spellFix`,
-`editDistance`), `GET /api/search?q=&cursor=&limit=&context=`; `packages/web/src/ui/SearchBox.tsx` (the box, its
+`editDistance`), `search-thread.ts` and `search-worker.ts` (search on a thread of its own),
+`GET /api/search?q=&cursor=&limit=&context=&typing=`; `packages/web/src/ui/SearchBox.tsx` (the box, its
 suggestions, recent searches), `ui/Search.tsx` (tabs, filter chips, Jump to, results, Ctrl+F), `jump.ts` (what Ctrl+K
-and Jump to list). Tests: `packages/hub/test/search.test.ts`, `search-time.test.ts`, `people-search.test.ts`; in a
+and Jump to list). Tests: `packages/hub/test/search.test.ts`, `search-time.test.ts`, `people-search.test.ts`, `search-thread.test.ts`; in a
 browser, `scripts/verify-search.ts`.
 
 ## The query language
@@ -57,14 +58,42 @@ edit one operator in the text, which is how the filter chips work: the query sta
    `message_fts` still serves the inside-words fallback, the words for corrections, and every search until
    `search_time` is filled in.
 2. **Inside words** with `LIKE` when the full text finds nothing, or when a word has CJK in it (unspaced Japanese is one
-   long token). The results say so.
-3. **Corrected**: still nothing, so each word the index does not have is swapped for the nearest one it does: same first
+   long token). The results say so. Not as you type (`typing=1`, below), except for CJK.
+3. **Corrected** (not as you type): still nothing, so each word the index does not have is swapped for the nearest one it does: same first
    letter, one edit for words under seven letters, two for longer ones, a swap of two letters counting as one; the
    commonest wins a tie. The words come from `message_fts_vocab` (an `fts5vocab` table). The page carries
    `corrected`, the query it is really for, and the next pages use it. About 60 ms for 200 000 messages.
 
+**As you type and on Enter.** For a word nothing has, steps 2 and 3 took 1.8 to 5.3 s on a copy of the live hub (1.35
+million messages; the inside-words step reads every message), where a word or a prefix the index has takes 15 to
+200 ms. So the search the app sends a moment after the last key carries `typing=1`, and the hub skips both for it: a
+word the index lacks finds nothing yet, in 5 to 13 ms on that copy (against 5 to 26 s in full the same afternoon, on
+a busy machine). Enter asks again without it when that left the page empty; a link, a chip and the next page go
+without it too.
+
 Paging is by cursor: `t<key>` along `search_time`, time and rowid the old way, an offset for `sort:relevance`.
 `context=n` (at most 3) adds the n messages before and after each hit in its conversation; the web asks for one.
+
+## On a thread of its own
+
+The hub is one thread, and a search on it waited behind whatever else was running there: on the live hub (2026-11-26)
+`GET /api/search` took 5.7 s at the median over 43 requests, only 6 under 100 ms, though the search itself takes tens
+of milliseconds, because most sat inside stalls of several seconds (the inbox's ranking refits, bursts of adapter
+events, mail search). So `/api/search` runs in a Worker (`search-thread.ts`, `search-worker.ts`) with a read-only
+connection of its own to `hub.sqlite`: a Store opened as a reader (`new Store(file, signer, { reader: true })`), which
+takes no migration step and writes nothing, and runs the same `search`, so a page is the one the hub's thread would
+give. Each search is one read transaction. The database is in WAL mode, so a search sees every write the hub committed
+before it began. What a reader holds in memory is read again before each search (your own accounts, what is kept, the
+time index being filled in); the people list is the reader's own, and the hub hands it the identities written since
+with each search (`peopleChanges`, taken out of `people_dirty` on the hub's thread, where the writes happen, so none
+falls between a read and a delete). main.ts gives the server the file (`searchFile`); a hub built without one (most
+tests) searches on its own thread as before, as does a hub whose worker could not open the database.
+
+One worker, one search at a time, in the order asked. A search still queued is not run when a newer one comes with
+`typing=1` from the same session (its cookie or token), or when its request has gone away; it is answered 409. One
+the worker has started runs to its end. A shared array says, by search, queued, running or called off, and the worker
+claims a search with a compare-and-swap, so a search is run or called off, never both. Network search's count of the
+hub's own hits (docs/indexing.md) still runs on the hub's thread, without the people.
 
 **Filling in the time index.** Triggers on `message` keep `search_time` current. A database from before it gets its
 older messages put in once, newest first, 128 to a slice (`fillSearchIndexSteps`, started by main.ts 90 s after the
@@ -103,7 +132,7 @@ letter, unloaded). Drawing the 50 hits and their context is most of what is left
 
 The first page also carries the people the words find (`SearchPage.people`, `findPeople` in store.ts), best first,
 twelve at most and one identity per person. It looks in a list held in memory, every identity's names and notes folded
-into one string: loaded once in slices after start (`loadPeopleSteps`), then kept current from `people_dirty`, which
+into one string: loaded once in slices (`loadPeopleSteps`, on search's thread as it starts), then kept current from `people_dirty`, which
 triggers on identity, person, about and change_log fill with the identities written since. A search reads only those
 again. (Before, each search ran `LIKE` over every identity, its old names and kept bios: 120 to 250 ms a key.) Every word must be somewhere among an account's display name, handle,
 names and handles from before a rename (the change log, docs/history.md), your nickname for it, the person's name,
@@ -121,18 +150,34 @@ Case and accents fold on both sides: `zoe` finds Zoë. (`from:` is still `LIKE`,
 ## In the app
 
 - **As you type**: results come 150 ms after the last key (`TYPE_PAUSE_MS`), no Enter needed; what was found for the
-  last words stays, dimmed, with a spinner in the box, until the new answer replaces it. On a computer the first
-  letter typed in the inbox's box opens the search page, which takes the cursor and the letter. On a phone a tap on
-  the inbox's box opens the search page with the keyboard up. A search goes into Recent on Enter or when you open
-  one of its results, not at every key.
+  last words stays, dimmed, with a spinner in the box, until the new answer replaces it. A search goes into Recent on
+  Enter or when you open one of its results, not at every key. As you type, the hub skips its slow fallbacks (`typing=1`:
+  the scan inside words and the spelling fix; "As you type and on Enter"); Enter and the full results page run them,
+  and Enter asks again in full when typing found nothing.
+- **In the inbox**: typing in the inbox's box narrows the inbox in place, on a computer and a phone alike; the cursor
+  stays in the box and no page opens (`inboxfilter.ts`, `ui/Sidebar.tsx`). At every key the rows left are those whose
+  names hold every word typed, each word starting a word of a name ("sa ri" finds Sam Rivera; in Japanese or Chinese,
+  anywhere in it): the chat's or channel's name, the person's names and handles on every network, the place it is in.
+  They keep the inbox's order. With a filter on (DMs, Groups, Mail) the narrowing stays inside it, and a line says how
+  many more rows hold the words with no filter. Operators (`from:`, `in:`, `has:` and the rest) ask for messages, not
+  a name: the rows make way for the messages. Under the rows (`InboxFound` in `ui/Search.tsx`): **Not in the inbox**,
+  places that hold the words by the same rule but have no row (a server's channels, a community, a folder, a hidden or
+  quiet chat), up to four, from what the app holds; then **Messages**, the newest three the hub finds
+  (`sort:newest&limit=3&typing=1`, asked 150 ms after the last key, a newer key giving up the older ask), with **Full
+  results**, which opens the search page with the words (so does Enter, and More messages). Up and Down walk the box,
+  the rows and what was found; Escape or the ✕ empties the box and gives the whole inbox back. The box keeps its words
+  while you move between pages, until emptied. It shows a Ctrl K chip at its end while it is empty and has room for
+  it; a narrower box ends its placeholder in "…". On a phone the search page opened from Full results starts without
+  the keyboard, to read; on a computer it takes the cursor.
 - **Loading**: the search page is a chunk of its own (`ui/Search.tsx`, its styles in `ui/search.css`), loaded the
-  first time it opens; focusing the inbox's box starts loading it, so it is usually there by the first key. Ctrl+F
-  and the box's focus signal stay in the startup bundle (`ui/SearchLazy.tsx`).
+  first time it opens or the first time the inbox's box takes the cursor, which also draws what the inbox finds beyond
+  its rows. Ctrl+F stays in the startup bundle (`ui/SearchLazy.tsx`).
 - **The box** (the search page and the inbox's) lists the operators when empty, under recent searches. Typing a word
   lists operators it starts; after `from:`, `in:` and the rest it lists values. Up and Down choose, Enter or Tab take
   (with a value half typed, the first is chosen already), Escape closes; with the list closed, Escape leaves search
-  for where you were (docs/desktop.md "Escape and back"). A direct chat goes in as its id, shown as a
-  chip under the box rather than in the text.
+  for where you were (docs/desktop.md "Escape and back"). A chat picked after `in:` goes in as its id
+  (names repeat, and a direct chat has none), shown as the In chip under the box rather than in the text; the box keeps
+  the words. An `in:` typed with a name replaces the chip.
 - **Tabs** under the box: All, Messages, People, Chats, Pictures (`has:image`, as a grid), Links (`has:link`), Files
   (`has:file`). A tab adds its `has:` to what is sent, not to the box.
 - **Filter chips**, one row: From, In (both pick from what Ctrl+K would jump to, or take a name as typed), Date (today,

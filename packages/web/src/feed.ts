@@ -211,6 +211,8 @@ const REACT_WORDS: Partial<Record<P.Network, ReactWords>> = {
   reddit: { liked: 'upvoted', reposted: 'crossposted', likedBy: 'Upvoted by', repostedBy: 'Crossposted by', likes: 'Upvotes', reposts: 'Crossposts', likeIcon: 'upvote' },
   lemmy: { liked: 'upvoted', reposted: 'crossposted', likedBy: 'Upvoted by', repostedBy: 'Crossposted by', likes: 'Upvotes', reposts: 'Crossposts', likeIcon: 'upvote' },
   substack: { liked: 'liked', reposted: 'restacked', likedBy: 'Liked by', repostedBy: 'Restacked by', likes: 'Likes', reposts: 'Restacks', likeIcon: 'heart' },
+  // A like on LessWrong is a vote on karma, anonymous; there is no repost.
+  lesswrong: { liked: 'upvoted', reposted: 'reposted', likedBy: 'Upvoted by', repostedBy: 'Reposted by', likes: 'Karma', reposts: 'Reposts', likeIcon: 'upvote' },
 };
 export const reactWords = (network?: P.Network | null): ReactWords => (network && REACT_WORDS[network]) || X_REACT;
 
@@ -221,6 +223,7 @@ export function activityVerbs(network?: P.Network | null): string {
       return 'favourite, boost or reply to';
     case 'reddit':
     case 'lemmy':
+    case 'lesswrong':
       return 'upvote or reply to';
     case 'substack':
       return 'like, restack or reply to';

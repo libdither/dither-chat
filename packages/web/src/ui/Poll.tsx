@@ -10,6 +10,7 @@ import { POLL_RULES, pollDraftProblem, pollHoursLabel } from '@dither-chat/proto
 import { renderMarkdown } from '../markdown.ts';
 import { identityName } from '../model.ts';
 import { canEndPoll, endPoll, makePoll, vote, voter } from '../polls.ts';
+import { metaRev } from '../state.ts';
 import { SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import './Poll.css';
@@ -26,6 +27,7 @@ function left(ms: number): string {
 }
 
 export function PollCard({ m }: { m: P.MessageView }) {
+  metaRev.value; // whether an account that can vote is connected
   const p = m.poll!;
   const mine = p.options.filter((o) => o.mine).map((o) => o.id);
   const [picked, setPicked] = useState<string[] | null>(null);
@@ -125,10 +127,11 @@ export function PollCard({ m }: { m: P.MessageView }) {
  */
 /** `focus`: the question takes the focus as it opens (not in the phone's panel, where a tap brings the keyboard). */
 export function PollMaker({ conversationId, network, accountId, question: initial = '', onClose, onSent, focus = true }: { conversationId: string; network: P.Network; accountId?: string; question?: string; onClose: () => void; onSent?: () => void; focus?: boolean }) {
+  metaRev.value; // the accounts' labels on its chip
   const rules = POLL_RULES[network]!;
   const [question, setQuestion] = useState(initial.replace(/\s+/g, ' ').trim().slice(0, rules.questionMax));
   const [options, setOptions] = useState(['', '']);
-  const [multi, setMulti] = useState(false);
+  const [multi, setMulti] = useState(!!rules.multiOnly);
   const [hours, setHours] = useState(rules.defaultHours);
   const [busy, setBusy] = useState(false);
   const form = useRef<HTMLFormElement>(null);
@@ -193,13 +196,18 @@ export function PollMaker({ conversationId, network, accountId, question: initia
         ))}
       </div>
       <div class="poll-draft-foot">
-        <div class="poll-draft-pills" role="radiogroup" aria-label="How many choices">
-          <button type="button" role="radio" aria-checked={!multi} class={`poll-pill ${!multi ? 'on' : ''}`} onClick={() => setMulti(false)}>
-            One choice
-          </button>
-          <button type="button" role="radio" aria-checked={multi} class={`poll-pill ${multi ? 'on' : ''}`} onClick={() => setMulti(true)}>
-            Several
-          </button>
+        <div class="poll-draft-pills" role={rules.multiOnly ? undefined : "radiogroup"} aria-label={rules.multiOnly ? undefined : "How many choices"}>
+          {/* A network whose polls always take several choices (Zulip) has nothing to pick. */}
+          {!rules.multiOnly && (
+            <>
+              <button type="button" role="radio" aria-checked={!multi} class={`poll-pill ${!multi ? 'on' : ''}`} onClick={() => setMulti(false)}>
+                One choice
+              </button>
+              <button type="button" role="radio" aria-checked={multi} class={`poll-pill ${multi ? 'on' : ''}`} onClick={() => setMulti(true)}>
+                Several
+              </button>
+            </>
+          )}
           {rules.hours && (
             <label class="poll-pill poll-pill-select" title="How long it stays open">
               <Icon name="clock" size={12} />

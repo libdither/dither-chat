@@ -5,25 +5,84 @@
  * nothing: a component reads `rev` or `metaRev` itself.
  */
 import type * as P from '@dither-chat/protocol';
-import { categoryThreshold, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
+import { categoryThreshold, mutedNow, NETWORK_META, POST_NETWORKS, RULE_LABEL } from '@dither-chat/protocol';
 import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
-import { mailDataVersion, metaDataVersion } from './versions.ts';
+import { convsChangedSince, mailDataVersion, metaDataVersion, placesDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames, scopeAccounts } from './mail/model.ts';
+import { routesByPerson } from './mail/chats.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
+import { channelKey, groupChannels } from './channelrows.ts';
 import { isQuietConv } from './feed.ts';
 
-const memos = new Map<string, { rev: number; value: unknown }>();
-function memo<T>(key: string, fn: () => T): T {
-  const m = memos.get(key);
+/**
+ * The memos below are kept by what is worked out (`kind`, a literal) and then by the place it is for (`id`, '' for one of
+ * a kind), two maps: a key made of the two (`'lvl:' + id`) was a new string to build and hash in each of the tens of
+ * thousands of lookups of a first draw (docs/perf.md "Memo keys").
+ */
+function entries<E>(all: Map<string, Map<string, E>>, kind: string): Map<string, E> {
+  let m = all.get(kind);
+  if (!m) all.set(kind, (m = new Map()));
+  return m;
+}
+
+const memos = new Map<string, Map<string, { rev: number; value: unknown }>>();
+function memo<T>(kind: string, id: string, fn: () => T): T {
+  const byId = entries(memos, kind);
+  const m = byId.get(id);
   const v = dataVersion();
   if (m && m.rev === v) return m.value as T;
   const value = fn();
-  memos.set(key, { rev: v, value });
+  byId.set(id, { rev: v, value });
   return value;
 }
 
-const metaMemos = new Map<string, { rev: number; value: unknown; until: number }>();
+const placesMemos = new Map<string, Map<string, { rev: number; value: unknown; at: number }>>();
+/**
+ * The same, for what reads no identity and not the inbox's messages (versions.ts `placesDataVersion`): the rail's
+ * places, their counts and order, the badge, people's directs and the inbox's rows. Identities that come with a page or
+ * the inbox, and the inbox itself, do not work these out again.
+ *
+ * When all that changed since were some conversations' last messages and counts (a message, a read: versions.ts
+ * `convsChangedSince`), `update` brings the value up to date from those alone, or says it cannot (undefined): a
+ * server's count is kept when none of them is under it, where every server's was worked out again from all ~5,600
+ * conversations (docs/perf.md "One conversation at a time"). With none changed (reactions' usage), the value holds.
+ * It must give what `fn` would; test/model-incremental.test.ts checks that it does.
+ */
+function placesMemo<T>(kind: string, id: string, fn: () => T, update?: (prev: T, ids: ReadonlySet<string>) => T | undefined): T {
+  const byId = entries(placesMemos, kind);
+  const m = byId.get(id);
+  const v = placesDataVersion();
+  if (m && m.rev === v) return m.value as T;
+  const now = Date.now();
+  if (m) {
+    const ids = convsChangedSince(m.rev);
+    if (ids && levelsHeld(m.at, now)) {
+      const value = ids.size ? update?.(m.value as T, ids) : (m.value as T);
+      if (value !== undefined) {
+        m.rev = v;
+        m.value = value;
+        m.at = now;
+        return value;
+      }
+    }
+  }
+  const value = fn();
+  byId.set(id, { rev: v, value, at: now });
+  return value;
+}
+
+/** Whether any of these conversations is in `set`. */
+function touches(ids: ReadonlySet<string>, set: ReadonlySet<string>): boolean {
+  for (const id of ids) if (set.has(id)) return true;
+  return false;
+}
+/** An update that keeps the value unless one of the conversations it was worked out from changed. */
+const keepUnless = (set: () => ReadonlySet<string>) => <T>(prev: T, ids: ReadonlySet<string>) => (touches(ids, set()) ? undefined : prev);
+/** An update for what no conversation's last message or counts change. */
+const keep = <T>(prev: T) => prev;
+
+const metaMemos = new Map<string, Map<string, { rev: number; value: unknown; until: number }>>();
 /** The soonest a native mute looked at while working something out runs out (nativeLevel): no later than that is it kept. */
 let expires = Infinity;
 /**
@@ -31,16 +90,34 @@ let expires = Infinity;
  * arriving or a conversation read does not work it out again, where it did for every conversation under every server
  * the rail shows (docs/perf.md). It holds conversations' ids, never the objects, which a message replaces.
  */
-function metaMemo<T>(key: string, fn: () => T): T {
-  const m = metaMemos.get(key);
+function metaMemo<T>(kind: string, id: string, fn: () => T): T {
+  const byId = entries(metaMemos, kind);
+  const m = byId.get(id);
   const v = metaDataVersion();
   if (m && m.rev === v && (m.until === Infinity || Date.now() < m.until)) return m.value as T;
   const outer = expires;
   expires = Infinity;
   const value = fn();
-  metaMemos.set(key, { rev: v, value, until: expires });
+  byId.set(id, { rev: v, value, until: expires });
+  if (expires !== Infinity) {
+    if (untilsOf !== v) (untilsOf = v), (untils.length = 0);
+    untils.push(expires);
+  }
   expires = Math.min(outer, expires);
   return value;
+}
+
+/** When a native mute looked at since names and settings last changed runs out (`metaDataVersion` `untilsOf`). */
+const untils: number[] = [];
+let untilsOf = -1;
+/**
+ * Whether every notification level read at `at` still holds at `now`: no native mute ran out between. One that did
+ * changes a level with nothing changed in `db`, so what `placesMemo` keeps from then is worked out again whole.
+ */
+function levelsHeld(at: number, now: number): boolean {
+  if (untilsOf !== metaDataVersion()) return true;
+  for (const u of untils) if (u > at && u <= now) return false;
+  return true;
 }
 
 export const netName = (n: P.Network) => NETWORK_META[n].name;
@@ -50,18 +127,87 @@ export function externalProfile(i: P.IdentityView): string | null {
   if (i.network === 'discord') return /^\d+$/.test(i.nativeId) ? `https://discord.com/users/${i.nativeId}` : null;
   if (i.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(i.nativeId)}`;
   if (i.network === 'whatsapp') return /^\+\d{6,}$/.test(i.handle ?? '') ? `https://wa.me/${i.handle!.slice(1)}` : null;
+  // Event sites (docs/events.md): Luma's user page by handle or id, Partiful's by id.
+  if (i.network === 'luma') return `https://luma.com/user/${encodeURIComponent(i.handle || i.nativeId)}`;
+  if (i.network === 'partiful') return `https://partiful.com/u/${encodeURIComponent(i.nativeId)}`;
+  if (i.network === 'zulip') {
+    const m = i.nativeId.match(/^([^/]+)\/u\/(\d+)$/);
+    return m ? `${zulipBase(m[1]!)}/#user/${m[2]}` : null;
+  }
   return null;
 }
+
+// ------------------------------------------------------------------ Zulip's own links
+
+/**
+ * A Zulip organization's address from its host (dither-accounts' ids: `<host>` is the server's host and port, without
+ * its scheme). https, as an organization is served; plain http only on this machine (a local test server).
+ */
+const zulipBase = (host: string) => `${/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/.test(host) ? 'http' : 'https'}://${host}`;
+
+/**
+ * Zulip's hash encoding, as its web client writes narrow links (`encodeHashComponent` in zulip/zulip's
+ * web/src/internal_url.ts, https://github.com/zulip/zulip/blob/7bb11b60d91def4644f6c74be6611fcc85488b06/web/src/internal_url.ts#L7-L24):
+ * encodeURIComponent, then `%` as `.` and `!'()*.` as `.` and their hex.
+ */
+export const zulipHash = (s: string) => encodeURIComponent(s).replace(/[%!'()*.]/g, (c) => (c === '%' ? '.' : `.${c.charCodeAt(0).toString(16).toUpperCase()}`));
+
+/** A channel's part of a narrow: its id and name, as Zulip writes it (`encode_slug`), or the bare id where that is long. */
+function zulipChannel(id: string, name: string | null | undefined) {
+  const slug = `${id}-${(name ?? '').replace(/ /g, '-')}`;
+  const enc = zulipHash(slug);
+  return !name || enc.length - slug.length > 10 || enc.length > slug.length * 1.5 ? id : enc;
+}
+
+/**
+ * A Zulip conversation's narrow link from its native id (dither-accounts' docs/zulip.md): a channel, a topic (by the
+ * name it has now, since its id is lowercased), or direct messages (`-dm` for two, `-group` for more, as Zulip's own
+ * permalinks).
+ */
+function zulipLink(c: P.ConversationView): string | null {
+  let m = c.nativeId.match(/^([^/]+)\/s\/(\d+)(?:\/t\/(.*))?$/s);
+  if (m) {
+    const [, host, stream, topic] = m;
+    const channel = c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : c;
+    const at = `${zulipBase(host!)}/#narrow/channel/${zulipChannel(stream!, channel?.name)}`;
+    // The empty topic ("general chat" in Zulip's apps) is `…/t/`: its link's topic is empty too, as Zulip writes it.
+    return topic === undefined ? at : `${at}/topic/${zulipHash(topic === '' ? '' : (c.name ?? decodeURIComponent(topic)))}`;
+  }
+  m = c.nativeId.match(/^([^/]+)\/dm\/(\d+(?:,\d+)*)$/);
+  if (m) return `${zulipBase(m[1]!)}/#narrow/dm/${m[2]}-${m[2]!.split(',').length > 2 ? 'group' : 'dm'}`;
+  return null;
+}
+
+/** A Zulip message's own link: its conversation's narrow, near it. */
+export function zulipMessageLink(c: P.ConversationView, messageNativeId: string): string | null {
+  const id = messageNativeId.match(/\/m\/(\d+)$/)?.[1];
+  const at = zulipLink(c);
+  return id && at ? `${at}/near/${id}` : null;
+}
+
+/** A space's page on its network's own site: a Discord server, a Matrix space, a Zulip organization. */
+export function spaceLink(s: P.SpaceView): string | null {
+  if (s.network === 'discord') return `https://discord.com/channels/${s.nativeId}`;
+  if (s.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(s.nativeId)}`;
+  if (s.network === 'zulip') return s.kind === 'community' ? `${zulipBase(s.nativeId)}/` : null;
+  return null;
+}
+
+/** "Open in …": the app a network's links open, for the button that does. */
+export const linkOpensIn = (n: P.Network) => (n === 'matrix' ? 'Element (matrix.to)' : netName(n));
 export const netColor = (n: P.Network) => NETWORK_META[n].color;
 
 // ------------------------------------------------------------------ visibility
 
 /** A hub is either a demo world or a real one (never both), so every account it knows is shown. */
 export function visibleAccount(id: string) {
-  return db.accounts.has(id);
+  // A mail account is an account too: its email routes and threads are chats (mail/chats.ts).
+  return db.accounts.has(id) || db.mail.accounts.has(id);
 }
 export function visibleConv(c: P.ConversationView) {
-  return c.vantages.some((v) => visibleAccount(v.accountId));
+  // A loop, not `some` with a closure: this runs for every conversation in several passes of a first draw.
+  for (const v of c.vantages) if (visibleAccount(v.accountId)) return true;
+  return false;
 }
 function visibleSpace(s: P.SpaceView) {
   return s.accountIds.some(visibleAccount);
@@ -72,7 +218,7 @@ function visibleSpace(s: P.SpaceView) {
 /** Replace raw <@id> / <#id> tokens in stored preview text with readable names. */
 export function resolveTokens(text: string, network: P.Network): string {
   return text
-    .replace(/<@&\d+>/g, '@role')
+    .replace(/<@&[^>\s]+>/g, '@role')
     .replace(/<@!?([^>\s]+)>/g, (_, id) => {
       const hid = db.identityByNative.get(`${network}:${id}`);
       return '@' + (hid ? (isSelfIdentity(hid) ? 'you' : authorName(hid)) : 'user');
@@ -89,7 +235,7 @@ export function resolveTokens(text: string, network: P.Network): string {
  * (`metaMemo`), not a scan per link, nor a new map for every message or read.
  */
 export function convByNative(network: P.Network, nativeId: string): P.ConversationView | undefined {
-  const id = metaMemo('convByNative', () => {
+  const id = metaMemo('convByNative', '', () => {
     const m = new Map<string, string>();
     for (const c of db.conversations.values()) if (!m.has(`${c.network}:${c.nativeId}`)) m.set(`${c.network}:${c.nativeId}`, c.id);
     return m;
@@ -147,6 +293,20 @@ export function authorName(identityId: string | null | undefined): string {
   return p && !p.isSelf ? p.name : identityName(identityId);
 }
 
+/**
+ * The face an account's author is shown by (docs/chats.md, Names): their person's picture, else the account's own,
+ * with `id` for the initials' colour (the person's, so every account of theirs has one) and the network the picture
+ * came from. Your own accounts are shown as themselves.
+ */
+export function faceOf(identityId: string | null | undefined): { id: string; url: string | null; network: P.Network | null } {
+  const i = identityId ? db.identities.get(identityId) : undefined;
+  const p = personOf(identityId);
+  if (!p || p.isSelf || !p.avatar) return { id: p && !p.isSelf ? p.id : (identityId ?? ''), url: i?.avatar ?? null, network: i?.avatar ? i.network : null };
+  const theirs = p.identityIds.map((x) => db.identities.get(x));
+  const from = theirs.find((x) => x?.avatar === p.avatar) ?? db.identities.get(p.faceId ?? p.identityIds[0]);
+  return { id: p.id, url: p.avatar, network: from?.network ?? null };
+}
+
 export function peerIdentity(c: P.ConversationView): string | null {
   return c.participantIds.find((p) => !isSelfIdentity(p)) ?? null;
 }
@@ -158,16 +318,49 @@ export function convTitle(c: P.ConversationView | undefined | null): string {
     return p?.name ?? identityName(peerIdentity(c));
   }
   if (c.shape === 'self') return c.name ?? 'Notes to self';
-  if (c.name) return c.name;
+  // A resolved Zulip topic keeps Zulip's ✔ in its name; it shows as a Resolved mark instead (resolvedTopic).
+  if (c.name) return resolvedTopic(c) ? c.name.slice(RESOLVED.length) : c.name;
   if (c.shape === 'group')
     return (
       c.participantIds
         .filter((p) => !isSelfIdentity(p))
         .slice(0, 3)
-        .map(identityName)
+        .map(authorName)
         .join(', ') || 'Group'
     );
   return 'Unnamed';
+}
+
+/** Zulip marks a resolved topic by this in front of its name (dither-accounts' docs/zulip.md). */
+const RESOLVED = '✔ ';
+
+/** A resolved Zulip topic: its name starts with Zulip's ✔, and the hub has it archived. */
+export const resolvedTopic = (c: P.ConversationView) => c.network === 'zulip' && c.shape === 'thread' && !!c.name?.startsWith(RESOLVED);
+
+/**
+ * A forum whose threads are topics (Zulip's channels): the channel takes no messages of its own, and its topics are
+ * read as channels are, not posts to browse. Its words are Zulip's (threadWords), and its resolved topics are listed
+ * with the rest (shownThreads).
+ */
+export const topicForum = (c: P.ConversationView | null | undefined) => !!c && c.variant === 'forum' && c.network === 'zulip';
+
+/** The words for a channel's threads, by network: Zulip's topics are resolved, Discord's posts and threads archived. */
+interface ThreadWords {
+  /** "topic", "post", "thread". */
+  one: string;
+  many: string;
+  /** "Resolved", "Archived": a tab, a chip, a toast. */
+  archived: string;
+  archive: string;
+  unarchive: string;
+  unarchived: string;
+}
+export function threadWords(c: P.ConversationView | null | undefined): ThreadWords {
+  const place = c && c.shape === 'thread' && c.parentId ? db.conversations.get(c.parentId) : c;
+  if (topicForum(place) || (c?.network === 'zulip' && c.shape === 'thread'))
+    return { one: 'topic', many: 'topics', archived: 'Resolved', archive: 'Resolve', unarchive: 'Unresolve', unarchived: 'Unresolved' };
+  const posts = place?.variant === 'forum' || place?.variant === 'media';
+  return { one: posts ? 'post' : 'thread', many: posts ? 'posts' : 'threads', archived: 'Archived', archive: 'Archive', unarchive: 'Unarchive', unarchived: 'Unarchived' };
 }
 
 /** "#dev" for channels, plain names otherwise. */
@@ -188,6 +381,7 @@ export function kindLabel(c: P.ConversationView): string {
       return `${n} notes to self`;
     case 'thread': {
       const parent = c.parentId ? db.conversations.get(c.parentId) : null;
+      if (c.network === 'zulip') return 'Zulip topic';
       return parent?.variant === 'forum' ? `${n} forum post` : `${n} thread`;
     }
     case 'channel':
@@ -195,6 +389,8 @@ export function kindLabel(c: P.ConversationView): string {
       if (c.network === 'matrix') return c.spaceIds.length ? `Matrix ${variant}room` : 'Matrix room (no space)';
       // A Telegram forum's topic (dither-accounts' forums as spaces); its "channels" are broadcast groups.
       if (c.network === 'telegram') return 'Telegram topic';
+      // A Zulip channel is a forum of topics (dither-accounts' docs/zulip.md).
+      if (c.network === 'zulip') return 'Zulip channel';
       if (c.variant === 'follow') return `${n} post you follow`;
       return `${n} ${variant}channel`;
   }
@@ -283,7 +479,7 @@ interface TreeNode {
 }
 
 export function spaceChildren(id: string): TreeNode[] {
-  return memo('children:' + id, () =>
+  return placesMemo('children', id, () =>
     (db.children.get(id) ?? [])
       .map((e): TreeNode | null => {
         if (e.childKind === 'conversation') {
@@ -301,18 +497,29 @@ export function spaceChildren(id: string): TreeNode[] {
         if (rank(a) !== rank(b) && db.spaces.get(id)?.network === 'discord') return rank(a) - rank(b);
         return (a.position ?? '~').localeCompare(b.position ?? '~') || nodeName(a).localeCompare(nodeName(b));
       }),
+    // Ids, names and what is shown: a message or a read changes none of them.
+    keep,
   );
 }
 
 /** Channels a server can open on: ones with messages to read, not voice rooms, forums or feeds. */
 const OPENS_ON: ReadonlySet<P.Variant> = new Set(['text', 'announcement', 'rules']);
 
-/** A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server. */
-export function firstChannel(id: string, seen = new Set<string>()): string | undefined {
+/**
+ * A space's first channel to read, in list order through its categories and subspaces, as Discord opens a server.
+ * A space with no channel of messages opens on its first forum (a Zulip organization, whose channels are all forums),
+ * which shows the forum's posts.
+ */
+export function firstChannel(id: string): string | undefined {
+  return firstOf(id, OPENS_ON, new Set()) ?? firstOf(id, FORUMS, new Set());
+}
+const FORUMS: ReadonlySet<P.Variant> = new Set(['forum']);
+
+function firstOf(id: string, variants: ReadonlySet<P.Variant>, seen: Set<string>): string | undefined {
   if (seen.has(id)) return undefined;
   seen.add(id);
   for (const n of spaceChildren(id)) {
-    const hit = n.kind === 'conversation' ? (OPENS_ON.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstChannel(n.id, seen);
+    const hit = n.kind === 'conversation' ? (variants.has(db.conversations.get(n.id)!.variant) ? n.id : undefined) : firstOf(n.id, variants, seen);
     if (hit) return hit;
   }
   return undefined;
@@ -327,6 +534,118 @@ export function threadsOf(convId: string): P.ConversationView[] {
     .map((id) => db.conversations.get(id)!)
     .filter((t) => t && visibleConv(t))
     .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
+}
+
+/** A channel whose own count may already hold its threads' (a Discord forum's read state): it takes no messages itself. */
+const postsOnly = (c: P.ConversationView | null | undefined) => !!c && c.shape !== 'thread' && (c.variant === 'forum' || c.variant === 'media');
+
+/** At most this many unread threads under a channel in the sidebar, mentions aside: a busy Zulip channel has hundreds. */
+export const UNREAD_THREADS_SHOWN = 8;
+/** And this many of its latest threads after them, as long as they are not shown already. */
+export const LATEST_THREADS_SHOWN = 3;
+
+interface ShownThreads {
+  /** The rows under the channel, in order. */
+  shown: P.ConversationView[];
+  /** The threads left out that the channel's thread list shows: the "N more topics" row. */
+  more: number;
+}
+
+/**
+ * The threads the sidebar shows under a channel, one rule for every network (docs/servers.md, "Threads under a
+ * channel"): the open one, the unread ones (a mention first; a muted one only for a mention; at most
+ * UNREAD_THREADS_SHOWN others), then the latest few not shown yet. The open one comes first only when it would not be
+ * shown otherwise, and was not shown before it was opened: a row stays where it was clicked. An archived thread shows only open or unread: a Discord text channel keeps hundreds of old ones.
+ * Zulip's resolved topics are done, not put away, so they count as any other (its own sidebar lists them too). The
+ * rest are `more`.
+ */
+export function shownThreads(c: P.ConversationView, active?: string): ShownThreads {
+  const base = placesMemo('shownThreads', c.id, () => pickThreads(c), keepUnlessChannel(c.id));
+  if (!active || active === c.id) return remember(c.id, base);
+  const open = db.conversations.get(active);
+  if (!open || open.parentId !== c.id || open.shape !== 'thread' || !visibleConv(open)) return remember(c.id, base);
+  // Shown already, it stays where it is: a row does not jump from under the pointer that opened it.
+  if (base.shown.includes(open)) return remember(c.id, base);
+  const more = listedThread(c, open) ? base.more - 1 : base.more;
+  // Shown before it was opened (an unread one, read by opening it): in the same place still.
+  const was = lastShown.get(c.id);
+  const at = was ? was.indexOf(open.id) : -1;
+  if (at >= 0) return remember(c.id, { shown: [...base.shown.slice(0, at), open, ...base.shown.slice(at)], more });
+  // Opened from the channel's list of the rest, or from elsewhere: it comes first, out of them.
+  return remember(c.id, { shown: [open, ...base.shown], more });
+}
+
+/** The threads each channel showed last: where an open thread that the rule would now leave out stays. */
+const lastShown = new Map<string, string[]>();
+function remember(channel: string, s: ShownThreads): ShownThreads {
+  lastShown.set(
+    channel,
+    s.shown.map((t) => t.id),
+  );
+  return s;
+}
+
+/** A thread the channel's thread list shows without asking: not an archived one, but a resolved Zulip topic. */
+const listedThread = (c: P.ConversationView, t: P.ConversationView) => !t.archived || topicForum(c);
+
+function pickThreads(c: P.ConversationView): ShownThreads {
+  const all = threadsOf(c.id);
+  if (!all.length) return { shown: [], more: 0 };
+  const chanMuted = unreadOf(c).muted;
+  const mentioned: P.ConversationView[] = [];
+  const unread: P.ConversationView[] = [];
+  const latest: P.ConversationView[] = [];
+  let listed = 0;
+  // Latest first, so each list takes the latest of its kind, and the latest few are those not shown yet.
+  for (const t of all) {
+    const listedHere = listedThread(c, t);
+    if (listedHere) listed++;
+    const u = unreadOf(t);
+    if (u.unread > 0 || u.mentions > 0) {
+      // Muted, it shows only for a mention that still makes a badge (Mute outright takes even that off).
+      if (u.mentions > 0 && (!u.muted || u.badge > 0)) {
+        mentioned.push(t);
+        continue;
+      }
+      if (!u.muted && unread.length < UNREAD_THREADS_SHOWN) {
+        unread.push(t);
+        continue;
+      }
+    }
+    // Muted by itself in a channel that is not: left out of the latest, as Zulip's sidebar does.
+    if (listedHere && latest.length < LATEST_THREADS_SHOWN && (chanMuted || !u.muted)) latest.push(t);
+  }
+  const shown = [...mentioned, ...unread, ...latest];
+  return { shown, more: Math.max(0, listed - shown.filter((t) => listedThread(c, t)).length) };
+}
+
+/**
+ * A channel's count with its threads', every one of them (the sidebar shows only some): what its row's badge says,
+ * folded or not. A thread's messages are its own (the hub counts them there), so a text channel's own count and its
+ * threads' add up; a forum's own count may already hold its posts', so `sumUnread` takes the larger.
+ */
+/** An update that keeps what was worked out from a channel and its threads unless one of them changed. */
+const keepUnlessChannel =
+  (id: string) =>
+  <T>(prev: T, ids: ReadonlySet<string>) => {
+    for (const x of ids) if (x === id || db.conversations.get(x)?.parentId === id) return undefined;
+    return prev;
+  };
+
+export function channelUnread(c: P.ConversationView): Unread {
+  return placesMemo('cu', c.id, () => {
+    const ids = db.threads.get(c.id);
+    const own = unreadOf(c);
+    if (!ids?.length) return own;
+    const all: P.ConversationView[] = [c];
+    for (const id of ids) {
+      const t = db.conversations.get(id);
+      if (t && visibleConv(t)) all.push(t);
+    }
+    const sum = sumUnread(all);
+    // A muted channel's own count is left out of the sum, but the row still says it has some, dimmed.
+    return { ...sum, unread: Math.max(sum.unread, own.unread), muted: own.muted };
+  }, keepUnlessChannel(c.id));
 }
 
 const NO_PREF: Omit<P.PlacePrefView, 'kind' | 'id'> = { position: null, pinned: false, hidden: false, open: false, railed: false };
@@ -381,51 +700,126 @@ export function placePref(kind: P.PlaceKind, id: string) {
 
 export type RailEntry = { key: string; kind: 'folder'; folder: P.FolderView } | { key: string; kind: 'space'; space: P.SpaceView } | { key: string; kind: 'conversation'; conv: P.ConversationView };
 
-const placeActivity = (e: RailEntry) =>
-  e.kind === 'folder' ? Math.max(0, ...folderConvs(e.folder).map((c) => c.lastMessageAt ?? 0)) : e.kind === 'space' ? activityOfSpace(e.space.id) : (e.conv.lastMessageAt ?? 0);
+/** The latest message in a folder: a loop, not a spread of every conversation in it. */
+function folderActivity(convs: readonly P.ConversationView[]): number {
+  let max = 0;
+  for (const c of convs) if ((c.lastMessageAt ?? 0) > max) max = c.lastMessageAt!;
+  return max;
+}
+const placeActivity = (e: RailEntry) => (e.kind === 'folder' ? folderActivity(folderConvs(e.folder)) : e.kind === 'space' ? activityOfSpace(e.space.id) : (e.conv.lastMessageAt ?? 0));
+
+/** A rail entry with what orders it: its settings, activity, and where it came in the list it was made from. */
+type RailItem = { e: RailEntry; pref: P.PlacePrefView; act: number; group: number; base: number; fc?: readonly P.ConversationView[] };
+/** What a rail list was sorted from, to sort it again when only some conversations' last messages moved. */
+type RailOrder = { items: RailItem[]; under: Map<string, RailItem[]> | null };
+const railOrders = new WeakMap<readonly RailEntry[], RailOrder>();
+
+/**
+ * Pinned, then what you arranged, then folders, then by activity; entries alike in all that keep the order they were
+ * listed in: folders as you made them, servers by activity and then as they are, then conversations you added.
+ */
+function railBefore(a: RailItem, b: RailItem): number {
+  const pa = a.pref, pb = b.pref;
+  if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
+  if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
+  if (pa.position === null) {
+    if ((a.e.kind === 'folder') !== (b.e.kind === 'folder')) return a.e.kind === 'folder' ? -1 : 1;
+    if (a.act !== b.act) return b.act - a.act;
+  } else if (pa.position !== pb.position) return pa.position - pb.position!;
+  // The same place you gave both: as listed, where servers are listed by activity.
+  else if (a.group === 1 && b.group === 1 && a.act !== b.act) return b.act - a.act;
+  return a.group - b.group || a.base - b.base;
+}
+
+function sortedRail(items: RailItem[], under: RailOrder['under']): RailEntry[] {
+  items.sort(railBefore);
+  const out = items.map((x) => x.e);
+  railOrders.set(out, { items, under });
+  return out;
+}
+
+/**
+ * After a message or a read: the entries holding a changed conversation take their activity again, and the list is
+ * sorted again from what it was sorted from, or kept as it is when no activity moved. An added conversation that
+ * changed holds the conversation's new copy, so the list is made again (undefined).
+ */
+function railUpdate(prev: RailEntry[], ids: ReadonlySet<string>): RailEntry[] | undefined {
+  const o = railOrders.get(prev);
+  if (!o) return undefined;
+  // Each server's conversations, once per list made: what is under a server moves only with what is where.
+  if (!o.under) {
+    o.under = new Map();
+    for (const x of o.items)
+      if (x.e.kind === 'space')
+        for (const id of idsUnder(x.e.space.id)) {
+          const l = o.under.get(id);
+          if (l) l.push(x);
+          else o.under.set(id, [x]);
+        }
+  }
+  let moved = false;
+  const again = (x: RailItem, act: number) => {
+    if (act !== x.act) (x.act = act), (moved = true);
+  };
+  for (const x of o.items) {
+    if (x.e.kind === 'conversation' && ids.has(x.e.conv.id)) return undefined;
+    // A folder's conversations can be people's chats: few folders, so each is looked at, and its activity taken again
+    // only when they are a new list (folderConvs keeps the one it has while none of them changed).
+    if (x.e.kind === 'folder') {
+      const fc = folderConvs(x.e.folder);
+      if (fc !== x.fc) again(x, folderActivity((x.fc = fc)));
+    }
+  }
+  for (const id of ids) for (const x of o.under.get(id) ?? []) if (x.e.kind === 'space') again(x, activityOfSpace(x.e.space.id));
+  return moved ? sortedRail([...o.items], o.under) : prev;
+}
 
 /**
  * Top-level sidebar entries in display order: pinned, then what you arranged, then the rest (folders, then by activity).
  * Communities are listed by default; a conversation only once you add it. Whatever sits in a folder lives there instead.
  */
 export function railEntries(which: 'shown' | 'hidden' = 'shown'): RailEntry[] {
-  return memo('rail:' + which, () => {
-    // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
-    const railed = metaMemo('railed', () => {
-      const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
-      return { inFolder, convs: [...db.conversations.values()].filter((c) => visibleConv(c) && !inFolder.has(`conversation:${c.id}`) && placePref('conversation', c.id).railed).map((c) => c.id) };
-    });
-    const entries: RailEntry[] = [
+  return placesMemo(
+    'rail',
+    which,
+    () => {
+      // Conversations you added to the rail and not to a folder: by id, since what is where moves only with settings.
+      const railed = metaMemo('railed', '', () => {
+        const inFolder = new Set(db.folders.flatMap((f) => f.items.map((i) => `${i.kind}:${i.id}`)));
+        // Whether you added it first: most conversations have no place settings, and `placePref` makes them some.
+        return { inFolder, convs: [...db.conversations.values()].filter((c) => db.placePrefs.get(`conversation:${c.id}`)?.railed && visibleConv(c) && !inFolder.has(`conversation:${c.id}`)).map((c) => c.id) };
+      });
+      const items: RailItem[] = [];
+      const add = (e: RailEntry, group: number, base: number) => {
+        const pref = placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1));
+        // Each entry's place and activity once, not in every comparison of the sort.
+        if (pref.hidden !== (which === 'hidden')) return;
+        if (e.kind !== 'folder') items.push({ e, pref, act: placeActivity(e), group, base });
+        else {
+          const fc = folderConvs(e.folder);
+          items.push({ e, pref, act: folderActivity(fc), group, base, fc });
+        }
+      };
       // A folder inside a folder is drawn there, not at the top.
-      ...db.folders.filter((folder) => !railed.inFolder.has(`folder:${folder.id}`)).map((folder): RailEntry => ({ key: `folder:${folder.id}`, kind: 'folder', folder })),
-      ...allCommunities()
-        .filter((s) => !railed.inFolder.has(`space:${s.id}`))
-        .map((space): RailEntry => ({ key: `space:${space.id}`, kind: 'space', space })),
-      ...railed.convs.flatMap((id): RailEntry[] => {
+      db.folders.forEach((folder, i) => !railed.inFolder.has(`folder:${folder.id}`) && add({ key: `folder:${folder.id}`, kind: 'folder', folder }, 0, i));
+      topCommunities().forEach((space, i) => !railed.inFolder.has(`space:${space.id}`) && add({ key: `space:${space.id}`, kind: 'space', space }, 1, i));
+      railed.convs.forEach((id, i) => {
         const conv = db.conversations.get(id);
-        return conv ? [{ key: `conversation:${id}`, kind: 'conversation', conv }] : [];
-      }),
-    ];
-    // Each entry's place and activity once, not in every comparison of the sort.
-    const all = entries.map((e) => ({ e, pref: placePref(e.kind, e.key.slice(e.key.indexOf(':') + 1)), act: placeActivity(e) }));
-    return all
-      .filter((x) => x.pref.hidden === (which === 'hidden'))
-      .sort((a, b) => {
-        const pa = a.pref, pb = b.pref;
-        if (pa.pinned !== pb.pinned) return pa.pinned ? -1 : 1;
-        if ((pa.position === null) !== (pb.position === null)) return pa.position !== null ? -1 : 1;
-        if (pa.position !== null && pb.position !== null) return pa.position - pb.position;
-        if ((a.e.kind === 'folder') !== (b.e.kind === 'folder')) return a.e.kind === 'folder' ? -1 : 1;
-        return b.act - a.act;
-      })
-      .map((x) => x.e);
-  });
+        if (conv) add({ key: `conversation:${id}`, kind: 'conversation', conv }, 2, i);
+      });
+      return sortedRail(items, null);
+    },
+    railUpdate,
+  );
 }
 
+/** Communities not inside another one you can see, as they are listed. */
+const topCommunities = () =>
+  metaMemo('communities', '', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
 
 export function allCommunities(): P.SpaceView[] {
-  return memo('allCommunities', () => {
-    const top = metaMemo('communities', () => [...db.spaces.values()].filter((s) => s.kind === 'community' && visibleSpace(s) && !spaceParents(s.id).some((p) => p.kind === 'community' && visibleSpace(p))));
+  return placesMemo('allCommunities', '', () => {
+    const top = topCommunities();
     const act = new Map(top.map((s) => [s.id, activityOfSpace(s.id)]));
     return [...top].sort((a, b) => act.get(b.id)! - act.get(a.id)!);
   });
@@ -433,19 +827,43 @@ export function allCommunities(): P.SpaceView[] {
 
 /** Every conversation under a space, through sections, subspaces and threads. */
 export function convsUnder(id: string): P.ConversationView[] {
-  return memo('under:' + id, () => {
-    const out: P.ConversationView[] = [];
-    for (const cid of idsUnder(id)) {
-      const c = db.conversations.get(cid);
-      if (c) out.push(c);
+  return placesMemo(
+    'under',
+    id,
+    () => {
+      const out: P.ConversationView[] = [];
+      for (const cid of idsUnder(id)) {
+        const c = db.conversations.get(cid);
+        if (c) out.push(c);
+      }
+      return out;
+    },
+    keepUnlessUnder(id),
+  );
+}
+
+/** An update that keeps what was worked out from a space's conversations unless one of them changed. */
+const keepUnlessUnder = (id: string) => keepUnless(() => idsUnder(id));
+
+/**
+ * A space's channels, not the threads and topics under them (every Zulip topic is a conversation of its own), latest
+ * first by their newest message there or in a thread of theirs: a Zulip channel takes no messages itself.
+ */
+export function channelsUnder(id: string): P.ConversationView[] {
+  return placesMemo('chans', id, () => {
+    const under = convsUnder(id);
+    const latest = new Map<string, number>();
+    for (const c of under) {
+      const k = c.shape === 'thread' && c.parentId ? c.parentId : c.id;
+      latest.set(k, Math.max(latest.get(k) ?? 0, c.lastMessageAt ?? 0));
     }
-    return out;
-  });
+    return under.filter((c) => c.shape === 'channel').sort((a, b) => latest.get(b.id)! - latest.get(a.id)!);
+  }, keepUnlessUnder(id));
 }
 
 /** Their ids: the walk is done again only when what is where may have changed. */
-function idsUnder(id: string): string[] {
-  return metaMemo('under:' + id, () => {
+function idsUnder(id: string): ReadonlySet<string> {
+  return metaMemo('under', id, () => {
     const out = new Set<string>();
     const seen = new Set<string>();
     const walk = (sid: string) => {
@@ -466,12 +884,21 @@ function idsUnder(id: string): string[] {
       }
     };
     walk(id);
-    return [...out];
+    return out;
   });
 }
 
 export function activityOfSpace(id: string): number {
-  return memo('act:' + id, () => Math.max(0, ...convsUnder(id).map((c) => c.lastMessageAt ?? 0)));
+  return placesMemo(
+    'act',
+    id,
+    () => {
+      let max = 0;
+      for (const c of convsUnder(id)) if ((c.lastMessageAt ?? 0) > max) max = c.lastMessageAt!;
+      return max;
+    },
+    keepUnlessUnder(id),
+  );
 }
 
 // ------------------------------------------------------------------ categories
@@ -494,10 +921,22 @@ export type Level = Exclude<P.NotifyLevel, 'smart'>;
 const rank = (l: Level) => ({ none: 0, digest: 1, mentions: 2, all: 3 })[l];
 
 /** Your rules that still mean something. */
-export const liveRules = () => memo('liveRules', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'));
-const ruleMap = () => memo('rules', () => new Map(liveRules().map((r) => [`${r.scope}:${r.target ?? ''}`, r.level])));
+export const liveRules = () => placesMemo('liveRules', '', () => db.rules.filter((r): r is P.RuleView & { level: Level } => r.level !== 'smart'), keep);
+/** Your rules by scope, then by target ('' for none): no string made for each look (effectiveLevel looks up several). */
+const ruleMap = () =>
+  placesMemo(
+    'rules',
+    '',
+    () => {
+      const m = new Map<string, Map<string, Level>>();
+      // Of two rules on one place, the later holds (as a Map made from them in order).
+      for (const r of liveRules()) entries(m, r.scope).set(r.target ?? '', r.level);
+      return m;
+    },
+    keep,
+  );
 /** The rule set on this very place, person or keyword; null with none. */
-export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(`${scope}:${target ?? ''}`) ?? null;
+export const ruleOn = (scope: P.NotifyScope, target: string | null): Level | null => ruleMap().get(scope)?.get(target ?? '') ?? null;
 
 interface Effective {
   /**
@@ -515,9 +954,9 @@ interface Effective {
 
 export function effectiveLevel(c: P.ConversationView): Effective {
   // From rules, places and native mutes, all of which move metaRev: not worked out again for a message or a read.
-  return metaMemo('lvl:' + c.id, () => {
+  return metaMemo('lvl', c.id, () => {
     const rules = ruleMap();
-    const hit = (scope: string, target: string | null) => rules.get(`${scope}:${target ?? ''}`);
+    const hit = (scope: string, target: string | null) => rules.get(scope)?.get(target ?? '');
     const set = (level: Level, source: string, explicit: boolean, scope: Effective['scope']): Effective => ({ level, rule: level, source, explicit, scope });
     let l: Level | undefined;
     if ((l = hit('conversation', c.id))) return set(l, 'this conversation', true, 'conversation');
@@ -565,7 +1004,7 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
   const now = Date.now();
   const at = (m: P.NativeMute | null | undefined) => {
     if (m?.until !== undefined && m.until > now) expires = Math.min(expires, m.until);
-    return !m || (m.until !== undefined && m.until <= now) ? null : m.until !== undefined ? 'none' : (m.level ?? null);
+    return !m || (m.until !== undefined && m.until <= now) ? null : mutedNow(m, now) ? 'none' : (m.level ?? null);
   };
   for (const m of [c.nativeMute, parent?.nativeMute]) {
     const lv = at(m);
@@ -589,12 +1028,15 @@ function nativeLevel(c: P.ConversationView, parent?: P.ConversationView): 'all' 
 
 function nativeMuteLevel(c: P.ConversationView, parent?: P.ConversationView): Level | null {
   const now = Date.now();
-  const mutes: (P.NativeMute | null)[] = [c.nativeMute, parent?.nativeMute ?? null, ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
+  // A thread's own setting is its answer over its channel's (a Zulip topic unmuted in a muted channel), as in nativeLevel.
+  const own = c.nativeMute;
+  const says = !!own && (mutedNow(own, now) || (own.level !== undefined && !(own.until !== undefined && own.until <= now)));
+  const mutes: (P.NativeMute | null)[] = [own, says ? null : (parent?.nativeMute ?? null), ...(parent ?? c).spaceIds.map((s) => db.spaces.get(s)?.nativeMute ?? null)];
   let best: Level | null = null;
   for (const m of mutes) {
     if (!m) continue;
     if (m.until && m.until > now) expires = Math.min(expires, m.until);
-    const lv: Level | null = m.level === 'none' || (m.until && m.until > now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
+    const lv: Level | null = mutedNow(m, now) ? 'digest' : m.level === 'mentions' ? 'mentions' : null;
     if (lv && (!best || rank(lv) < rank(best))) best = lv;
   }
   return best;
@@ -638,27 +1080,75 @@ interface Unread {
 }
 
 export function unreadOf(c: P.ConversationView): Unread {
-  const vs = c.vantages.filter((v) => visibleAccount(v.accountId));
-  const unread = Math.max(0, ...vs.map((v) => v.unread));
-  const mentions = Math.max(0, ...vs.map((v) => v.mentions));
+  // A loop, not filter and map: this runs for every unread conversation in each count.
+  let unread = 0,
+    mentions = 0;
+  for (const v of c.vantages) {
+    if (!visibleAccount(v.accountId)) continue;
+    if (v.unread > unread) unread = v.unread;
+    if (v.mentions > mentions) mentions = v.mentions;
+  }
   const lvl = effectiveLevel(c).level;
   const muted = lvl === 'none' || lvl === 'digest';
   const loud = (c.shape === 'direct' || c.shape === 'group') && !muted;
   return { unread, mentions, badge: loud ? unread : muted && lvl === 'none' ? 0 : mentions, muted };
 }
 
+/**
+ * What these conversations count together. A thread's messages are its own, so a channel's and its threads' add up;
+ * but a forum's own count may already hold its posts' (a Discord forum's read state): of the forum and its posts here,
+ * the larger, never both (channelUnread, a space's count, a folder's).
+ */
 export function sumUnread(convs: P.ConversationView[]): Unread {
-  let unread = 0,
-    mentions = 0,
-    badge = 0;
-  for (const c of convs) {
-    // Nothing unread adds nothing, whatever its level: most conversations, and the level is the dear part.
-    if (!c.vantages.some((v) => v.unread || v.mentions)) continue;
-    const u = unreadOf(c);
-    if (u.muted && !u.badge) continue;
-    unread += u.unread;
-    mentions += u.mentions;
-    badge += u.badge;
+  const t = newTally(false);
+  for (const c of convs) tallyAdd(t, c.id, partOf(c));
+  return tallyTotal(t);
+}
+
+type Triple = [number, number, number];
+/** What one conversation adds to a sum, and the forum it adds to (its own count, or its posts'). */
+interface Part {
+  u: Unread;
+  forum: string | null;
+}
+/** A sum kept by conversation, so one conversation's change is taken out and put in again (totalUnread). */
+interface Tally {
+  sum: Triple;
+  forums: Map<string, { own: Triple; posts: Triple }>;
+  /** Each conversation's part, when kept to be taken out again. */
+  parts: Map<string, Part> | null;
+}
+const newTally = (keep: boolean): Tally => ({ sum: [0, 0, 0], forums: new Map(), parts: keep ? new Map() : null });
+
+function partOf(c: P.ConversationView): Part | null {
+  // Nothing unread adds nothing, whatever its level: most conversations, and the level is the dear part.
+  if (!c.vantages.some((v) => v.unread || v.mentions)) return null;
+  const u = unreadOf(c);
+  if (u.muted && !u.badge) return null;
+  return { u, forum: postsOnly(c) ? c.id : c.shape === 'thread' && c.parentId && postsOnly(db.conversations.get(c.parentId)) ? c.parentId : null };
+}
+
+function tallyAdd(t: Tally, id: string, p: Part | null, sign = 1) {
+  if (!p) return;
+  let into = t.sum;
+  if (p.forum) {
+    let f = t.forums.get(p.forum);
+    if (!f) t.forums.set(p.forum, (f = { own: [0, 0, 0], posts: [0, 0, 0] }));
+    into = p.forum === id ? f.own : f.posts;
+  }
+  into[0] += sign * p.u.unread;
+  into[1] += sign * p.u.mentions;
+  into[2] += sign * p.u.badge;
+  if (sign > 0) t.parts?.set(id, p);
+  else t.parts?.delete(id);
+}
+
+function tallyTotal(t: Tally): Unread {
+  let [unread, mentions, badge] = t.sum;
+  for (const { own, posts } of t.forums.values()) {
+    unread += Math.max(own[0], posts[0]);
+    mentions += Math.max(own[1], posts[1]);
+    badge += Math.max(own[2], posts[2]);
   }
   return { unread, mentions, badge, muted: false };
 }
@@ -669,14 +1159,30 @@ export function sumUnread(convs: P.ConversationView[]): Unread {
  * (docs/feed.md).
  */
 export function totalUnread(): Unread {
-  return memo('totalUnread', () => {
-    const held = heldByRequest();
-    return sumUnread([...db.conversations.values()].filter((c) => visibleConv(c) && !held.has(c.id) && !isQuietConv(c)));
-  });
+  return placesMemo('totalUnread', '',
+    () => {
+      const t = newTally(true);
+      const held = heldByRequest();
+      // Something unread first: it adds nothing otherwise, and most of the world's conversations are read.
+      for (const c of db.conversations.values()) if (c.vantages.some((v) => v.unread || v.mentions) && visibleConv(c) && !held.has(c.id) && !isQuietConv(c)) tallyAdd(t, c.id, partOf(c));
+      return { t, total: tallyTotal(t) };
+    },
+    // A message or a read: that conversation's part out, and in again as it is now.
+    (prev, ids) => {
+      const { t } = prev;
+      const held = heldByRequest();
+      for (const id of ids) {
+        tallyAdd(t, id, t.parts!.get(id) ?? null, -1);
+        const c = db.conversations.get(id);
+        if (c && visibleConv(c) && !held.has(c.id) && !isQuietConv(c)) tallyAdd(t, id, partOf(c));
+      }
+      return { t, total: tallyTotal(t) };
+    },
+  ).total;
 }
 
 export function spaceUnread(id: string): Unread {
-  return memo('su:' + id, () => sumUnread(convsUnder(id)));
+  return placesMemo('su', id, () => sumUnread(convsUnder(id)), keepUnlessUnder(id));
 }
 
 /** The folder a folder sits in, if it is inside one. */
@@ -690,35 +1196,74 @@ export function folderLeaves(f: P.FolderView): P.FolderView['items'] {
 }
 
 export function folderConvs(f: P.FolderView): P.ConversationView[] {
-  return memo('fc:' + f.id, () => {
+  return placesMemo('fc', f.id, () => {
     const out = new Map<string, P.ConversationView>();
     for (const it of folderLeaves(f)) {
       if (it.kind === 'space') for (const c of convsUnder(it.id)) out.set(c.id, c);
       else if (it.kind === 'conversation') {
         const c = db.conversations.get(it.id);
         if (c && visibleConv(c)) out.set(c.id, c);
+        // A channel with its threads, as under a server: its row's count is theirs too (channelUnread).
+        if (c && visibleConv(c))
+          for (const id of db.threads.get(c.id) ?? []) {
+            const t = db.conversations.get(id);
+            if (t && visibleConv(t)) out.set(t.id, t);
+          }
       } else for (const c of directsOf(it.id)) out.set(c.id, c);
     }
     return [...out.values()];
-  });
+  }, (prev, ids) => (touches(ids, idSet(prev)) ? undefined : prev));
+}
+
+const idSets = new WeakMap<readonly P.ConversationView[], ReadonlySet<string>>();
+/** The ids of a list of conversations, once per list. */
+function idSet(convs: readonly P.ConversationView[]): ReadonlySet<string> {
+  let s = idSets.get(convs);
+  if (!s) idSets.set(convs, (s = new Set(convs.map((c) => c.id))));
+  return s;
 }
 
 // ------------------------------------------------------------------ people, groups
 
 /** One pass over the conversations, not one per person: `people()` asks for every person on each `rev`. */
 function directsByPerson(): Map<string, P.ConversationView[]> {
-  return memo('directsByPerson', () => {
-    const m = new Map<string, P.ConversationView[]>();
-    for (const c of db.conversations.values()) {
-      if (c.shape !== 'direct' || !c.peerPersonId || !visibleConv(c)) continue;
-      const l = m.get(c.peerPersonId);
-      if (l) l.push(c);
-      else m.set(c.peerPersonId, [c]);
-    }
-    for (const l of m.values()) l.sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
-    return m;
-  });
+  return placesMemo('directsByPerson', '',
+    () => {
+      // A person's email routes are among their directs (mail/chats.ts): mail with them is part of their chat.
+      const found = routesByPerson();
+      for (const c of db.conversations.values()) {
+        if (c.shape !== 'direct' || !c.peerPersonId || !visibleConv(c)) continue;
+        const l = found.get(c.peerPersonId);
+        if (l) l.push(c);
+        else found.set(c.peerPersonId, [c]);
+      }
+      const sorted = new Map<string, P.ConversationView[]>();
+      for (const [p, l] of found) sorted.set(p, latestFirst(l));
+      return { found, sorted, mail: mailDataVersion() };
+    },
+    // A message or a read in a direct chat: that person's list, as found, with its new copy in the old one's place.
+    (prev, ids) => {
+      if (prev.mail !== mailDataVersion()) return undefined;
+      let next: typeof prev | null = null;
+      for (const id of ids) {
+        const c = db.conversations.get(id);
+        if (c?.shape !== 'direct' || !c.peerPersonId || !visibleConv(c)) continue;
+        next ??= { found: new Map(prev.found), sorted: new Map(prev.sorted), mail: prev.mail };
+        const l = next.found.get(c.peerPersonId);
+        const at = l ? l.findIndex((x) => x.id === id) : -1;
+        if (!l || at < 0) return undefined;
+        const put = [...l];
+        put[at] = c;
+        next.found.set(c.peerPersonId, put);
+        next.sorted.set(c.peerPersonId, latestFirst(put));
+      }
+      return next ?? prev;
+    },
+  ).sorted;
 }
+
+/** Latest first; a tie in the order found (a stable sort), as the first time. */
+const latestFirst = (l: P.ConversationView[]) => [...l].sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0));
 
 const none: P.ConversationView[] = [];
 export function directsOf(personId: string): P.ConversationView[] {
@@ -728,7 +1273,7 @@ export function directsOf(personId: string): P.ConversationView[] {
 export function people(): { person: P.PersonView; directs: P.ConversationView[]; last: number }[] {
   // An open message request waits under Requests, not among the people you talk with.
   const held = heldByRequest();
-  return memo('people', () =>
+  return placesMemo('people', '', () =>
     [...db.persons.values()]
       .filter((p) => !p.isSelf)
       .map((person) => {
@@ -737,6 +1282,11 @@ export function people(): { person: P.PersonView; directs: P.ConversationView[];
       })
       .filter((x) => x.directs.length)
       .sort((a, b) => b.last - a.last),
+    // Only a direct chat's message or read moves anyone's.
+    (prev, ids) => {
+      for (const id of ids) if (db.conversations.get(id)?.shape === 'direct') return undefined;
+      return prev;
+    },
   );
 }
 
@@ -788,16 +1338,22 @@ export interface ConvInboxRow extends InboxScore {
    * newest first, and the person. Its key is `person:<id>`.
    */
   chat?: { person: P.PersonView; routes: P.ConversationView[] };
+  /**
+   * A channel's threads as one row (docs/inbox.md "One row per channel", channelrows.ts): the channel (`conv` too, what
+   * a click opens), every conversation of the row (its threads in the inbox, and the channel where it had a row of its
+   * own), newest first, the threads alone, and the part whose message the row shows. Its key is `channel:<id>`.
+   */
+  channel?: { parent: P.ConversationView; parts: P.ConversationView[]; threads: P.ConversationView[]; latest: P.ConversationView; last: number };
 }
 export interface MailInboxRow extends InboxScore {
   kind: 'mail';
   thread: P.MailThreadView;
 }
 
-/** A conversation row's conversations: its one, or every route of a chat. */
-const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? [r.conv];
-/** The latest message of a row, anyone's. */
-export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
+/** A conversation row's conversations: its one, every route of a chat, or a channel's and its threads'. */
+export const rowConvs = (r: ConvInboxRow) => r.chat?.routes ?? r.channel?.parts ?? [r.conv];
+/** The latest message of a row, anyone's (a channel's row: of its threads that are not muted, while there are some). */
+export const rowLast = (r: InboxRow) => (r.kind === 'conv' ? (r.channel?.last ?? r.conv.lastMessageAt ?? 0) : r.thread.lastAt);
 /** One other person: a DM, or a mail thread between you and one other. */
 export const rowDirect = (r: InboxRow) => (r.kind === 'conv' ? r.conv.shape === 'direct' : r.thread.participants <= 2);
 /** Muted here or on its network: below everything else. Notes to self notify nobody, which is not the same. */
@@ -832,35 +1388,126 @@ export function heldByRequest(): Set<string> {
 export function chatPersonOf(c: P.ConversationView | null | undefined): P.PersonView | null {
   if (c?.shape !== 'direct' || !c.peerPersonId) return null;
   const p = db.persons.get(c.peerPersonId);
-  return p && !p.isSelf && directsOf(p.id).length > 1 ? p : null;
+  if (!p || p.isSelf) return null;
+  const ds = directsOf(p.id);
+  // Mail with them makes theirs a chat even alone: its subjects and what they wrote elsewhere are the chat's.
+  return ds.length > 1 || ds.some((d) => d.network === 'email') ? p : null;
 }
 
-/** A conversation's row in the inbox: its own id, or `person:<id>` for a route of a chat of several. */
+/**
+ * The channel whose inbox row a thread folds into (docs/inbox.md "One row per channel"): its parent, a Zulip channel,
+ * a Discord channel or forum, a Matrix room. Null for anything else, for a thread whose parent this page does not hold
+ * (it keeps a row of its own), and for a thread of a DM (a DM's row is the person's).
+ */
+function threadParentOf(c: P.ConversationView | null | undefined): P.ConversationView | null {
+  if (c?.shape !== 'thread' || !c.parentId) return null;
+  const parent = db.conversations.get(c.parentId);
+  return parent && hasThreads(parent) ? parent : null;
+}
+
+/**
+ * A place whose inbox row is a channel's row (`channel:<id>`), whether or not a thread of it is listed now: one with
+ * threads, not a DM. So its key holds while its threads are read or come unread, and the hold on the open row with it.
+ */
+const hasThreads = (c: P.ConversationView) => c.shape !== 'direct' && c.shape !== 'thread' && !!db.threads.get(c.id)?.length;
+
+/**
+ * A channel's threads with something unread (or a mention), whether or not the hub lists them: what its inbox row
+ * counts and opens on (docs/inbox.md "One row per channel"). Unsorted; a busy Zulip channel has a thousand topics, so
+ * this is one pass, once per change.
+ */
+export function unreadThreadsOf(channelId: string): P.ConversationView[] {
+  return memo('ut', channelId, () => {
+    const out: P.ConversationView[] = [];
+    for (const id of db.threads.get(channelId) ?? []) {
+      const t = db.conversations.get(id);
+      if (t && t.vantages.some((v) => v.unread || v.mentions) && visibleConv(t)) out.push(t);
+    }
+    return out;
+  });
+}
+
+/**
+ * A conversation's row in the inbox: its own id, `person:<id>` for a route of a chat of several, or `channel:<id>` for
+ * a thread and for a place with threads.
+ */
 export function inboxKeyOf(convId: string): string {
-  const p = chatPersonOf(db.conversations.get(convId));
+  const c = db.conversations.get(convId);
+  const parent = threadParentOf(c);
+  if (parent) return channelKey(parent.id);
+  if (c && hasThreads(c)) return channelKey(c.id);
+  const p = chatPersonOf(c);
   return p ? chatKey(p.id) : convId;
 }
 
+type BaseRow = ConvInboxRow & { last: number; unread: number; badge: number; muted: boolean };
+
+/** A conversation's own row before grouping, or null where it has none. */
+function baseRow(c: P.ConversationView, held: Set<string>): BaseRow | null {
+  const a = db.attention.get(c.id);
+  // A network's notifications are the Feed page's Activity (docs/feed.md "The Feed page"); logged posts none.
+  if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || isQuietConv(c)) return null;
+  const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
+  if (!row.needs && c.shape !== 'self' && db.placePrefs.get(`conversation:${c.id}`)?.hidden) return null;
+  const u = unreadOf(c);
+  return { ...row, last: c.lastMessageAt ?? 0, unread: u.unread, badge: u.badge, muted: u.muted };
+}
+
 function convRows(): ConvInboxRow[] {
-  return memo('inboxConvRows', () => {
-    const rows: (ConvInboxRow & { last: number; unread: number; muted: boolean })[] = [];
-    const held = heldByRequest();
-    for (const c of db.conversations.values()) {
-      const a = db.attention.get(c.id);
-      // A network's notifications are the Feed page's Activity (docs/feed.md "The Feed page"); logged posts none.
-      if ((!a && !inboxShape(c)) || !visibleConv(c) || held.has(c.id) || isQuietConv(c)) continue;
-      const row: ConvInboxRow = a ? { kind: 'conv', key: c.id, conv: c, score: a.score, needs: a.needs, reasons: a.reasons, owedSince: a.owedSince } : unscored(c);
-      if (!row.needs && c.shape !== 'self' && placePref('conversation', c.id).hidden) continue;
-      const u = unreadOf(c);
-      rows.push({ ...row, last: c.lastMessageAt ?? 0, unread: u.unread, muted: u.muted });
-    }
-    // A person's routes as one row: ranked, kept and drawn as one (chatroutes.ts).
-    const g = groupChats(rows, (r) => chatPersonOf(r.conv)?.id ?? null);
-    const out: ConvInboxRow[] = g.rows;
-    for (const ch of g.chats)
-      out.push({ kind: 'conv', key: ch.key, conv: ch.latest.conv, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, chat: { person: db.persons.get(ch.personId)!, routes: ch.parts.map((r) => r.conv) } });
-    return out;
-  });
+  return placesMemo('inboxConvRows', '',
+    () => {
+      const base = new Map<string, BaseRow>();
+      const held = heldByRequest();
+      for (const c of db.conversations.values()) {
+        const row = baseRow(c, held);
+        if (row) base.set(c.id, row);
+      }
+      return { base, out: groupRows([...base.values()]) };
+    },
+    // A message, a read or a new score: those conversations' rows made again in their places, and the rows not yet
+    // scored by the hub, whose order moves with the time. One that comes into the inbox or leaves it: all again, as
+    // its place among the rest is the conversations' order.
+    (prev, ids) => {
+      const held = heldByRequest();
+      const base = new Map(prev.base);
+      for (const id of ids) {
+        const c = db.conversations.get(id);
+        const row = c ? baseRow(c, held) : null;
+        if (!row !== !base.has(id)) return undefined;
+        if (row) base.set(id, row);
+      }
+      for (const [id, row] of base) {
+        if (db.attention.has(id) || ids.has(id)) continue;
+        const again = baseRow(row.conv, held);
+        if (!again) return undefined;
+        base.set(id, again);
+      }
+      return { base, out: groupRows([...base.values()]) };
+    },
+  ).out;
+}
+
+/** Rows grouped: a person's routes as one, a channel's threads as one. */
+function groupRows(rows: BaseRow[]): ConvInboxRow[] {
+  // A person's routes as one row: ranked, kept and drawn as one (chatroutes.ts).
+  const g = groupChats(rows, (r) => chatPersonOf(r.conv)?.id ?? null);
+  // A channel's threads as one row, with the channel's own where it has one (channelrows.ts).
+  const f = groupChannels(
+    g.rows,
+    (r) => threadParentOf(r.conv)?.id ?? null,
+    (r) => r.conv.id,
+    (r) => hasThreads(r.conv),
+  );
+  const out: ConvInboxRow[] = f.rows;
+  for (const ch of g.chats)
+    out.push({ kind: 'conv', key: ch.key, conv: ch.latest.conv, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, chat: { person: db.persons.get(ch.personId)!, routes: ch.parts.map((r) => r.conv) } });
+  for (const ch of f.channels) {
+    const parent = db.conversations.get(ch.channelId)!;
+    const parts = ch.parts.map((r) => r.conv);
+    const channel = { parent, parts, threads: parts.filter((c) => c !== parent), latest: ch.latest.conv, last: ch.last };
+    out.push({ kind: 'conv', key: ch.key, conv: parent, score: ch.score, needs: ch.needs, reasons: ch.reasons, owedSince: ch.owedSince, channel });
+  }
+  return out;
 }
 
 /** Mail threads the hub lists in the inbox (`AttentionView.kind` 'mail'), with the thread the page holds. */
@@ -878,9 +1525,67 @@ export function inboxRows(): InboxRow[] {
     const rows = mailRows();
     let scored = 0;
     for (const a of db.attention.values()) if (a.kind === 'mail') scored++;
-    mailMemo = { data, mail, rows: [...convs, ...rows], waiting: scored > rows.length };
+    mailMemo = { data, mail, rows: foldMailIntoChats(convs, rows), waiting: scored > rows.length };
   }
   return mailMemo.rows;
+}
+
+/**
+ * Mail as chats (docs/mail.md "Mail as chats"): a thread between you and one person is part of their chat, so its row
+ * is theirs. It joins the person's row (ranked by the best of the two, needing you if either does), or, where they
+ * have none yet, becomes the row of its email route. A thread with others stays a row of its own, which opens as a
+ * chat of its own.
+ */
+function foldMailIntoChats(convs: InboxRow[], mails: MailInboxRow[]): InboxRow[] {
+  const out = [...convs];
+  const byPerson = new Map<string, number>();
+  out.forEach((r, i) => {
+    if (r.kind !== 'conv') return;
+    const pid = r.chat?.person.id ?? (r.conv.shape === 'direct' ? r.conv.peerPersonId : null);
+    if (pid) byPerson.set(pid, i);
+  });
+  for (const m of mails) {
+    const route = personRouteOf(m.thread);
+    if (!route) {
+      out.push(m);
+      continue;
+    }
+    const pid = route.peerPersonId!;
+    const at = byPerson.get(pid);
+    const person = db.persons.get(pid);
+    if (at === undefined) {
+      byPerson.set(pid, out.length);
+      out.push({ kind: 'conv', key: chatKey(pid), conv: route, score: m.score, needs: m.needs, reasons: m.reasons, owedSince: m.owedSince, ...(person ? { chat: { person, routes: [route] } } : {}) });
+      continue;
+    }
+    const r = out[at] as ConvInboxRow;
+    const routes = r.chat?.routes ?? [r.conv];
+    const later = (m.thread.lastAt ?? 0) > (r.conv.lastMessageAt ?? 0);
+    out[at] = {
+      ...r,
+      key: chatKey(pid),
+      conv: later ? route : r.conv,
+      score: Math.max(r.score, m.score),
+      needs: r.needs || m.needs,
+      reasons: [...new Set([...r.reasons, ...m.reasons])],
+      owedSince: r.owedSince === null ? m.owedSince : m.owedSince === null ? r.owedSince : Math.min(r.owedSince, m.owedSince),
+      chat: { person: r.chat?.person ?? person!, routes: routes.includes(route) ? routes : later ? [route, ...routes] : [...routes, route] },
+    };
+  }
+  return out;
+}
+
+/** The email route a mail thread is part of, when it is between you and one person (the hub's place for it). */
+export function personRouteOf(t: P.MailThreadView): P.ConversationView | null {
+  if (t.class === 'bulk' || t.personIds.length !== 1 || t.participants > 2) return null;
+  const pid = t.personIds[0];
+  if (!db.persons.has(pid)) return null;
+  const theirs = t.from.find((f) => !f.self && f.personId === pid)?.email.toLowerCase();
+  for (const c of directsOf(pid)) {
+    if (c.network !== 'email' || c.vantages[0]?.accountId !== t.accountId) continue;
+    if (!theirs || c.nativeId === theirs) return c;
+  }
+  return null;
 }
 
 /**
@@ -894,7 +1599,7 @@ export function mailRowsWaiting(): boolean {
 
 /** Accounts that need you to act (a QR to scan, a login): the rows above the conversations. */
 export function accountsNeedingYou(): P.AccountView[] {
-  return memo('accountsNeedingYou', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)));
+  return placesMemo('accountsNeedingYou', '', () => [...db.accounts.values()].filter((a) => a.attention && visibleAccount(a.id)), keep);
 }
 
 /** A triaged message you have not read: its conversation has unread messages, and you last read it before this one. */
@@ -914,7 +1619,7 @@ export const boardUnread = (m: BoardItem) => (isMailItem(m) ? mailUnread(m) : me
 
 /** How it sorts' lists and counts (board.ts), for what is shown here: chat's messages and mail's. */
 export function board(): Board {
-  return memo('board', () =>
+  return memo('board', '', () =>
     triageBoard<BoardItem>([...inbox.value, ...mailTriage.value], {
       now: Date.now(),
       shown: (m) => {
@@ -940,5 +1645,8 @@ export function deepLink(c: P.ConversationView): string | null {
     return `https://discord.com/channels/${guild?.nativeId ?? '@me'}/${c.nativeId}`;
   }
   if (c.network === 'matrix') return `https://matrix.to/#/${encodeURIComponent(base.nativeId.split('|')[0])}`;
+  if (c.network === 'zulip') return zulipLink(c);
+  // A Partiful event's conversation is on its event's page (Luma's address is a slug the id does not give).
+  if (c.network === 'partiful' && c.nativeId.startsWith('event:')) return `https://partiful.com/e/${encodeURIComponent(c.nativeId.slice(6))}`;
   return null;
 }

@@ -510,7 +510,7 @@ so `SYNC_VERSION` stays.
 | `GET /api/mail/img/:token` | a proxied remote image |
 | `POST /api/mail/flag` | `{ threadIds? , messageIds?, seen?, flagged? }` |
 | `POST /api/mail/move` | `{ threadIds, to: mailboxId \| 'archive' \| 'inbox' \| 'junk' \| 'trash' }` |
-| `POST /api/mail/images` | `{ messageId } \| { sender, allow }` |
+| `POST /api/mail/images` | `{ messageId, pictures?, trackers? } \| { sender, allow \| forget }` |
 | `PUT /api/mail/senders/:address` | `{ override?, images? }` |
 | `POST /api/mail/send` | `{ clientId, accountId, kind: 'new'\|'reply'\|'replyAll'\|'forward', replyTo?, to, cc, bcc, subject, text, quote: boolean, uploads: string[], forwardParts?: {messageId, attachmentId}[] }` → `{ ok, outboxId }` |
 | `DELETE /api/mail/outbox/:id` | undo while held |

@@ -25,12 +25,12 @@ export function markUnreadFrom(store: Store, link: Link, messageId: string): { c
   for (const v of vs) {
     const c = db
       .query(
-        `SELECT COUNT(*) AS unread, COALESCE(SUM(m.mentions_self), 0) AS mentions FROM message m
+        `SELECT COUNT(*) AS unread, COALESCE(SUM(m.mentions_self), 0) AS mentions, COALESCE(SUM(m.mentions_self * m.mentions_all), 0) AS wildcards FROM message m
          JOIN message_seen s ON s.message_id = m.id AND s.account_id = ?
          WHERE m.conversation_id = ? AND m.ts > ? AND m.deleted = 0 AND (m.author_id IS NULL OR m.author_id != ?)`,
       )
       .get(v.account_id, m.conversation_id, upTo, v.self_identity ?? '') as Row;
-    db.query(`UPDATE vantage SET last_read_ts = ?, unread = ?, mentions = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).run(upTo, c.unread, c.mentions, v.account_id, m.conversation_id);
+    db.query(`UPDATE vantage SET last_read_ts = ?, unread = ?, mentions = ?, wildcards = ? WHERE account_id = ? AND target_kind = 'conversation' AND target_id = ?`).run(upTo, c.unread, c.mentions, c.wildcards, v.account_id, m.conversation_id);
   }
   store.dirty.conversations.add(m.conversation_id);
   const conv = store.nativeOf('conversation', m.conversation_id);

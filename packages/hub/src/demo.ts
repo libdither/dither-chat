@@ -22,6 +22,9 @@ import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DemoStage, demoStageSeed } from './demostage.ts';
 import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
+import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
+import { DEMO_CLOCKS_ACCOUNT, DemoClocks, demoClocksOn } from './demo-clocks.ts';
+import { DEMO_ZULIP_ACCOUNT, DemoZulip, demoZulipOn } from './demo-zulip.ts';
 import { fillMailbox, GMAIL, type FakeInput, type FakeMailBackend } from './mail/fake.ts';
 import { demoFileBytes, seedHtmlMail } from './mail/demo-html.ts';
 import { DEMO_SERVER_CAPS, DemoServers } from './demoservers.ts';
@@ -48,6 +51,8 @@ const MULTI_ACCOUNT = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includ
 const SERVERS = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('servers');
 /** DITHER_DEMO_SCENARIO=crowd adds about 120 people, eight servers and eleven groups, with pairs for Same person? to find (demo-crowd.ts). */
 const CROWD = (process.env.DITHER_DEMO_SCENARIO ?? '').split(',').includes('crowd');
+// DITHER_DEMO_SCENARIO=zulip adds a made-up Zulip organization, its channels as forums of topics (demo-zulip.ts, demoZulipOn).
+// DITHER_DEMO_SCENARIO=clocks adds a group of friends abroad, six weeks of messages on their own hours (demo-clocks.ts).
 const named = (plain: string, username: string) => (MULTI_ACCOUNT || SERVERS ? username : plain);
 
 const DEMO_ACCOUNTS: { key: AccKey; id: string; network: P.Network; label: string; color: string }[] = [
@@ -386,6 +391,8 @@ const DEMO_FILES: Record<string, { mime: string; bytes: Uint8Array }> = {
   'demo:dither-sim-0.4.zip': { mime: 'application/zip', bytes: SIM_ZIP },
   'demo:bench-483.json': { mime: 'application/octet-stream', bytes: text(BENCH) },
   'demo:rent-split.xlsx': { mime: 'application/octet-stream', bytes: RENT_XLSX },
+  // An invented clip (ffmpeg's test pattern and a beeping tone, 10 s, 480×270), for the video player (docs/media-kinds.md).
+  'demo:bouldering.webm': { mime: 'video/webm', bytes: new Uint8Array(readFileSync(join(import.meta.dir, 'demo-clip.webm'))) },
 };
 /** A demo file as an attachment. */
 const file = (key: string, name: string): P.AttachmentFact => ({ kind: 'file', mime: DEMO_FILES[key].mime, name, size: DEMO_FILES[key].bytes.length, url: key });
@@ -986,7 +993,7 @@ const CONVS: DemoConv[] = [
   {
     acc: ['wa'],
     fact: { nativeId: W.alice.nativeId, shape: 'direct', participants: [W.self.nativeId, W.alice.nativeId], encrypted: true },
-    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it']],
+    msgs: [[6 * H, W.alice, 'sent you the bouldering video on whatsapp, signal kept compressing it', { att: [{ kind: 'video', mime: 'video/webm', name: 'bouldering.webm', size: DEMO_FILES['demo:bouldering.webm'].bytes.length, width: 480, height: 270, url: 'demo:bouldering.webm' }] }]],
     unread: 1,
   },
   {
@@ -2573,6 +2580,8 @@ class DemoAdapter implements InprocAdapter {
     }
     if (firstRun) this.seedHistory(ago);
     if (firstRun) this.seedHeardReactions();
+    if (firstRun) this.seedVoice(ago);
+    this.seedPresence(ago);
     if (firstRun) writeFileSync(marker, String(Date.now()));
     if (this.network === 'discord') this.startThreads();
     scheduleChatter();
@@ -2737,6 +2746,55 @@ class DemoAdapter implements InprocAdapter {
     this.emit({ t: 'reaction', ...at, author: D.ravi.nativeId });
   }
 
+  /**
+   * Evenings in the hangout voice channel over the past three weeks (kept only with the adversarial voice setting), for
+   * a profile's Voice and Close to cards and the graph's voice ties (docs/profile.md "Voice"): Lev and Mara most nights,
+   * Owl for a while, Pixelfox now and then, you twice; Lev and Mara are in it now.
+   */
+  private seedVoice(ago: (min: number) => number) {
+    if (this.key !== 'dmain') return;
+    const DAY = 24 * 60;
+    // [who, minutes ago it starts, minutes ago it ends (0: still in it)]
+    const stretches: [P.IdentityFact, number, number][] = [];
+    for (const d of [20, 17, 13, 10, 6, 3, 1]) {
+      const at = d * DAY + 180;
+      stretches.push([D.lev, at, at - 120], [D.mara, at - 5, at - 118]);
+      if (d % 2) stretches.push([D.owl, at - 30, at - 70]);
+      if (d === 10 || d === 6) stretches.push([D.pixelfox, at - 20, at - 75]);
+      if (d === 13 || d === 3) stretches.push([this.self, at - 40, at - 100]);
+    }
+    stretches.push([D.lev, 25, 0], [D.mara, 22, 0]);
+    const times = [...new Set(stretches.flatMap(([, a, b]) => [a, b]).filter((t) => t > 0))].sort((x, y) => y - x);
+    for (const t of times)
+      this.emit({ t: 'voice', conversation: ch('dither-hangout'), space: g.dither, members: stretches.filter(([, a, b]) => a >= t && b < t).map(([w]) => ({ who: w.nativeId })), ts: ago(t) });
+  }
+
+  /**
+   * How people are now, for status dots (docs/profile.md "Status dots"): told at every start, as an adapter tells
+   * what it hears on connecting. Discord, Matrix and Telegram say presence; Signal and WhatsApp do not.
+   */
+  private seedPresence(ago: (min: number) => number) {
+    const now: Partial<Record<AccKey, [P.IdentityFact, 'online' | 'idle' | 'dnd' | 'offline', number, ('desktop' | 'mobile' | 'web')[]][]>> = {
+      dmain: [
+        [D.ravi, 'online', 12, ['desktop']],
+        [D.jordan, 'dnd', 40, ['mobile']],
+        [D.theo, 'idle', 25, ['desktop']],
+        [D.quinn, 'offline', 300, []],
+        [D.lev, 'online', 5, ['web']],
+      ],
+      mx: [
+        [M.kai, 'online', 8, []],
+        [M.sam, 'idle', 33, []],
+        [M.lina, 'offline', 600, []],
+      ],
+      tg: [
+        [TG.alice, 'online', 3, ['mobile']],
+        [TG.noor, 'offline', 90, []],
+      ],
+    };
+    for (const [who, state, min, devices] of now[this.key] ?? []) this.emit({ t: 'presence', who: who.nativeId, state, devices, ts: ago(min) });
+  }
+
   private seedHistory(ago: (min: number) => number) {
     if (this.key !== 'sig') return;
     const climb = CONVS.find((c) => c.fact.nativeId === sgroup('climb', '', []).nativeId)!.fact;
@@ -2752,6 +2810,9 @@ class DemoAdapter implements InprocAdapter {
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-del` });
     msg(`${climb.nativeId}~h-gone`, S.alice, 60, 'door code for the gym is 4471');
     emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-gone`, reason: 'expired' });
+    // A mention of you, taken back two minutes after it was sent.
+    msg(`${climb.nativeId}~h-ping`, S.sam, 62, `<@${this.self.nativeId}> can you bring the spare rope tonight? mine is still drying from the weekend`, { mentionsSelf: true });
+    emit({ t: 'delete', conversation: climb.nativeId, nativeId: `${climb.nativeId}~h-ping` });
     // A pin, a reaction taken back, a role, a status, and your message read.
     msg(`${climb.nativeId}~h-pin`, S.priya, 58, 'Mesa is open till 10 on Thursdays now');
     emit({ t: 'pin', conversation: climb.nativeId, message: `${climb.nativeId}~h-pin`, pinned: true, by: S.alice.nativeId, ts: ago(57) });
@@ -2776,9 +2837,14 @@ class DemoAdapter implements InprocAdapter {
     // Presence as it changed, logged only with adversarial features and presence on.
     for (const [state, min, devices] of [['online', 240, ['desktop']], ['idle', 210, ['desktop']], ['offline', 180, []], ['online', 56, ['mobile']], ['dnd', 30, ['mobile', 'desktop']]] as const)
       emit({ t: 'presence', who: S.alice.nativeId, state, devices: [...devices], ts: ago(min) });
+    // Your message, read, then edited twice, with reactions between: its history as one list (docs/history.md).
     msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 6');
     for (const [who, state, min] of [[S.alice, 'delivered', 53], [S.alice, 'read', 52], [S.priya, 'delivered', 53], [S.priya, 'read', 50]] as const)
       emit({ t: 'receipt', conversation: climb.nativeId, messages: [`${climb.nativeId}~h-mine`], who: who.nativeId, state, ts: ago(min) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-mine`, author: S.alice.nativeId, key: '🚗', ts: ago(51) });
+    msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 5:45', { editedTs: ago(49) });
+    emit({ t: 'reaction', conversation: climb.nativeId, message: `${climb.nativeId}~h-mine`, author: S.priya.nativeId, key: '🙌', ts: ago(48) });
+    msg(`${climb.nativeId}~h-mine`, S.self, 54, 'I can drive, leaving at 5:45 from the gym, room for 3', { editedTs: ago(46) });
     this.seedTexts(ago);
     this.seedActivity();
   }
@@ -3359,14 +3425,18 @@ export function demoFactory(acc: AccountRow, dir: string): InprocAdapter | null 
   if (acc.adapter !== 'demo') return null;
   if (acc.id === DEMO_X_ACCOUNT.id || acc.id === DEMO_X2_ACCOUNT.id) return new DemoX(acc, dir);
   if (DEMO_POST_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoPosts(acc, dir);
+  if (DEMO_EVENT_ACCOUNTS.some((d) => d.id === acc.id)) return new DemoEvents(acc, dir);
+  if (acc.id === DEMO_ZULIP_ACCOUNT.id) return new DemoZulip(acc, dir);
+  if (acc.id === DEMO_CLOCKS_ACCOUNT.id) return new DemoClocks(acc, dir);
   const key = DEMO_ACCOUNTS.find((d) => d.id === acc.id)?.key;
   return key ? new DemoAdapter(key, acc, dir) : null;
 }
 
 /**
- * `x: false` leaves out the X accounts and their feed (docs/feed.md), and the Mastodon, Reddit, Lemmy, Substack and Bluesky
- * ones with them: scripts/perf-world.ts's world predates them. `posts: false` (or DITHER_DEMO_POSTS=0, for the verify
- * scripts written for X alone) leaves out only those five.
+ * `x: false` leaves out the X accounts and their feed (docs/feed.md), and the Mastodon, Reddit, Lemmy, Substack, Bluesky
+ * and LessWrong ones with them: scripts/perf-world.ts's world predates them. `posts: false` (or DITHER_DEMO_POSTS=0, for
+ * the verify scripts written for X alone) leaves out only those six, and the Luma and Partiful accounts (demo-events.ts,
+ * docs/events.md) with them.
  */
 export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boolean } = {}): AccountRow[] {
   // A new world (a fresh hub, Reset demo, each test): names and settings changed in the last one start over.
@@ -3374,7 +3444,7 @@ export function createDemoAccounts(store: Store, o: { x?: boolean; posts?: boole
   for (const [c, f] of FIRST_CONVS) c.fact = f;
   for (const [x, f] of FIRST_SPACES) x.fact = f;
   const epoch = Date.now();
-  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : DEMO_POST_ACCOUNTS)].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
+  return [...DEMO_ACCOUNTS, ...(o.x === false ? [] : [DEMO_X_ACCOUNT, DEMO_X2_ACCOUNT]), ...(o.x === false || (o.posts ?? process.env.DITHER_DEMO_POSTS !== '0') === false ? [] : [...DEMO_POST_ACCOUNTS, ...DEMO_EVENT_ACCOUNTS]), ...(demoZulipOn() ? [DEMO_ZULIP_ACCOUNT] : []), ...(demoClocksOn() ? [DEMO_CLOCKS_ACCOUNT] : [])].map((d) => store.createAccount({ id: d.id, network: d.network, label: d.label, color: d.color, adapter: 'demo', demo: true, config: { epoch } }));
 }
 
 /** Hub-side organisation for the demo: merged people, folders, rules. Applied once. */
@@ -3481,7 +3551,7 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
     { name: 'Sam Rivera', email: 'sam@rivera.example' },
     { name: null, email: 'bookings@ramen.example' },
   ];
-  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000, contacts } });
+  fake.addAccount(DEMO_MAIL_ACCOUNT, { kind: 'imap', label: 'Personal mail', email: ME.email, name: ME.name, opts: { ids: 'imap', threadIds: false, refs: true, answer: 3_000, contacts, details: { inlineParts: true } } });
   const H = 3_600_000;
   const D = 24 * H;
   const sam = { name: 'Sam Rivera', email: 'sam@rivera.example' };
@@ -3509,8 +3579,11 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
 
   // The lease: Alice, with Jo in Cc and a PDF; you answered; Jo added a line.
   put({ messageId: id('lease-1'), from: [alice], to: [ME], cc: [jo], subject: 'Lease renewal', receivedAt: now - 3 * D, text: 'Hi both,\n\nThe landlord sent the renewal. I signed page 2; could you sign pages 3 and 4 and send it back by the 15th?\n\nAlice', attachments: [{ id: 'att-lease', filename: 'lease-renewal.pdf', mime: 'application/pdf', size: 184_320, inline: false, contentId: null }], files: demoFileBytes() });
-  put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.' });
+  put({ mailboxId: 'Sent', messageId: id('lease-2'), inReplyTo: id('lease-1'), references: [id('lease-1')], from: [ME], to: [alice], cc: [jo], subject: 'Re: Lease renewal', receivedAt: now - 2 * D, text: 'Signed and scanned, it is attached. Thanks for sorting this out!\n\nOn Mon, Alice Chen <alice.chen@example.org> wrote:\n> The landlord sent the renewal.', attachments: [{ id: 'att-lease-signed', filename: 'lease-renewal-signed.pdf', mime: 'application/pdf', size: 212_992, inline: false, contentId: null }], files: demoFileBytes() });
   put({ messageId: id('lease-3'), inReplyTo: id('lease-2'), references: [id('lease-1'), id('lease-2')], from: [jo], to: [alice, ME], subject: 'Re: Lease renewal', receivedAt: now - 9 * H, flags: { seen: false }, text: 'Done on my side too. Do we want to ask about the parking spot while we are at it?\n\nJo' });
+
+  // Alice asks you and Jo something today: it waits on you, so her chat shows it open.
+  put({ messageId: id('moveout-1'), from: [alice], to: [ME], cc: [jo], subject: 'Move-out checklist', receivedAt: now - 2 * H, flags: { seen: false }, text: 'The landlord sent what needs doing before we hand back the keys. Could you take the kitchen and the hall closet?\n\nAlice' });
 
   // A newsletter and a notification: list headers say so.
   put({

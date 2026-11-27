@@ -214,13 +214,53 @@ export interface MailBodyView {
    * `formatted`: plain HTML with bold, italic, headings or code, which `text` would lose: the reader shows this HTML,
    * in the app's theme.
    */
-  html: { url: string; remoteImages: number; trackers: number; imagesShown: boolean; plain?: boolean; formatted?: boolean } | null;
+  html: { url: string; remoteImages: number; trackers: number; imagesShown: boolean; plain?: boolean; formatted?: boolean; pictures?: MailPicturesView } | null;
+  /**
+   * Sizes in bytes: `raw` the whole message as the server keeps it (null when it did not say), `text` and `html` its
+   * two bodies, `files` its attachments together.
+   */
+  sizes?: { raw: number | null; text: number; html: number; files: number };
   bcc: MailAddressView[];
   replyTo: MailAddressView[];
   /** Slice 3. */
   attachments: MailAttachmentView[];
   /** Display-name spoofing, Reply-To elsewhere, links whose text names another site (slice 3). */
   warnings: string[];
+}
+
+/**
+ * A mail's remote pictures (docs/mail.md "Pictures and trackers"): which load, which are held back and which trackers
+ * went, under which rule. `bytes`: what the loaded ones weigh, of those the hub has fetched; `unknown` loaded ones it
+ * has not fetched yet (sizes are never fetched just to measure: a fetch can report the open).
+ */
+export interface MailPicturesView {
+  policy: 'none' | 'shared' | 'all';
+  /** What chose the policy: you, for this message; the sender's rule; or the setting. */
+  source: 'message' | 'sender' | 'setting';
+  /** Trackers kept (Settings → Mail "Trackers: Keep", or this message's choice) or removed. */
+  keepTrackers: boolean;
+  /**
+   * What chose `keepTrackers`: you, for this message (POST /api/mail/images { messageId, trackers: 'keep' | 'remove' },
+   * `trackers: null` goes back to the setting), or the setting.
+   */
+  trackersSource?: 'message' | 'setting';
+  /** Pictures by what happens to them (each picture once per place it appears): load, hold (held back), drop (removed). */
+  loaded: number;
+  held: number;
+  removed: number;
+  /** Distinct hosts of the pictures that load: "N loaded from `hosts` hosts". */
+  hosts: number;
+  /** Distinct hosts of every picture, loaded, held or removed (what the details list). */
+  hostsAll?: number;
+  /** Bytes of the pictures that load and that the hub has already. */
+  bytes: number;
+  /** Pictures that load but that the hub has not fetched yet: they are fetched when the mail is shown ("loads when shown"). */
+  unknown: number;
+  /**
+   * Each picture: `size` is there exactly when the hub has its bytes (`cached`); a `load` one without it is fetched when
+   * the mail is shown, a `hold` or `drop` one is never fetched.
+   */
+  items: { host: string; class: 'shared' | 'personal' | 'tracker'; why: string; action: 'load' | 'hold' | 'drop'; size?: number; cached?: boolean }[];
 }
 
 export interface MailAttachmentView {
@@ -261,6 +301,18 @@ export interface MailOutboxView {
   /** Answered by a dry run: nothing reached the account. */
   dryRun?: boolean;
   createdAt?: number;
+  /** What happened to the pictures that were to go inside it (Embed), when any were embedded or left out. */
+  pictures?: MailOutboxPictures;
+}
+
+/**
+ * The pictures of a send with Embed: how many went inside the mail, and how many were left out instead of linked
+ * because their bytes could not be had (`failed`) or because fetching them now would tell the original sender
+ * (`canTell`: a personal picture the hub did not have already).
+ */
+export interface MailOutboxPictures {
+  embedded: number;
+  leftOut: { failed: number; canTell: number };
 }
 
 // ------------------------------------------------------------------ sending (slice 5)
@@ -302,6 +354,65 @@ export interface MailDraft {
   quote: boolean;
   files: MailDraftFile[];
   forwardParts: MailForwardPart[];
+  /**
+   * The mail's HTML as the editor made it (docs/mail.md "Writing"): your text, pictures pasted in as `data:` URLs, and
+   * the forwarded mail or quote as `div[data-dc-island]`. When there is one, `text` is its Markdown (islands and pasted
+   * pictures as `[[island:ref]]` and `dc-picture:ref`, which the hub fills in) and the hub adds no quote of its own.
+   */
+  html?: string | null;
+  /** Pictures from the web in it, when sent: linked as they are, embedded (fetched now and sent in the mail), or left out. */
+  pictures?: MailOutgoingPictures;
+  /**
+   * With Link, the ones that can tell the original sender it was opened are linked too. Unset, they are left out: the
+   * rest are linked (docs/mail.md "Writing").
+   */
+  linkCanTell?: boolean;
+  /** Sent as plain text only: no HTML part. */
+  plainOnly?: boolean;
+}
+
+export type MailOutgoingPictures = 'link' | 'embed' | 'drop';
+
+/**
+ * A forwarded mail or a quote, as an editor island (MailComposeStart.island): the original's HTML with its style sheets
+ * written into each element's style (so it keeps its look in mail apps that drop style sheets), trackers gone, and each
+ * picture from the web as `img[data-dc-src]` (the address it has in the original; `src` is this hub's copy when your
+ * picture setting loads it, else a placeholder).
+ */
+export interface MailIsland {
+  kind: 'forward' | 'quote';
+  /** "Sam Lee, Tue, Nov 3 at 10:42 AM". */
+  label: string;
+  html: string;
+  /**
+   * Bytes the island adds to the mail's text part as made (hub island.ts islandText: a forward's headers and the
+   * original's own text, or the quote), which is not the island's HTML's text. Once the island is edited, the hub
+   * makes its text from the HTML instead.
+   */
+  textBytes?: number;
+  /** That text itself, which the editor's Plain view shows (while the island is as made). */
+  text?: string;
+}
+
+/**
+ * POST /api/mail/pictures/sizes { urls, accountId }: what the hub knows of pictures from the web, for the composer's size
+ * meter, one answer per address asked (in order). `urls` may hold this hub's picture addresses too (`/api/mail/img/…`).
+ */
+export interface MailPictureSizes {
+  /** Bytes each one is, when the hub has fetched it; null when not known (fetching it could tell its sender). */
+  sizes: (number | null)[];
+  /** Each one's class (pictures.ts): `personal` ones tell their sender when fetched. */
+  classes: ('shared' | 'personal' | 'tracker')[];
+  /**
+   * The hub has its bytes now. With Embed, a picture whose class is not `shared` goes inside the mail only when this
+   * is true; otherwise it is left out (fetching it would tell its sender).
+   */
+  cached?: boolean[];
+  /**
+   * The address each one stands for: itself, or for this hub's address of a picture (`/api/mail/img/<token>`, as a
+   * forward's backgrounds have) the picture's own; null when it stands for nothing (it goes nowhere when sent).
+   */
+  originals?: (string | null)[];
 }
 
 /** GET /api/mail/drafts[/:key]. Keys: `t:<thread>` for a reply or forward, `new:<uuid>` for a new message. */
@@ -328,6 +439,10 @@ export interface MailComposeStart {
   fromChoices: { accountId: string; email: string; name: string | null }[];
   /** "On Tue, Nov 3, 2026 at 10:42 AM, Sam Lee <sam@lee.example> wrote:" and the quoted text, or the forwarded block. */
   quote: { head: string; text: string } | null;
+  /** The quote or the forwarded mail as HTML, for the editor (null when the original has no HTML: then `quote`). */
+  island?: MailIsland | null;
+  /** The account sends pictures inside the mail as parts of it (`cid:`); else they go as `data:` URLs, which some apps (Gmail) hide. */
+  inlineParts?: boolean;
   /** The original could not be fetched to quote: why. */
   quoteError: string | null;
   /** Reply all would reach more people than reply. */
@@ -349,6 +464,10 @@ export interface MailBootstrap {
   threads: MailThreadView[];
   /** What the outbox still shows (slice 5). */
   outbox?: MailOutboxView[];
+  /** Every person's email routes (mail as chats): a person you mail with one-to-one has a chat. */
+  chats?: MailChatView[];
+  /** The rungs you chose for places in people's chats. */
+  rungs?: PlaceRungView[];
 }
 
 /** GET /api/mail/threads: a page of a list, newest first. */
@@ -400,9 +519,16 @@ export interface MailOpResult {
   messages: number;
 }
 
-/** GET/PUT /api/mail/settings. `markRead`: on the server after a second in view, or only when you mark it (§14 Q3). */
+/**
+ * GET/PUT /api/mail/settings. `markRead`: on the server after a second in view, or only when you mark it (§14 Q3).
+ * `pictures`: which remote pictures load by themselves (docs/mail.md "Pictures and trackers"): none, only those unlikely
+ * to report an open (`shared`), or all; a sender's own rule (Always / Never from them) comes first. `trackers`: open
+ * pixels are removed, or kept as pictures that report the open (they load only when all pictures do).
+ */
 export interface MailSettings {
   markRead: 'view' | 'manual';
+  pictures: 'none' | 'shared' | 'all';
+  trackers: 'remove' | 'keep';
 }
 
 // ------------------------------------------------------------------ search (slice 7)
@@ -691,4 +817,123 @@ export function hostsDiffer(shown: string, goes: string): boolean {
   const a = bareHost(shown);
   const b = bareHost(goes);
   return a !== b && !b.endsWith('.' + a);
+}
+
+// ------------------------------------------------------------------ mail as chats (docs/mail.md "Mail as chats")
+
+/**
+ * How a place shows in a view, when you chose (docs/mail.md "Mail as chats", "What they wrote elsewhere"): left out,
+ * its row closed, or its row open. Without a choice a person's chat opens the row of a thread that waits on you and
+ * closes the rest (`ElsewhereView.awaits`).
+ */
+export type Rung = 'hidden' | 'closed' | 'open';
+export const RUNGS: readonly Rung[] = ['hidden', 'closed', 'open'];
+
+/**
+ * A mail message drawn as a chat message (`MessageView.mail`): what a chat message has no field for. The message's id
+ * is the mail's own (`mml_`), and `conversationId` is the chat place it is shown in: `email:<account>:<address>` in a
+ * person's chat, else its thread (`mth_`).
+ */
+export interface MessageMailView {
+  threadId: string;
+  accountId: string;
+  subject: string;
+  /** The place the thread belongs to: `person:<id>` while it is you and one other person, else the thread `mth_…`. */
+  place: string;
+  /** The Message-ID header. */
+  messageId: string | null;
+  /** Its In-Reply-To header: the Message-ID of the mail it answers. A chat leaves out ··· for a quote of the message drawn right above. */
+  inReplyTo: string | null;
+  from: MailAddressView;
+  to: MailAddressView[];
+  cc: MailAddressView[];
+  /** When the sender says they wrote it. `MessageView.ts` is when it reached the server (`receivedAt`), as mail sorts. */
+  date: number;
+  receivedAt: number;
+  seen: boolean;
+  flagged: boolean;
+  hasAttachments: boolean;
+  /** The body here: `MessageView.body` holds its text (the words above the quote) when it is 'cached', else the preview. */
+  bodyState: 'cached' | 'none' | 'loading' | 'failed';
+  /** It has HTML that plain text would lose (styles, pictures, tables): the chat shows it framed. */
+  rich: boolean;
+  /** The text under the words: the quoted mail it answers, folded in the chat. */
+  quoted: boolean;
+  /** The first message of its thread here: the chat shows the subject on it. */
+  opens: boolean;
+  /**
+   * A mail you sent in a thread with others that went to only some of them (Reply's "Only Alice" over a thread's box):
+   * who it went to, so the thread can say "to Alice only". Absent when it went to everyone on the thread.
+   */
+  only?: MailAddressView[];
+}
+
+/**
+ * A route of a person's chat by email (`ChatRoute.network` 'email'): you and one address of theirs, through one of
+ * your mail accounts. Its id, `email:<account>:<address>`, is the `conversationId` of its route and of its messages.
+ */
+export interface MailChatView {
+  id: string;
+  personId: string;
+  /** Their email identity. */
+  identityId: string;
+  accountId: string;
+  address: string;
+  /** The threads between you and only them, newest first: the latest is where a message goes unless you start one. */
+  threadIds: string[];
+  /** The latest thread's subject. */
+  subject: string;
+  lastAt: number;
+  /** The newest message's start, and whether it was yours. */
+  preview: string | null;
+  lastFromMe: boolean;
+  /** Messages in its threads not read yet. */
+  unread: number;
+}
+
+/**
+ * Something a person wrote somewhere else, shown in their chat (docs/mail.md "Mail as chats", "What they wrote
+ * elsewhere"): a message of theirs in a thread with others. The chat draws one row per thread, at its newest message.
+ */
+export interface ElsewhereView {
+  /** Where it is: a thread `mth_…`. */
+  place: string;
+  placeKind: 'mail-thread';
+  /** The place's name: the thread's subject. */
+  title: string;
+  /** The others there besides you and them, by name. */
+  others: string[];
+  messageId: string;
+  ts: number;
+  unread: boolean;
+  /** To you (To, or naming you), under a week old, and you have neither answered nor opened the thread since. */
+  awaits: boolean;
+  /** Up to three lines of its words above the quote, what its row shows open. */
+  excerpt?: string;
+}
+
+/** A page of a chat that has mail in it: the messages, mail among them, and what they wrote elsewhere in its range. */
+export interface MailChatPage {
+  elsewhere?: ElsewhereView[];
+}
+
+/** A rung you chose for a place in a view (PUT /api/rungs): `view` is a chat id (`person:<id>`), `place` the place's id. */
+export interface PlaceRungView {
+  view: string;
+  place: string;
+  rung: Rung;
+  setAt: number;
+}
+
+/**
+ * A subject as shown (docs/mail.md "Mail as chats"): without the reply and forward prefixes mail stacks on it ("Re:",
+ * "Fwd:", "AW:", "SV:" and the like). What is sent keeps the subject as it is; only what is drawn is bare.
+ */
+export function bareSubject(subject: string): string {
+  let s = subject.trim();
+  for (;;) {
+    const next = s.replace(/^(re|fwd?|aw|wg|sv|vs|antw|r|tr)(\[\d+\])?\s*:\s*/i, '');
+    if (next === s) return s;
+    s = next;
+  }
 }

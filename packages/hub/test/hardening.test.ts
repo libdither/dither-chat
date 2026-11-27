@@ -3,8 +3,7 @@
  * and with what, secrets written whole, triage that survives a crash, migrations copied first, and the upkeep.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
@@ -16,8 +15,11 @@ import { HubServer, mediaSigner, validAdapterName } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { NightlyBackup, pruneMediaCache, rotateAdapterLogs, tightenPermissions } from '../src/housekeeping.ts';
+import { memTempDir } from './fixtures/memdir.ts';
 
-const dir = mkdtempSync(join(tmpdir(), 'dither-hard-'));
+// In memory: secret files, the server's token file, databases closed and opened again, the copy before a migration and
+// the nightly copy all sync to disk, and on a busy disk each sync can take seconds (memdir.ts).
+const dir = memTempDir('dither-hard-');
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe('the names the hub answers to', () => {
@@ -104,8 +106,9 @@ describe('adapters the hub starts', () => {
 });
 
 describe('secret.json', () => {
-  const p = join(dir, 'acct', 'secret.json');
-  beforeAll(() => mkdirSync(join(dir, 'acct'), { recursive: true }));
+  const acct = join(dir, 'secret');
+  mkdirSync(acct);
+  const p = join(acct, 'secret.json');
 
   test('written whole, private, with the last good copy kept', () => {
     writeSecretFile(p, { a: 1 });
@@ -113,7 +116,7 @@ describe('secret.json', () => {
     expect(JSON.parse(readFileSync(p, 'utf8'))).toEqual({ a: 2 });
     expect(JSON.parse(readFileSync(p + '.bak', 'utf8'))).toEqual({ a: 1 });
     expect(statSync(p).mode & 0o077).toBe(0);
-    expect(readdirSync(join(dir, 'acct')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    expect(readdirSync(acct).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   test('a torn file reads as the backup, and a missing one as {}', () => {
@@ -123,7 +126,7 @@ describe('secret.json', () => {
     writeSecretFile(p, { a: 4 });
     expect(JSON.parse(readFileSync(p + '.bak', 'utf8'))).toEqual({ a: 1 });
     expect(readSecretFile(p)).toEqual({ a: 4 });
-    expect(readSecretFile(join(dir, 'acct', 'none.json'))).toEqual({});
+    expect(readSecretFile(join(acct, 'none.json'))).toEqual({});
   });
 });
 
@@ -144,6 +147,32 @@ describe('the store', () => {
     expect(copies[0]).toMatch(/^pre-migrate-.*\.sqlite$/);
     new Store(path, mediaSigner('s')).db.close();
     expect(readdirSync(join(d, 'backups')).length).toBe(1);
+  });
+
+  test('no second copy before migrating when the deployer copied the database just before this start; two kept', () => {
+    const d = join(dir, 'mig-fresh');
+    mkdirSync(d);
+    const path = join(d, 'hub.sqlite');
+    new Store(path, mediaSigner('s')).db.close();
+    const older = () => {
+      const db = new Database(path);
+      db.exec(`UPDATE meta SET value = 'old' WHERE key = 'schema_sig'`);
+      db.close();
+    };
+    mkdirSync(join(d, 'backups'));
+    const preDeploy = join(d, 'backups', 'pre-deploy.sqlite');
+    writeFileSync(preDeploy, 'copied by the deployer');
+    older();
+    new Store(path, mediaSigner('s')).db.close();
+    expect(readdirSync(join(d, 'backups'))).toEqual(['pre-deploy.sqlite']);
+    // A pre-deploy copy from hours ago is not this start's: the hub copies it itself, and keeps the newest two.
+    const hoursAgo = new Date(Date.now() - 6 * 3_600_000);
+    utimesSync(preDeploy, hoursAgo, hoursAgo);
+    for (let i = 0; i < 3; i++) {
+      older();
+      new Store(path, mediaSigner('s')).db.close();
+    }
+    expect(readdirSync(join(d, 'backups')).filter((f) => /^pre-migrate-.*\.sqlite$/.test(f))).toHaveLength(2);
   });
 
   test('stars set before stars left the app are cleared once, the column kept; a star sent since is ignored', () => {

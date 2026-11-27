@@ -324,11 +324,13 @@ export class MailStore {
     if (listed?.length && this.run(`DELETE FROM mail_unsupported WHERE account_id = ? AND op IN (SELECT value FROM json_each(?))`, id, JSON.stringify(listed.map(unsupportedOp))).changes) this.dirty.accounts.add(id);
     // Recipient suggestions from the server (outbox.ts contacts): while it says it answers them.
     const contacts = bit(details[DETAILS.contacts], was.contacts);
-    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage, writes, contacts];
-    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null, was.writes ?? null, was.contacts ?? null];
+    // Pictures inside the HTML as parts (island.ts): while it says mail.send takes them.
+    const inlineParts = bit(details[DETAILS.inlineParts], was.inline_parts);
+    const next = [JSON.stringify(problem), JSON.stringify(send), address, name, addresses, online, syncMode, headers, perMessage, sendCap, maxRecipients, provider, lane, searchIds, stopped, storage, writes, contacts, inlineParts];
+    const prev = [was.problem, was.send, was.address, was.display_name, was.addresses, was.online, was.sync_mode, was.summary_headers ?? null, was.id_per_message ?? null, was.send_cap ?? null, was.max_recipients ?? null, was.provider ?? null, was.background_lane ?? null, was.search_ids ?? null, was.background_stopped ?? null, was.storage ?? null, was.writes ?? null, was.contacts ?? null, was.inline_parts ?? null];
     if (next.every((v, i) => v === prev[i])) return false;
     this.run(
-      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ?, writes = ?, contacts = ? WHERE id = ?',
+      'UPDATE mail_account SET problem = ?, send = ?, address = ?, display_name = ?, addresses = ?, online = ?, sync_mode = ?, summary_headers = ?, id_per_message = ?, send_cap = ?, max_recipients = ?, provider = ?, background_lane = ?, search_ids = ?, background_stopped = ?, storage = ?, writes = ?, contacts = ?, inline_parts = ? WHERE id = ?',
       ...next,
       id,
     );
@@ -1402,6 +1404,7 @@ const DETAILS = {
   storageTotal: 'storageTotal',
   writes: 'writes',
   contacts: 'contacts',
+  inlineParts: 'inlineParts',
 } as const;
 
 const WRITE_KINDS: readonly M.MailWriteKind[] = ['seen', 'flagged', 'move', 'trash', 'junk'];
@@ -1451,7 +1454,8 @@ export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
   // summary_headers, headers_seen: what the status says of summaries' headers, and whether any summary had some.
   // id_per_message … provider: what the extractor's status says of the account (setStatus).
   // background_lane … storage: keeping all mail (keep.ts), what the status says of background reads and storage.
-  // writes: what the status says the account writes now (ops.ts); contacts: whether mail.contacts answers (outbox.ts).
+  // writes: what the status says the account writes now (ops.ts); contacts: whether mail.contacts answers (outbox.ts);
+  // inline_parts: whether mail.send takes pictures inside the HTML (island.ts).
   mail_account: {
     summary_headers: 'INTEGER',
     headers_seen: 'INTEGER',
@@ -1465,6 +1469,7 @@ export const MAIL_COLUMNS: Record<string, Record<string, string>> = {
     storage: 'TEXT',
     writes: 'TEXT',
     contacts: 'INTEGER',
+    inline_parts: 'INTEGER',
   },
   // The server's emailId (Gmail's X-GM-MSGID): empty on rows from before it, and on Proton's, which have none.
   mail_message: { email_id: 'TEXT' },

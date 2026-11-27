@@ -16,6 +16,7 @@ let store: Store;
 let triage: Triage;
 let d: AccountRow;
 let sig: AccountRow;
+let z: AccountRow;
 /** The texts the local model was asked about, in order. */
 let asked: string[] = [];
 /** The time of the next message: each one a minute after the last, so the fold of who wrote when sees them in order. */
@@ -74,6 +75,17 @@ beforeAll(() => {
   // Two timed mutes there: one that has run out, one that still runs.
   store.ingest(d, { t: 'conversation', conversation: { nativeId: 'was-muted', shape: 'channel', name: 'was-muted', spaces: [{ nativeId: 'guild' }], mute: { level: 'none', until: Date.now() - DAY } } });
   store.ingest(d, { t: 'conversation', conversation: { nativeId: 'snoozed', shape: 'channel', name: 'snoozed', spaces: [{ nativeId: 'guild' }], mute: { level: 'all', until: Date.now() + 365 * DAY } } });
+  // A Zulip organization: Zulip says a mute as `muted: true` with no level. One channel muted, its topic with it; one
+  // topic muted in a channel that is not.
+  z = store.createAccount({ network: 'zulip', label: 'z', color: '#222', adapter: 'zulip' });
+  store.ingest(z, { t: 'status', status: 'online', self: { nativeId: 'chat.example.org/u/1', isSelf: true, displayName: 'Me' } });
+  z = store.account(z.id)!;
+  store.ingest(z, { t: 'identity', identity: { nativeId: 'chat.example.org/u/2', displayName: 'Cy' } });
+  store.ingest(z, { t: 'space', space: { nativeId: 'chat.example.org', kind: 'community', name: 'Org' } });
+  for (const [c, mute] of [['s/1', { muted: true }], ['s/2', undefined]] as const)
+    store.ingest(z, { t: 'conversation', conversation: { nativeId: `chat.example.org/${c}`, shape: 'channel', variant: 'forum', name: c, spaces: [{ nativeId: 'chat.example.org' }], ...(mute ? { mute } : {}) } });
+  for (const [c, parent, mute] of [['s/1/t/lunch', 's/1', undefined], ['s/1/t/open', 's/1', { level: 'all' }], ['s/2/t/noise', 's/2', { muted: true }], ['s/2/t/plans', 's/2', undefined]] as const)
+    store.ingest(z, { t: 'conversation', conversation: { nativeId: `chat.example.org/${c}`, shape: 'thread', name: c.split('/').pop(), parentConversation: `chat.example.org/${parent}`, spaces: [{ nativeId: 'chat.example.org' }], ...(mute ? { mute } : {}) } });
   for (const g of ['club', 'crew']) store.ingest(sig, { t: 'conversation', conversation: { nativeId: `group:${g}`, shape: 'group', name: g, participants: ['x', 'y', 'z', 'w', 'v', 'u', 'sigme'] } });
 });
 afterAll(() => store.db.close());
@@ -264,6 +276,51 @@ describe('your rules', () => {
     store.setListLevel(0.5);
     expect((await say(d, 'muted', 'bob', 'and this now', { mentionsSelf: true })).decision).toBe('digest');
     store.setListLevel(0.6);
+  });
+
+  test('a Zulip mute (muted: true, no level) on a channel or a topic keeps it to the list, as a Discord mute does', async () => {
+    const cy = 'chat.example.org/u/2';
+    for (const topic of ['s/1/t/lunch', 's/2/t/noise']) {
+      const id = conv(`chat.example.org/${topic}`);
+      expect(triage.nativeLevel(store.one('SELECT * FROM conversation WHERE id = ?', id)!)).toBe('none');
+      expect(triage.effectiveLevel(id)).toMatchObject({ level: 'digest', source: 'as in Zulip', explicit: false });
+      const m = await say(z, `chat.example.org/${topic}`, cy, 'look at this now', { mentionsSelf: true });
+      expect(m.decision).toBe('drop');
+      expect(m.reasons).toContain('Muted in Zulip: kept to the list');
+      expect(m.facts).toMatchObject({ cap: true, conv: false, native: 'none', notify: false, explicit: false });
+    }
+    // The topic beside it, in the same channel, is not muted: Zulip notifies mentions there.
+    const open = await say(z, 'chat.example.org/s/2/t/plans', cy, 'thanks for earlier', { mentionsSelf: true });
+    expect(open.facts).toMatchObject({ native: 'mentions', notify: true, conv: true });
+    expect(open.decision).toBe('quiet');
+    expect(asked).toEqual(['thanks for earlier']);
+    // A topic unmuted in the muted channel (Zulip sends it { level: 'all' }): its own setting is its answer, with a
+    // rule above it or without.
+    const unmuted = conv('chat.example.org/s/1/t/open');
+    expect(triage.effectiveLevel(unmuted)).toMatchObject({ level: 'all', source: 'as in Zulip' });
+    store.setRule('network', 'zulip', 'all');
+    try {
+      expect(triage.effectiveLevel(unmuted).level).toBe('all');
+      expect(triage.effectiveLevel(conv('chat.example.org/s/1/t/lunch'))).toMatchObject({ level: 'digest', source: 'muted in Zulip' });
+    } finally {
+      store.setRule('network', 'zulip', null);
+    }
+  });
+
+  test('a Discord mute with a level read as muted; a timed one that ran out caps nothing under a rule', async () => {
+    // Discord's thread mute with no timer keeps its notify level beside it: muted all the same.
+    store.ingest(d, { t: 'conversation', conversation: { nativeId: 'muted-thread', shape: 'thread', name: 'muted-thread', parentConversation: 'general', mute: { level: 'all', muted: true } } });
+    expect(triage.nativeLevel(store.one('SELECT * FROM conversation WHERE id = ?', conv('muted-thread'))!)).toBe('none');
+    // A mute whose time ran out says nothing, whatever level it was set to.
+    store.ingest(d, { t: 'conversation', conversation: { nativeId: 'ran-out', shape: 'channel', name: 'ran-out', spaces: [{ nativeId: 'guild' }], mute: { level: 'none', muted: true, until: Date.now() - DAY } } });
+    store.setRule('network', 'discord', 'all');
+    try {
+      // Only the server's own setting holds it, mentions only; before, the run-out mute capped it to the list.
+      expect(triage.effectiveLevel(conv('ran-out')).level).toBe('mentions');
+      expect(triage.effectiveLevel(conv('muted-thread'))).toMatchObject({ level: 'digest', source: 'muted in Discord' });
+    } finally {
+      store.setRule('network', 'discord', null);
+    }
   });
 
   test('a mute on the network that has run out no longer counts; one still running does', async () => {

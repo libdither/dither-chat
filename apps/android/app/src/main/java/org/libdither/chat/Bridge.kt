@@ -28,6 +28,8 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
                 // whether it keeps the keyboard's room itself.
                 proxy = replyProxy
                 activity.pageKeyboard = false
+                // What the old page played went with it.
+                activity.onMedia(JSONObject().put("state", "none"))
                 send(info())
                 send(Push.status(activity))
                 send(Uploads.state(activity))
@@ -47,6 +49,7 @@ class Bridge(private val activity: MainActivity, private val origin: Uri) : WebV
             "fresh" -> activity.onPageTiming("fresh from the hub", m.optLong("ms"), null)
             "probe" -> activity.onProbe(m.optLong("ms"), m.optLong("at"), m.optLong("origin"))
             "call" -> activity.onCall(m)
+            "media" -> activity.onMedia(m)
             "audio.get" -> send(Audio.state(activity))
             "audio.set" -> {
                 Audio.select(activity, m.optInt("id"))

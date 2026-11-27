@@ -26,13 +26,16 @@ import { languageOf } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { android } from '../android.ts';
 import { desk } from '../desk.ts';
+import { asLabel, formatLine, formLabel, hubMedia, mediaFormat, type MediaFormat } from '../download.ts';
 import { fileFacts, fileIcon, fileKind, fileMime, fileViewer, type FileSource } from '../files.ts';
 import { commits, lockAxis, settleMs, velocity } from '../gesture.ts';
 import { reducedMotion, useLayer } from '../phone.ts';
 import { api } from '../state.ts';
-import { openAttachment, openWith } from './fileopen.tsx';
+import { openAttachment, openWith, save } from './fileopen.tsx';
+import { openMenu } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
 import { Loading } from './Loader.tsx';
+import { Video } from './Video.tsx';
 
 import { viewer, type ViewerImage } from '../viewer.ts';
 
@@ -124,9 +127,9 @@ function FileBox({ att }: { att: FileSource }) {
             <Icon name="more" size={20} />
           </button>
         )}
-        <a class="icon-btn" href={att.url} download={name} aria-label="Download" title="Download">
+        <button class="icon-btn" onClick={() => save(att.url, att.name)} aria-label="Download" title="Download">
           <Icon name="download" size={20} />
-        </a>
+        </button>
         <button class="icon-btn" onClick={close} aria-label="Close" title="Close">
           <Icon name="x" size={22} />
         </button>
@@ -136,7 +139,7 @@ function FileBox({ att }: { att: FileSource }) {
         ) : VIEWS[kind] ? (
           <FileBody kind={kind} att={a} info={info} language={info?.language ?? languageOf(att.name)} />
         ) : kind === 'video' ? (
-          <video class="fv-media" src={att.url} controls preload="metadata" />
+          <Video class="fv-video" src={att.url} width={info?.width} height={info?.height} label={name} autoPlay large />
         ) : kind === 'audio' ? (
           <audio class="fv-media" src={att.url} controls preload="metadata" />
         ) : (
@@ -175,9 +178,9 @@ function NoView({ a }: { a: FileSource }) {
       <Icon name="file" size={40} />
       <p>There is no preview for this kind of file.</p>
       <p>
-        <a href={a.url} download={a.name ?? true}>
+        <button class="link" onClick={() => save(a.url, a.name)}>
           Download it
-        </a>
+        </button>
         {(desk.value?.files || android?.opensFiles()) && (
           <>
             {' or '}
@@ -203,6 +206,15 @@ const EASE_MS = 45;
 function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) {
   const [i, setI] = useState(start);
   const img = images[i];
+  // What the picture is and how the hub keeps it, for the line under its name and the forms to download it in.
+  const [format, setFormat] = useState<{ url: string; f: MediaFormat } | null>(null);
+  useEffect(() => {
+    if (!hubMedia(img.url)) return;
+    let live = true;
+    void mediaFormat(img.url).then((f) => live && f && setFormat({ url: img.url, f }));
+    return () => void (live = false);
+  }, [img.url]);
+  const forms = format?.url === img.url ? format.f.as : [];
   const root = useRef<HTMLDivElement>(null);
   const pic = useRef<HTMLImageElement>(null);
   // Zoom and pan, kept out of state so a finger moves the image without a render.
@@ -216,7 +228,7 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     const H = innerHeight;
     const nw = el?.naturalWidth || img.width || W;
     const nh = el?.naturalHeight || img.height || H;
-    const k = Math.min(W / nw, H / nh, 1);
+    const k = Math.min(W / nw, H / nh, img.fill ? Infinity : 1);
     return { w: nw * k, h: nh * k, W, H, nw };
   };
   /** As far as it zooms: MAX, or to twice the picture's own pixels where that is further. */
@@ -609,12 +621,28 @@ function ViewerBox({ images, start }: { images: ViewerImage[]; start: number }) 
     <div class="viewer" ref={root} role="dialog" aria-modal="true" aria-label={img.name ?? 'Image'}>
       <div class="viewer-bar">
         <span class="viewer-name">
-          {img.name ?? 'Image'}
-          {images.length > 1 && <small>{` ${i + 1} of ${images.length}`}</small>}
+          <span>
+            {img.name ?? 'Image'}
+            {images.length > 1 && <small>{` ${i + 1} of ${images.length}`}</small>}
+          </span>
+          {format && format.url === img.url && <small class="viewer-format">{formatLine(format.f)}</small>}
         </span>
-        <a class="icon-btn" href={img.url} target="_blank" rel="noreferrer" download={img.name ?? true} aria-label="Open the original" title="Open the original">
+        <button class="icon-btn" onClick={() => save(img.url, img.name)} aria-label="Download" title={format?.url === img.url && formLabel(format.f.type) ? `Download the ${formLabel(format.f.type)} as it came` : 'Download'}>
           <Icon name="download" size={20} />
-        </a>
+        </button>
+        {forms.length > 1 && (
+          <button
+            class="icon-btn viewer-as"
+            aria-label="Download as…"
+            title="Download as…"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              openMenu({ x: r.right, y: r.bottom }, { label: 'Download as', track: 'download as', flipY: r.top, items: [{ kind: 'label', label: 'Download as' }, ...forms.map((as) => ({ label: asLabel(as, format!.f.type), icon: 'download', track: `as ${as}`, run: () => save(img.url, img.name, as) }))] }, e.currentTarget);
+            }}
+          >
+            <Icon name="chevronDown" size={16} />
+          </button>
+        )}
         <button class="icon-btn" onClick={close} aria-label="Close" title="Close">
           <Icon name="x" size={22} />
         </button>

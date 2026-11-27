@@ -24,7 +24,7 @@ people graph. You, bots, and T3 and calendar accounts are left out.
 Not every pair is compared. Pairs come from keys two sides share (blocking):
 
 - **Claims and contacts**: a profile's connected accounts and bio links (X, Telegram, GitHub, Instagram, Bluesky,
-  Reddit, Twitch, YouTube, Steam, Matrix), phone numbers (last ten digits) and email addresses, set against what each
+  Reddit, Twitch, YouTube, Steam, Matrix, LinkedIn, TikTok, Luma, Partiful), phone numbers (last ten digits) and email addresses, set against what each
   side's own accounts are: a Signal or WhatsApp number, a Telegram phone, a Matrix id, a handle on a site.
 - **Bridges**: a Matrix puppet of a Discord, Telegram, Signal, WhatsApp, X, Instagram or Facebook user
   (`@discord_…:server`) and the account it stands for.
@@ -37,6 +37,8 @@ Not every pair is compared. Pairs come from keys two sides share (blocking):
   with nothing to merge.
 
 Each key brings in a few pairs at most, so a common name or a big group adds little work.
+Two sides known only from events (guests and hosts on Luma or Partiful, with no chat of yours) are never a pair: a
+party's guest list would fill the page with strangers (docs/events.md, "People").
 
 ## Scoring
 
@@ -49,7 +51,7 @@ card). In rough order of strength:
 | `claims` | one side's profile names an account the other has; both ways or verified count more | 5.5 to 7 |
 | `contact` | the same phone number or email on both | 7 |
 | `name` | the same handle (3.8; a Matrix id's own part is its handle), a handle less its number that is the name on the other (`pippa22` and Pippa, 2.4), a rare full name (up to 3.7), close names (Jaro-Winkler), shared words; a phone number shown as a name is not one | to ~5 |
-| `picture` | the same picture (3.2), a similar one (1.6); a picture more than three sides have (a default) counts for nothing | 1.6 to 3.2 |
+| `picture` | the same picture (3.2), a similar one (1.6); a picture more than three sides have (a default) counts for nothing, nor does a mostly flat one (a letter picture: fewer than 12 of the hash's 64 bits set) | 1.6 to 3.2 |
 | `friends` | people known to be one person around both, weighted down by how big the group is | up to 3.5 |
 | `bio` | bios alike | up to 1.4 |
 | `handoff` | direct chats that hand over: one went quiet as the other began | 0.9 |
@@ -78,12 +80,18 @@ read, and asked again only when that changes. Nothing goes to a hosted service. 
 
 A run reads the database on a connection of its own in a worker, so the hub's thread never waits; it writes nothing.
 It runs when the list is first asked for, when it is older than 15 minutes, a few seconds after a merge or a decision
-(several clicks make one run), and from the page's refresh button. On a copy of a large hub it takes about a second.
+(several clicks make one run; a merge or split from a profile or the details panel counts too), and from the page's
+refresh button. On a copy of a large hub it takes about a second. Until the next run, the list it hands out leaves out
+any pair that has become one person since, or whose side was merged away.
 
 **Pictures.** The hub decodes no images, so the page hashes them: `GET /api/matches/pictures` hands it pictures to
-hash (the sides of pairs first, then people you have direct chats or groups with), the page draws each to a 9×8 canvas
+hash (the sides of pairs first, then people you have direct chats or groups with, then up to 300 people seen at
+events, the latest first: docs/events.md "People"), the page draws each to a 9×8 canvas
 and makes a 64-bit difference hash, and `POST /api/matches/pictures` stores them in `picture_hash` with the URL they
-came from, so a changed picture is hashed again. The status line says "Comparing pictures" while it works.
+came from, so a changed picture is hashed again. The status line says "Comparing pictures" while it works, and once
+the page has sent its hashes it asks for a new run, so the list it shows has what the pictures said. A mostly flat
+picture (one colour with initials, as many networks make for people without one) hashes within a few bits of every
+other such picture, so a hash with fewer than 12 bits set is left out.
 
 ## The page
 
@@ -119,6 +127,8 @@ person clicking through them, through the same command as opening a profile:
 | Matrix | 30 s | 800 |
 | Telegram | 60 s | 500 |
 | Discord | 90 s | 400 |
+| Zulip | 90 s | 400 |
+| Luma, Partiful | 10 min | 60 |
 | X | 5 min | 120 |
 | Messenger | 5 min | 100 |
 | WhatsApp | 6 min | 100 |

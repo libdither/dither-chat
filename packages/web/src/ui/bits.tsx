@@ -1,17 +1,20 @@
 import { createPortal, type ComponentChildren } from 'preact';
+import { computed } from '@preact/signals';
+import { memo } from './memo.ts';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { GLYPH } from '../brand.ts';
 import { linkParts } from '../links.ts';
 import { hueOf, initials } from '../format.ts';
 import { annotateAccounts, netColor, netName, usualAccount } from '../model.ts';
-import { db, go } from '../state.ts';
+import { db, go, metaRev } from '../state.ts';
 import { phone, slideAway, useLayer, useSheetDrag } from '../phone.ts';
 import { Icon } from './icons.tsx';
 import { Sheet } from './Sheet.tsx';
 import { onMenu } from './ContextMenu.tsx';
 import { accountMenu } from './accountMenu.tsx';
 import { drawLater } from './Later.tsx';
+import { PresenceDot, type PresenceOf } from './PresenceDot.tsx';
 
 /** `decorative`: hidden from screen readers, for where the network is already said in words around it. */
 export function NetGlyph({ network, size = 14, color, decorative }: { network: P.Network; size?: number; color?: string; decorative?: boolean }) {
@@ -22,24 +25,52 @@ export function NetGlyph({ network, size = 14, color, decorative }: { network: P
   );
 }
 
-/** Round source badge: network colour with its glyph. */
-export function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
+/**
+ * Round source badge: network colour with its glyph. Kept when its row is drawn again (its props are plain values): an
+ * inbox row drawn again need not draw its picture's badge.
+ */
+export const NetBadge = memo(function NetBadge({ network, size = 16, class: cls }: { network: P.Network; size?: number; class?: string }) {
   return (
     <span class={`net-badge ${cls ?? ''}`} style={{ width: `${size}px`, height: `${size}px`, background: netColor(network) }} title={netName(network)}>
       <NetGlyph network={network} size={Math.round(size * 0.62)} color="#fff" />
     </span>
   );
-}
+});
 
 /**
  * Coloured dots for the accounts that see something. Hidden when the network has only one account, and where only the
  * network's usual account sees it (usualAccount): a dot means "another account of yours", not "your account".
  */
-export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
-  if (!force && !annotateAccounts(network)) return null;
+/** The accounts AccountDots shows, none where it shows none. */
+function dotted(network: P.Network, accountIds: string[], force?: boolean): P.AccountView[] {
+  if (!force && !annotateAccounts(network)) return [];
   const accs = accountIds.map((id) => db.accounts.get(id)).filter((a): a is P.AccountView => !!a);
+  if (!force && accs.length === 1 && accs[0].id === usualAccount(network)) return [];
+  return accs;
+}
+
+/** What AccountDots draws, as a string: a memoised row given it draws again when the dots would change, and not for every setting. */
+export const dotsLook = (network: P.Network, accountIds: string[]) =>
+  dotted(network, accountIds)
+    .map((a) => `${a.color} ${a.label}`)
+    .join('|');
+
+/**
+ * What every AccountDots draws from, as a string: whether each network's chats are annotated, its usual account, and
+ * each account's colour and label. It follows `metaRev`, and the dots draw again only when it changes, not for every
+ * name, rule or status that moves `metaRev` (docs/perf.md "What redraws").
+ */
+const dotsSource = computed(() => {
+  metaRev.value;
+  const accs = [...db.accounts.values()];
+  const nets = [...new Set(accs.map((a) => a.network))].map((n) => `${n} ${annotateAccounts(n)} ${usualAccount(n)}`);
+  return `${nets.join('|')}#${accs.map((a) => `${a.id} ${a.color} ${a.label}`).join('|')}`;
+});
+
+export function AccountDots({ network, accountIds, size = 8, force }: { network: P.Network; accountIds: string[]; size?: number; force?: boolean }) {
+  dotsSource.value;
+  const accs = dotted(network, accountIds, force);
   if (!accs.length) return null;
-  if (!force && accs.length === 1 && accs[0].id === usualAccount(network)) return null;
   return (
     <span class="acc-dots" title={`via ${accs.map((a) => a.label).join(' + ')}`}>
       {accs.map((a) => (
@@ -108,6 +139,7 @@ export function Avatar({
   network,
   accountIds,
   icon,
+  presence,
 }: {
   id: string;
   name: string;
@@ -117,6 +149,8 @@ export function Avatar({
   network?: P.Network;
   accountIds?: string[];
   icon?: string;
+  /** Whose status dot it shows (PresenceDot.tsx): none without, and none while their presence is unknown. */
+  presence?: PresenceOf;
 }) {
   // The picture that failed, not "failed": a group whose picture arrives later (or changes) shows the new one.
   const [broken, setBroken] = useState<string | null>(null);
@@ -136,6 +170,7 @@ export function Avatar({
           <AccountDots network={network} accountIds={accountIds} size={Math.max(6, Math.round(size * 0.2))} />
         </span>
       )}
+      {presence && <PresenceDot of={presence} size={size} corner={network ? 'top' : undefined} />}
     </span>
   );
 }
@@ -185,8 +220,18 @@ export function showSection(id: string, behavior: ScrollBehavior = 'smooth') {
   const to = () => document.getElementById(id)?.scrollIntoView({ behavior, block: 'start' });
   // Parts of the page drawn later (Later.tsx) are drawn first, the section's own or those below it, and it is gone to
   // once they are.
-  if (drawLater()) requestAnimationFrame(to);
-  else to();
+  if (drawLater()) return void requestAnimationFrame(to);
+  if (document.getElementById(id)) return void to();
+  // Settings is a chunk of its own (LazyPane.tsx): opened a moment ago, it may not be drawn yet. Once it is, the same.
+  const mo = new MutationObserver(() => {
+    const later = drawLater();
+    if (!later && !document.getElementById(id)) return;
+    mo.disconnect();
+    clearTimeout(t);
+    requestAnimationFrame(to);
+  });
+  const t = setTimeout(() => mo.disconnect(), 10_000);
+  mo.observe(document.body, { childList: true, subtree: true });
 }
 
 /** Opens Settings at Adversarial features. */

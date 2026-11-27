@@ -19,7 +19,7 @@ records in `media_info`, keyed like the cache by the SHA-256 of the attachment's
 | `pages` | PDF: a linearized file's `/N`, else the largest `/Count` of a page-tree node, also inside compressed object streams |
 | `encoding`, `lines`, `language` | Text: UTF-8, UTF-16 (with or without a byte-order mark) or Windows-1252; lines; a highlighting language from the name, else from a `#!` line or the content (JSON that parses, a patch, Markdown's marks) |
 | `entries`, `list` | ZIP (from the central directory; Office, OpenDocument, EPUB, JAR and APK told apart), tar and gzip (a tar inside is listed): the count and the first 50 names and sizes |
-| `width`, `height` | PNG, JPEG, GIF, WebP, BMP, ICO, AVIF; a video's frame size from MP4 and WebM |
+| `width`, `height` | PNG, JPEG, GIF, WebP, BMP, ICO, AVIF, JPEG XL; a video's frame size from MP4 and WebM |
 | `duration` | MP4, M4A, QuickTime, WebM, Matroska, WAV, FLAC, Ogg (Opus, Vorbis), MP3 (Xing/VBRI, else from the bitrate) |
 | `partial` | Lines or entries were counted in the first part only: there are at least this many |
 
@@ -66,6 +66,63 @@ answers from it first: whole images (no range requests, no video or audio) of up
 64 MB, the oldest going first. It outlasts deploys, which replace only the shell's cache. After every catch-up with
 the hub the page tells it which accounts there are (pwa.ts), and pictures fetched through one that left (the path's
 `?a=`) go.
+
+## JPEG XL
+
+The hub keeps pictures as JPEG XL and hands each device and network a format it shows (`packages/hub/src/jxl.ts`,
+the format itself in `jxlformat.ts`). In a sample of 150 JPEGs and 150 PNGs from a hub's cache (November 2026),
+they came to 0.71 and 0.52 of their size.
+
+**Packing.** `MediaPacker` walks the pictures `media_info` calls `image/jpeg` or `image/png` (by key, cursor
+`media_pack_cursor`, the walk again an hour after it ends), one at a time with cjxl at a low priority, and keeps
+`<key>.jxl` in place of `<key>` when it is at least a tenth smaller and comes back as it was: a JPEG repacked
+losslessly (`--lossless_jpeg=1`) must come back byte for byte, a PNG stored lossless (`-d 0`) with the same size. An
+animated PNG, a file under 4 KB, and anything not under a `media_info` key (the mail parts and mail images in the same
+folder) stay as they are. `<key>.mime` still says what the file came as, the packed file keeps the original's last use
+for trimming, and a sniffer that learns something new leaves a packed file's record standing.
+
+**Serving.** `/media` sends a packed picture as `image/jxl` to a device that shows JPEG XL, and rebuilds it with djxl
+(the JPEG byte for byte, the PNG with the same pixels) for any other. A JPEG XL someone sent goes as it is to the
+first, and to the second as the JPEG it was repacked from, else a PNG (a JPEG at quality 92 when the PNG would pass
+4 MB and has no transparency). Rebuilt files are kept in memory (64 MB) and djxl runs twice at once at most. A device
+shows JPEG XL when its request carries the `dither_jxl=1` cookie, which the web app sets when its browser decodes a
+1×1 JPEG XL (`packages/web/src/jxl.ts`, at each start), or `image/jxl` in its Accept header (Firefox from 158). Chrome
+and the Android WebView decode it from 155; Firefox ESR 128 and the browsers built on it, Edge 155 and Android's own
+decoders (the Android app's notification pictures) don't, and get the JPEG or PNG. The same path can so answer two
+devices differently; each keeps what it got.
+
+**Sending.** No chat network shows a JPEG XL as a picture (Discord takes png, jpg, gif, webp and avif; Signal,
+Telegram and WhatsApp send it as a file). So a JPEG XL attached to a message, a post, an account or group picture
+goes as a JPEG or PNG (`Uploads.common`), named for it (`holiday.jxl` → `holiday.jpg`); mail keeps the file as it is.
+Sending a kept picture on (forwarding) takes the original.
+
+### Downloading
+
+A plain media link is what this device shows best: on a browser that shows JPEG XL, a packed JPEG comes as JPEG XL.
+Saved under the network's name, `photo.jpg` would hold a JPEG XL. So the app saves through `?as=` on the same signed
+link (`packages/web/src/download.ts`, `mediaAs` in `server.ts`), and the hub names the download with the form's
+extension:
+
+| `?as=` | What comes back |
+| --- | --- |
+| `info` | JSON: what it came as and its size then (`type`, `size`, from `media_info` once packed), how it is kept (`kept`), what a plain fetch sends this device (`sent`, null when one is made for it), and the forms below that it can have (`as`) |
+| `original` | The bytes as they came, a packed picture rebuilt. Every Download and Save goes this way |
+| `jxl` | A JPEG repacked losslessly (the packed file when it is one), a PNG stored lossless |
+| `png` | A JPEG's or JPEG XL's pixels |
+| `jpeg` | A JPEG XL as the JPEG it was repacked from, else encoded at quality 92 |
+
+A JPEG offers JPEG XL and PNG, a PNG JPEG XL, a JPEG XL a JPEG and a PNG, anything else only itself (`downloadsAs`
+in the protocol package). `name` names it (the extension made the form's), else the URL's own name. A file not yet
+kept is fetched first. Conversions share the serving's memory and its two djxl at once; a PNG goes through cjxl at a
+low effort (`-e 5`, a fraction of a second for a 2560×1440 screenshot).
+
+The picture viewer shows `info` as a line under the name ("JPEG, 2.1 MB · kept as JPEG XL, 1.4 MB, shown here as
+JPEG XL"); its Download saves the original, and the button beside it lists the other forms. A picture's menu has
+Save Image As with the same forms.
+
+**Tools.** cjxl and djxl from `DITHER_JXL_DIR`, else PATH, else `nix build nixpkgs#libjxl.bin` (the live hub, whose
+PATH has none). Without them nothing is packed and every file goes as it is: a JPEG XL to every device, and to the
+network. `DITHER_JXL=0` turns it all off; `DITHER_JXL_PACK=0` only the packing.
 
 ## The viewers
 
@@ -120,6 +177,11 @@ installing installs no native binary.
   card updates by itself; that no viewer loads before a file is opened; that nothing in a Markdown file or an SVG runs
   or loads by itself; no page errors and nothing wider than a phone's screen.
 - `scripts/verify-desk.ts` covers Open File from the viewer and a click on a file with no viewer.
+- `packages/hub/test/jxl.test.ts`: telling a JPEG XL by its bytes and its size, the packer over a cache (what it packs
+  and leaves), JPEGs back byte for byte, `/media` answering a device with and without JPEG XL, and a JPEG XL attached
+  going out as a JPEG, and `?as=` (what a picture is, each form, the names, refusals). The parts that run cjxl and djxl
+  skip without them; CI's hub job installs libjxl-tools.
+- `packages/web/test/download.test.ts`: which links take `?as=`, the forms each type offers, and the viewer's line.
 
 ## Not done
 
@@ -128,5 +190,8 @@ installing installs no native binary.
 - Archives: 7z, RAR, xz, bzip2 and zstd are recognised but not listed. A tar inside gzip is listed from its first
   8 MiB.
 - No preview for Office and OpenDocument files, TIFF, HEIC or fonts; they say what they are and open in an app.
+- JPEG XL: link previews and the mail image proxy still take only the formats they did, the picture editor opens a
+  JPEG XL only where the browser shows one, and a picture the packer has packed is rebuilt for every request from a
+  device without JPEG XL that misses the 64 MB in memory.
 - A WebM from a browser's recorder has no duration in its header, so none is shown.
 - The Android app was not tried; the viewers are web pages and should work in its WebView as in Chromium.

@@ -14,24 +14,60 @@ import type { Store } from './store.ts';
 import { arrivedCopy, fitArrived } from './arrived.ts';
 import { jobFailed } from './errors.ts';
 import { pushPayload } from './webpush.ts';
+import type { ComposedLook } from './activity.ts';
 
 interface NotifierDeps {
   /** With messageView and conversationView, a message's push carries a copy of it (arrived.ts). */
   store: Pick<Store, 'notifyLook' | 'one'> & Partial<Pick<Store, 'messageView' | 'conversationView'>>;
-  activity: Pick<ActivityStore, 'notification' | 'sent'>;
+  activity: Pick<ActivityStore, 'notification' | 'sent' | 'skipped'> & Partial<Pick<ActivityStore, 'composed'>>;
   devices: Pick<Devices, 'addressed' | 'quietOn'>;
   push: Pick<PushService, 'desktops' | 'notify'>;
-  delivery: Pick<Delivery, 'listDue' | 'plan'>;
-  server: Pick<HubServer, 'notify' | 'warm'>;
+  delivery: Pick<Delivery, 'listDue' | 'conversationDue' | 'plan'> & Partial<Pick<Delivery, 'inUse'>>;
+  server: Pick<HubServer, 'notify' | 'warm' | 'watched'>;
   /** Which list rows reach the phones (phonelist.ts). */
   phone: Pick<PhoneList, 'list' | 'higher'>;
+  /** The computer comes first (Settings): a chat being read on a computer gets no push. Absent: it does. */
+  computerFirst?: () => boolean;
 }
 
 export type Tier = 'push' | 'quiet' | 'digest';
 
+/** What the decision says about how a message's push may be held (notify.ts `Notifier.message`). */
+export interface Hold {
+  /** A rule of yours made it an alert (Always alert): it goes even to a chat being read on a computer. */
+  rule?: boolean;
+  /** A silent Conversation not in a DM and not about you (delivery.ts `capped`): at most one push per chat per ten minutes. */
+  capped?: boolean;
+}
+
 /** The pictures a push names: the phone fetches each from the hub while it draws the notification. */
 function pictures(look: { icon?: string } | undefined, g: { conv?: { icon?: string }; sender?: { icon?: string }; icons?: Record<string, string> } | null): (string | undefined)[] {
   return [look?.icon, g?.conv?.icon, g?.sender?.icon, ...Object.values(g?.icons ?? {})];
+}
+
+/**
+ * Whether a push sounds where it goes, as the devices read it (sw.js, the Android app): an alert's row, unless the hub
+ * said this update is silent (delivery.ts `alert`). Kept with the notification for the scorecard's sounds a day.
+ */
+export function sounded(level: 'push' | 'quiet', extra: { tier?: unknown; alert?: unknown }): boolean {
+  return level === 'push' && (extra.tier ?? 'push') === 'push' && extra.alert !== false;
+}
+
+/** What a notification looked like beside its title and body, kept for the Notification calibration page (activity.ts `composed`). */
+function lookOf(extra: Record<string, unknown>, tier: Tier): ComposedLook {
+  const g = extra as { network?: unknown; icon?: unknown; count?: unknown; conv?: { title?: unknown; shape?: unknown }; lines?: { author?: unknown; body?: unknown; ts?: unknown }[]; keep?: unknown };
+  const conv = g.conv && typeof g.conv.title === 'string' && (g.conv.shape === 'direct' || g.conv.shape === 'group' || g.conv.shape === 'channel') ? { title: g.conv.title, shape: g.conv.shape as 'direct' | 'group' | 'channel' } : undefined;
+  const lines = Array.isArray(g.lines) ? g.lines.slice(-8).map((l) => ({ author: String(l.author ?? ''), body: String(l.body ?? '').slice(0, 300), ...(typeof l.ts === 'number' ? { ts: l.ts } : {}) })) : undefined;
+  return {
+    tier: ((extra.tier as Tier | undefined) ?? tier) as Tier,
+    ...(typeof g.network === 'string' ? { network: g.network } : {}),
+    // A picture inlined as data is left out: the page fetches the chat's picture itself.
+    ...(typeof g.icon === 'string' && !g.icon.startsWith('data:') ? { icon: g.icon } : {}),
+    ...(typeof g.count === 'number' ? { count: g.count } : {}),
+    ...(conv ? { conv } : {}),
+    ...(lines?.length ? { lines } : {}),
+    ...(g.keep === true ? { keep: true } : {}),
+  };
 }
 
 /** Room for the device id push.ts adds to each device's payload, when measuring what fits. */
@@ -42,6 +78,15 @@ export class Notifier {
   last: Promise<unknown> = Promise.resolve();
 
   constructor(private d: NotifierDeps) {}
+
+  /** The words and the moment it went out with, for where you saw it (docs/notifications.md). */
+  private compose(nid: string, title: string, body: string, look: ComposedLook) {
+    try {
+      this.d.activity.composed?.(nid, { title, body, look, computerInUse: this.d.delivery.inUse ? this.d.delivery.inUse() : null });
+    } catch (e) {
+      jobFailed('push: compose', e);
+    }
+  }
 
   /**
    * An alert ('push') goes everywhere and sounds. A Conversation ('quiet') and a list row ('digest') go only to phones,
@@ -56,11 +101,20 @@ export class Notifier {
    *
    * A held one (a reminder you set on a network, the summary when quiet hours end) carries `keep`: it shows no
    * message's time, and no read closes it, only a tap or a swipe (docs/notifications.md, "Read elsewhere, gone here").
+   *
+   * A message's push is not sent at all, and the skip is logged (`push_skip`), when its chat is open at its newest
+   * message on a computer in use (server.ts `watched`), unless a rule of yours made it an alert; or when it is a
+   * capped silent Conversation (`hold.capped`) and its chat had a push in the last ten minutes. Its line goes with the
+   * chat's next push, as a list row's does.
    */
-  message(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: Tier = 'push', importance: number | null = null, prior = true) {
+  message(title: string, body: string, conversationId: string, messageId: string, reasons: string[], pushExtra: Record<string, unknown> = {}, kind: 'message' | 'held' = 'held', tier: Tier = 'push', importance: number | null = null, prior = true, hold: Hold = {}) {
     const { store, activity, devices, push, delivery, server, phone } = this.d;
     // A chat's row in the list is brought up to date now and then, not with every message.
     if (tier === 'digest' && !delivery.listDue(conversationId)) return;
+    if (kind === 'message') {
+      const skip = !hold.rule && (this.d.computerFirst?.() ?? true) && server.watched(conversationId) ? 'watched' : hold.capped && !delivery.conversationDue(conversationId) ? 'capped' : null;
+      if (skip) return activity.skipped({ messageId, conversationId, why: skip });
+    }
     if (kind === 'message' && tier === 'digest') {
       if (!phone.list(conversationId, prior, store.one<{ ts: number }>('SELECT ts FROM message WHERE id = ?', messageId)?.ts ?? Date.now(), Date.now(), importance).send) return;
     } else if (kind === 'message') phone.higher(conversationId);
@@ -82,10 +136,12 @@ export class Notifier {
     const copy = kind === 'message' && store.messageView && store.conversationView ? arrivedCopy(store as Required<NotifierDeps['store']>, conversationId, messageId) : null;
     const arrived = copy && fitArrived(pushPayload(title, body, conversationId, { ...extra, device: DEVICE_ROOM }), copy);
     if (arrived) extra.arrived = arrived;
+    const sounds = sounded(level, extra);
+    if (nid) this.compose(nid, title, body, lookOf(extra, tier));
     this.last = server
       .warm(pictures(look, grouped))
       .then(() => push.notify(title, body, conversationId, extra, skip, level))
-      .then((r) => nid && activity.sent(nid, r))
+      .then((r) => nid && activity.sent(nid, r, sounds))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
@@ -107,10 +163,12 @@ export class Notifier {
     server.notify({ t: 'notify', messageId: n.messageId, conversationId: n.threadId, title: n.title, body: n.body, reasons: n.reasons, ...n.look, ...mail, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.threadId, n.messageId, n.level, n.addressed);
+    const extra = { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
+    if (nid) this.compose(nid, n.title, n.body, lookOf(extra, n.level));
     this.last = server
       .warm(pictures(n.look, grouped))
-      .then(() => push.notify(n.title, n.body, n.threadId, { ...n.look, ...mail, messageId: n.messageId, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level))
-      .then((r) => nid && activity.sent(nid, r))
+      .then(() => push.notify(n.title, n.body, n.threadId, extra, skip, level))
+      .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
   }
 
@@ -131,9 +189,11 @@ export class Notifier {
     server.notify({ t: 'notify', messageId: n.id, conversationId: n.group, noticeId: n.id, title: n.title, body: n.body, reasons: n.reasons, ...(nid ? { nid } : {}), ...(quiet.length ? { quiet } : {}), ...(n.level !== 'push' ? { level: n.level } : {}) });
     const skip = n.level === 'push' ? quiet : [...quiet, ...push.desktops()];
     const grouped = delivery.plan(n.group, n.id, n.level, n.addressed);
+    const extra = { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) };
+    if (nid) this.compose(nid, n.title, n.body, lookOf(extra, n.level));
     this.last = push
-      .notify(n.title, n.body, n.group, { ...n.look, noticeId: n.id, messageId: n.id, level, tier: n.level, ...(n.importance !== null ? { importance: n.importance } : {}), ...grouped, ...(nid ? { nid } : {}) }, skip, level)
-      .then((r) => nid && activity.sent(nid, r))
+      .notify(n.title, n.body, n.group, extra, skip, level)
+      .then((r) => nid && activity.sent(nid, r, sounded(level, extra)))
       .catch((e) => (console.error('push failed', e), jobFailed('push: request', e)));
     return true;
   }

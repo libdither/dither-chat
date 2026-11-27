@@ -58,15 +58,15 @@ export function isPage(r: Route): boolean {
       return !!(r.conv || r.person);
     case 'accounts':
       return !!r.account;
-    case 'mail':
-      return !!r.thread;
     case 'feed':
       return !!r.post;
     case 'profile':
     case 'directory':
     case 'requests':
     case 'notices':
+    case 'calibration':
     case 'model':
+    case 'attention':
       return true;
     default:
       return false;
@@ -82,6 +82,7 @@ export function opensOver(r: Route): boolean {
     case 'profile':
     case 'directory':
     case 'model':
+    case 'attention':
       return true;
     case 'accounts':
       return !!r.account;
@@ -96,9 +97,14 @@ export function opensOver(r: Route): boolean {
 export function ownList(r: Route, places: Places): Route {
   switch (r.view) {
     case 'inbox':
+      // A thread opened from a list of mail sits on that list (docs/mail.md "Mail as chats").
+      if (r.mail) return { view: 'inbox', mail: r.mail };
+    // falls through
     case 'requests':
     case 'notices':
-      // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests and Notices, rows in it.
+    case 'calibration':
+      // A chat or a mail thread opened in the inbox (a notification opens one there too), and Requests, Notices and
+      // Notification calibration, rows in it.
       return { view: 'inbox' };
     case 'people':
       return { view: 'people' };
@@ -108,8 +114,6 @@ export function ownList(r: Route, places: Places): Route {
       return { view: 'folder', folder: r.folder };
     case 'accounts':
       return { view: 'accounts' };
-    case 'mail':
-      return r.list ? { view: 'mail', list: r.list } : { view: 'mail' };
     case 'feed':
       return r.source ? { view: 'feed', source: r.source } : { view: 'feed' };
     case 'directory':
@@ -117,6 +121,9 @@ export function ownList(r: Route, places: Places): Route {
     // How it sorts is reached from For you, Settings or the inbox's menu; opened directly, back goes to For you.
     case 'model':
       return { view: 'foryou' };
+    // Your attention is reached from Settings and How it sorts; opened directly, back goes to Settings.
+    case 'attention':
+      return { view: 'settings' };
     case 'profile':
       return places.placeHome(r) ?? { view: 'people' };
     case 'search': {

@@ -9,7 +9,11 @@
   --net-signal: #3a91f5;
   --net-matrix: #0dbd8b;
 
-  --font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* The OS's own UI font everywhere (San Francisco, Segoe UI, Roboto, the desktop's font on Linux). Each family a
+     browser lacks is a font lookup on the first layout: on Linux, Chrome asks fontconfig through its browser process
+     for `ui-sans-serif` once per weight, and for every family after it when a glyph is missing (docs/perf.md, "Fonts
+     at the first layout"). */
+  --font: system-ui, sans-serif;
   --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, monospace;
 
   --rail-w: 72px;
@@ -372,6 +376,108 @@ code {
   align-items: center;
   gap: 8px;
 }
+/* The inbox's head: its title, what the app is doing with the hub (ui/InboxStatus.tsx), then its buttons. */
+.inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inbox-status-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  container-type: inline-size;
+  /* A little room after the title, so the two never read as one. */
+  padding-left: 6px;
+}
+.inbox-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 6px 2px 2px;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+  animation: inbox-status-in 160ms ease-out;
+}
+button.inbox-status {
+  cursor: pointer;
+}
+button.inbox-status:hover {
+  background: var(--hover);
+}
+.inbox-status-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+}
+.inbox-status .status-orb {
+  color: var(--accent);
+}
+.inbox-status.done .inbox-status-icon {
+  color: var(--accent);
+}
+.inbox-status-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inbox-status-title {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inbox-status.amber .inbox-status-title {
+  color: var(--warn);
+}
+.inbox-status-more {
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+/* Short of room (a phone's list beside a page), since when goes, and the rail's orb still tells it. */
+@container (max-width: 165px) {
+  .inbox-status-aside {
+    display: none;
+  }
+}
+@keyframes inbox-status-in {
+  from {
+    opacity: 0;
+  }
+}
+/* Out of reach: the list stays as it was, a shade quieter (ui/InboxStatus.tsx). */
+.inbox-side .side-scroll {
+  transition:
+    opacity 400ms ease,
+    filter 400ms ease;
+}
+.inbox-side.offline .side-scroll {
+  opacity: 0.9;
+  filter: saturate(0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-status {
+    animation: none;
+  }
+  .inbox-side .side-scroll {
+    transition: none;
+  }
+}
 .side-sub {
   display: block;
   color: var(--text-faint);
@@ -551,6 +657,29 @@ code {
   flex: 1;
   min-width: 0;
   margin: 0;
+  container-type: inline-size;
+}
+/* A narrow box ends its placeholder in "…" rather than cutting it, and gives the key hint's room to the words. */
+.inbox-search .search input {
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.search-hint {
+  flex: none;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  background: var(--bg-center);
+  pointer-events: none;
+}
+@container (max-width: 200px) {
+  .search-hint {
+    display: none;
+  }
 }
 /* Three classes: over .icon-btn.small, which comes later. */
 .inbox-search .icon-btn.inbox-filter-btn {
@@ -709,10 +838,111 @@ code {
     clip-path: inset(50%);
   }
 }
+/* A channel's threads as one row (docs/inbox.md "One row per channel"): a chevron beside the row's own button, at the
+   end of its top line, opens it on its unread threads, indented under the row's name. */
+.row-fold {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-faint);
+}
+.row-fold:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-row:has(> .row-fold) > .row .row-top {
+  padding-right: 22px;
+}
+/* The topic's name and its message as one line of text, cut at its end. */
+.channel-row .row-preview {
+  display: block;
+}
+.channel-row .row-subject {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.channel-row.unread .row-subject {
+  color: var(--text);
+}
+.inbox-subrows {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px 46px;
+}
+.inbox-subrows[hidden] {
+  display: none;
+}
+.inbox-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  text-align: left;
+  color: var(--text-dim);
+}
+.inbox-subrow:hover {
+  background: var(--bg-hover);
+}
+.inbox-subrow.active {
+  background: var(--bg-active);
+  color: var(--text);
+}
+.inbox-subrow.muted {
+  opacity: 0.7;
+}
+.inbox-subrow-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text);
+}
+@media (pointer: coarse) {
+  /* A finger-sized target without a taller row. */
+  .row-fold::after {
+    content: '';
+    position: absolute;
+    inset: -8px -4px;
+  }
+  .inbox-subrow {
+    min-height: 40px;
+  }
+}
 .inbox-empty {
   padding: 16px 10px;
   color: var(--text-faint);
   font-size: 13px;
+}
+/* The inbox narrowed by its box (docs/search.md "In the inbox"); what it finds beyond its rows is in ui/search.css. */
+.inbox-found-none {
+  padding-bottom: 4px;
+}
+/* Also drawn before search's chunk (and ui/search.css) is here: SearchLazy.tsx's InboxFoundLazy. */
+.inbox-found-note {
+  margin: 2px 12px 6px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+.inbox-found-outside {
+  display: block;
+  margin: 4px 10px 2px;
+  font-size: 12.5px;
+}
+.search-box .search-clear {
+  flex: none;
+  margin-right: -4px;
+  color: var(--text-faint);
 }
 .cm-why {
   display: flex;
@@ -1018,6 +1248,7 @@ code {
   text-overflow: ellipsis;
 }
 .chan-also,
+.chan-resolved,
 .chan-muted {
   color: var(--text-faint);
   flex: none;
@@ -1037,6 +1268,38 @@ code {
   border-bottom-left-radius: 4px;
   flex: none;
   margin-left: 2px;
+}
+
+.chan-line {
+  position: relative;
+}
+/* Room on the right for a fold's chevron, beside the count: on every channel and thread row, so the counts line up. */
+.chan-line > .chan,
+.chan.thread {
+  padding-right: 28px;
+}
+.chan-line:hover > .chan {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chan-fold {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+}
+.chan-fold:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.chan.chan-more .chan-name {
+  color: var(--text-faint);
 }
 
 /* folders in sidebar */
@@ -1362,11 +1625,70 @@ code {
      bar still rises above the first message. scripts/check-overflow.ts looks with it off. */
   overflow-x: clip;
 }
+/* Each row is a whole number of pixels tall, rounded up. Text makes fractional heights (a grouped message is 24.5 px),
+   and the browser's scroll anchoring scrolls by whole pixels: a message coming in below the view moved what you read by
+   half a pixel. Rounding the whole timeline instead would only move the slip to rows growing above the view.
+   No specificity, so a row's own height wins; where calc-size() is unknown, rows are as they were. */
+:where(.timeline-inner > *) {
+  height: calc-size(auto, round(up, size, 1px));
+}
 .timeline-start {
   text-align: center;
   color: var(--text-faint);
   font-size: 12px;
   padding: 16px;
+}
+/* Next unread topic (ui/NextUnread.tsx): at the bottom of a thread's timeline, in its channel's network color. */
+.next-unread {
+  --chan: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 32px);
+  margin: 12px 16px 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in oklab, var(--chan) 45%, transparent);
+  border-left: 3px solid var(--chan);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--chan) 10%, var(--bg-raised));
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.next-unread:hover {
+  background: color-mix(in oklab, var(--chan) 18%, var(--bg-raised));
+}
+.next-unread-lead {
+  color: var(--text-dim);
+  flex: none;
+}
+.next-unread-chan {
+  color: var(--text-dim);
+  flex: 0 1 auto;
+  max-width: 35%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.next-unread-count {
+  margin-left: auto;
+  flex: none;
+  color: var(--text-dim);
+}
+.next-unread.mention .next-unread-count {
+  color: var(--danger);
+}
+.next-unread-at {
+  font-weight: 700;
+  margin-right: 2px;
 }
 .day-sep,
 .new-sep {
@@ -1387,6 +1709,82 @@ code {
 }
 .new-sep {
   color: var(--danger);
+}
+/* A channel's stream (docs/threads.md "The channel stream", Timeline.tsx StreamPane): where the thread changes, its
+   name as a bar; a click opens it alone. Back among a room's own messages, the room's name. */
+.stream-head {
+  display: flex;
+  align-items: center;
+  margin: 10px 16px 2px;
+  padding: 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.stream-head-open,
+.stream-head-own {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 8px 3px 4px;
+  border: none;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+}
+.stream-head-open {
+  cursor: pointer;
+}
+.stream-head-open:hover {
+  background: var(--bg-hover);
+}
+.stream-head-own {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.stream-head-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.stream-head-go {
+  flex: none;
+  opacity: 0;
+  color: var(--text-faint);
+}
+.stream-head-open:hover .stream-head-go,
+.stream-head-open:focus-visible .stream-head-go {
+  opacity: 1;
+}
+/* A channel's views: its stream, its thread cards, its own messages (stream.ts). */
+.view-switch {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin: 6px 16px 4px;
+  padding: 2px;
+  align-self: flex-start;
+  border-radius: 8px;
+  background: var(--bg-hover, var(--border-soft));
+}
+.view-switch-btn {
+  padding: 2px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.view-switch-btn.on {
+  background: var(--bg);
+  color: var(--text);
+  font-weight: 600;
 }
 /* Above a push's copy, before the hub has answered (arrived.ts). */
 .arrived-sep {
@@ -1418,6 +1816,17 @@ code {
 .msg.mentioned {
   background: color-mix(in oklab, var(--mention-border) 14%, transparent);
   box-shadow: inset 2px 0 0 var(--mention-border);
+}
+.msg.blast {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.msg-blast {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
 }
 .msg.grouped {
   padding-top: 1px;
@@ -1479,6 +1888,26 @@ code {
 .msg-time {
   font-size: 11px;
   color: var(--text-faint);
+}
+/* The author's own time, where it is not yours (ui/TheirTime.tsx): "~" before a guess, a moon at night for them. */
+.msg-their-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.msg-their-time::before {
+  content: '·';
+  margin-right: 3px;
+}
+.msg-their-time:hover,
+.msg-their-time:focus-visible {
+  color: var(--text-dim);
+  background: var(--bg-hover);
 }
 .msg-edited {
   font-size: 10px;
@@ -1655,14 +2084,20 @@ code {
 .msg.system .reactions {
   margin-top: 0;
 }
+/* A message gone to (a quote, a link): lit up once the view gets there, then fading, as Discord does. */
 .msg.flash {
-  animation: flash 1.4s;
+  animation: flash 2s ease-out;
 }
 @keyframes flash {
   0%,
-  40% {
+  45% {
     background: var(--accent-soft);
   }
+}
+/* The message a reply's quote line points to, while the pointer is on that line: which one a click goes to. */
+.msg.quoted-hover {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .reply-quote {
@@ -1873,19 +2308,13 @@ code {
   height: 15px;
   flex: none;
 }
-/* A computer: a rail of the five ways beside the run, in the space the chat leaves there. Invisible until you point
-   at the message; then only the way in use shows, faint, in its place on the rail. Pointing at it (or tabbing to it)
-   brings the other four in around it, in full. The hidden four take no pointer, so passing beside the run doesn't
-   open the rail. */
-.pics.has-rail {
-  max-width: calc(100% - 40px);
-}
-.pics.has-rail.wide {
-  max-width: min(560px, calc(100% - 40px));
-}
+/* A computer: a rail of the five ways in the message's gutter, left of the run and level with its top, under the
+   avatar (.msg's 56px first column). Invisible until you point at the message; then only the way in use shows, faint,
+   at the rail's top (PictureRail puts it first). Pointing at it (or tabbing to it) brings the other four in below it,
+   in full. The hidden four take no pointer, so passing through the gutter doesn't open the rail. */
 .pics-rail {
   position: absolute;
-  left: calc(100% + 6px);
+  right: calc(100% + 11px);
   top: 0;
   z-index: 2;
   display: flex;
@@ -1894,6 +2323,11 @@ code {
   padding: 3px;
   opacity: 0;
   transition: opacity 0.18s;
+}
+/* A grouped message's time shows at the gutter's top when you point at it: a run that starts the message starts its
+   rail below that. */
+.msg.grouped .msg-main > .atts:first-child .pics-rail {
+  top: 16px;
 }
 .msg:hover .pics-rail {
   opacity: 0.45;
@@ -2106,6 +2540,11 @@ code {
 .pics-pinch {
   touch-action: pan-y;
 }
+/* While a run changes its way the switch holds it under the finger itself (PictureSwitch.tsx keepStill), so the
+   browser's scroll anchoring, which would hold some other message still, is off. */
+.timeline-scroll.pics-holding {
+  overflow-anchor: none;
+}
 /* While a slide is under way the run as it was stays in the page, out of sight, and the drawing between two ways is
    the block's size. */
 .pics-sliding > :not(.pics-morph-box) {
@@ -2291,11 +2730,6 @@ code {
   object-fit: contain;
   align-self: flex-start;
   border-radius: 6px;
-}
-.att-video {
-  max-width: 400px;
-  max-height: 300px;
-  border-radius: 10px;
 }
 .att-file {
   display: flex;
@@ -3154,6 +3588,151 @@ code {
 .composer-file.refused > svg {
   opacity: 0.5;
 }
+.composer-files-row {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.app.phone .composer-files-row {
+  scrollbar-width: none;
+}
+.composer-files-row > .composer-file {
+  flex: none;
+}
+/* A photo or video attached: a tile at its own shape, within bounds, that opens it large (ComposerFiles.tsx). Its
+   name and size show over its foot on a hover; × in its corner. */
+.composer-media {
+  position: relative;
+  flex: none;
+  height: 112px;
+  border-radius: 10px;
+}
+.app.phone .composer-media {
+  height: 84px;
+}
+.composer-media-open {
+  position: relative;
+  display: block;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: inherit;
+  background: var(--bg-raised);
+  cursor: zoom-in;
+}
+.composer-media-open img,
+.composer-media-open video {
+  display: block;
+  height: 100%;
+  width: auto;
+  min-width: 64px;
+  max-width: 220px;
+  object-fit: cover;
+}
+.app.phone .composer-media-open img,
+.app.phone .composer-media-open video {
+  min-width: 56px;
+  max-width: 150px;
+}
+.composer-media-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.composer-media-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+}
+.composer-media-play svg {
+  fill: currentColor;
+}
+.composer-media-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 16px 8px 5px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.7));
+  color: #fff;
+  font-size: 11px;
+  text-align: left;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.composer-media-cap > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-media-cap > small {
+  flex: none;
+  color: rgb(255 255 255 / 0.75);
+  font-size: 10px;
+}
+.composer-media-open:hover .composer-media-cap,
+.composer-media-open:focus-visible .composer-media-cap {
+  opacity: 1;
+}
+.composer-media-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.6);
+  color: #fff;
+}
+.composer-media-remove:hover {
+  background: rgb(0 0 0 / 0.85);
+}
+.composer-media-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  background: rgb(0 0 0 / 0.45);
+}
+.composer-media-why {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--danger) 82%, #000);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.composer-media.failed .composer-media-open {
+  border-color: var(--danger);
+}
 .upload-bar {
   display: block;
   height: 4px;
@@ -3984,6 +4563,27 @@ textarea.chip-box {
 }
 .forum-tag.muted {
   color: var(--text-faint);
+}
+.forum-tag.resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+}
+.forum-post-head .forum-count {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.forum-post.unread .forum-post-head b {
+  color: var(--text);
+}
+.forum-post.muted {
+  opacity: 0.75;
 }
 .forum-post span.forum-preview {
   color: var(--text-dim);
@@ -6139,9 +6739,10 @@ textarea.chip-box {
   font-size: 18px;
 }
 
+/* Bottom right, standing on a composer under it (Toasts.tsx sets --toast-lift) so its send button stays in reach. */
 .toasts {
   position: fixed;
-  bottom: 20px;
+  bottom: calc(12px + var(--toast-lift, 8px));
   right: 20px;
   z-index: 200;
   display: flex;
@@ -6561,6 +7162,15 @@ textarea.chip-box {
   .chan.thread {
     min-height: 40px;
   }
+  .chan-fold {
+    width: 40px;
+    height: 40px;
+    right: 0;
+  }
+  .chan-line > .chan,
+  .chan.thread {
+    padding-right: 44px;
+  }
   .section-head {
     padding: 6px 6px 0;
   }
@@ -6594,7 +7204,8 @@ textarea.chip-box {
   /* The same for the list beside it: hundreds of conversations, a screenful on show. It halves the first
      paint's layout on a big hub (docs/android.md). Not the rail, whose unread pills sit outside its items. */
   .side-scroll > .row,
-  .side-scroll > .inbox-row {
+  .side-scroll > .inbox-row,
+  .side-scroll > .inbox-group {
     content-visibility: auto;
     contain-intrinsic-size: auto 60px;
   }
@@ -7221,10 +7832,27 @@ textarea.chip-box {
 .viewer-name {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+}
+.viewer-name > span,
+.viewer-name > .viewer-format {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+}
+.viewer-name > .viewer-format {
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .viewer-name > .viewer-format {
+    white-space: normal;
+  }
+}
+.viewer-bar .viewer-as {
+  width: 28px;
+  margin-left: -6px;
 }
 .viewer-name small {
   color: rgb(255 255 255 / 0.7);
@@ -7332,11 +7960,38 @@ textarea.chip-box {
     padding-top: 6px;
   }
 }
-/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page, so
-   the viewers' bars start below them (wider than a phone, the file box already does). */
+/* An installed app with the window controls overlay: the window's own buttons are drawn over the top of the page.
+   The full-window layers keep their top bar at the very top and leave those buttons their corner, the part of the
+   width outside env(titlebar-area-x/width): right of it, or left of it on a Mac. The bar's empty parts move the
+   window, as the title bar's do. (Wider than a phone, the file box already clears them; the camera's top row has its
+   own rule.) */
 @media (display-mode: window-controls-overlay) {
+  :root {
+    --wco-left: env(titlebar-area-x, 0px);
+    --wco-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  }
   .viewer-bar {
-    padding-top: calc(6px + env(titlebar-area-height, 0px));
+    padding-left: calc(16px + var(--wco-left));
+    padding-right: calc(8px + var(--wco-right));
+  }
+  .lv-bar {
+    padding-left: calc(10px + var(--wco-left));
+    padding-right: calc(10px + var(--wco-right));
+  }
+  .story-bar {
+    padding-left: calc(12px + var(--wco-left));
+    padding-right: calc(12px + var(--wco-right));
+  }
+  .viewer-bar,
+  .lv-bar,
+  .story-bar,
+  .cam-top {
+    app-region: drag;
+    -webkit-app-region: drag;
+  }
+  :is(.viewer-bar, .lv-bar, .story-bar, .cam-top) :is(button, input, select, a, form, [role='button']) {
+    app-region: no-drag;
+    -webkit-app-region: no-drag;
   }
 }
 @media (max-width: 820px) and (display-mode: window-controls-overlay) {
@@ -7380,6 +8035,9 @@ textarea.chip-box {
 }
 .fv-none .icon {
   color: var(--text-faint);
+}
+.fv-video {
+  margin: 24px auto;
 }
 .fv-media {
   display: block;
@@ -10451,6 +11109,18 @@ html[data-theme='light'] .acc-dot {
   font-weight: 700;
   color: var(--text);
 }
+/* Your message waiting on their answer: when it is likely to come (Typing.tsx AnswerNote). Pointing shows their day. */
+.answer-note {
+  pointer-events: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.answer-note:hover {
+  color: var(--text-dim);
+}
 .typing-dots {
   display: inline-flex;
   align-items: center;
@@ -10514,6 +11184,57 @@ html[data-theme='light'] .acc-dot {
     animation: none;
     opacity: 0.7;
   }
+}
+/* Opening a chat (ui/OpenBar.tsx): a 2 px line along the foot of this row, right over the message box. Nothing for the
+   first 180 ms, which is most opens; the fill moves by Web Animations, on the compositor. */
+.open-bar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  opacity: 0;
+  animation: open-bar-in 160ms ease-out 180ms forwards;
+}
+.open-bar.done {
+  opacity: 1;
+  animation: open-bar-out 220ms ease-in 140ms forwards;
+}
+.open-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left;
+  transform: scaleX(0);
+}
+@keyframes open-bar-in {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes open-bar-out {
+  to {
+    opacity: 0;
+  }
+}
+/* A slow open, in the row's own words: which step, the hub's or the network's (OpenBar.tsx). */
+.open-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.open-note.slow {
+  color: var(--warn);
+}
+.app.phone .open-bar {
+  left: 10px;
+  right: 10px;
 }
 /* ================================================================== end typing */
 
@@ -11092,7 +11813,16 @@ html[data-theme='light'] .acc-dot {
   color: inherit;
   cursor: pointer;
 }
-.pf-avatar-edit:focus-visible {
+/* Anyone else's picture opens full screen in the image viewer, to zoom. */
+.pf-avatar-view {
+  display: block;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: zoom-in;
+}
+.pf-avatar-edit:focus-visible,
+.pf-avatar-view:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -11220,6 +11950,23 @@ html[data-theme='light'] .acc-dot {
 }
 .pf-status-emoji {
   font-size: 16px;
+}
+img.pf-status-emoji {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  vertical-align: -4px;
+}
+.pf-fact-who {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.pf-fact-who:hover {
+  text-decoration: underline;
 }
 .pf-actions {
   display: flex;
@@ -11723,6 +12470,24 @@ html[data-theme='light'] .acc-dot {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--text-faint);
 }
+/* A status dot on an avatar (PresenceDot.tsx): bottom right, or top right where the network's badge has that corner.
+   A ring of the surface around it parts it from the picture; offline is a hollow ring there too. No motion. */
+.avatar-presence {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+}
+.avatar-presence.at-top {
+  top: -1px;
+  bottom: auto;
+}
+.avatar-presence.offline {
+  background: var(--bg-sidebar);
+  box-shadow:
+    inset 0 0 0 2px var(--text-faint),
+    0 0 0 2px var(--bg-sidebar);
+}
 .pf-asking {
   color: var(--text-faint);
   animation: pf-pulse 1.4s ease-in-out infinite;
@@ -11757,6 +12522,12 @@ html[data-theme='light'] .acc-dot {
   margin: 0;
   font-size: 12.5px;
   color: var(--text-faint);
+}
+.pf-voice-h {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
 }
 .pf-stale {
   margin: 0;
@@ -11853,56 +12624,6 @@ a.pf-link:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.pf-spaces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
-}
-.pf-space {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  background: var(--bg-center);
-  border: 1px solid var(--border-soft);
-  text-align: left;
-  min-width: 0;
-}
-.pf-space:hover {
-  border-color: var(--border);
-  background: var(--bg-hover);
-}
-.pf-space-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.pf-space-text b {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pf-space-text small {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Seen and estimated message counts: two lines rather than cut off. */
-.pf-space-text small.pf-msgcount {
-  white-space: normal;
-  line-height: 1.3;
-}
-.pf-roles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
 .pf-role {
   --role: var(--text-faint);
   display: inline-flex;
@@ -11966,7 +12687,7 @@ a.pf-link:hover {
   align-self: flex-start;
   margin-top: 2px;
 }
-/* The Mail card (mail/people.ts): a thread you have read is not bold. */
+/* A mail thread in Between you (mail/people.ts): its subject bold only while unread. */
 .pf-mail-row:not(.unread) .pf-row-text b {
   font-weight: 500;
 }
@@ -12007,27 +12728,87 @@ a.pf-link:hover {
 .pf-person:hover {
   background: var(--bg-hover);
 }
-.pf-identity {
+/* A person's several accounts (Profile.tsx AccountRow): a row each, its picture, name, handle, and Main or Picture
+   when it speaks for them; Edit opens its menu's choices as buttons under it. */
+.pf-acct-list {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-/* A person's several accounts (Profile.tsx AccountTile): each its own picture, name, handle and bio, by network. */
-.pf-acct-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 8px;
+  flex-direction: column;
+  margin: 0 -6px;
 }
 .pf-acct {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   min-width: 0;
-  padding: 10px;
+  padding: 8px 6px;
   border-radius: var(--radius);
+}
+.pf-acct + .pf-acct {
+  border-top: 1px solid var(--border-soft);
+}
+.pf-acct.editing {
   background: var(--bg-center);
-  border: 1px solid var(--border-soft);
+}
+.pf-acct-mark {
+  flex: none;
+  font-size: 11px;
+  padding: 0 7px;
+  margin: 0 4px;
+  border-radius: 10px;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.pf-acct-edit-btn {
+  flex: none;
+}
+.pf-acct-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+}
+.pf-acct-edit .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pf-acct-edit .btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pf-acct-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pf-acct-note .net-glyph {
+  display: inline-block;
+  vertical-align: -1px;
+}
+/* Friends (Profile.tsx FriendsCard): which network each is from, a chip per network that shows only its own. */
+.pf-friend-nets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pf-friend-nets .chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pf-friend-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.pf-person-nets {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  flex: none;
+  color: var(--text-faint);
 }
 .pf-acct-text {
   display: flex;
@@ -12084,17 +12865,6 @@ a.pf-link:hover {
   font-size: 11.5px;
   color: var(--text-faint);
 }
-.pf-acct-bio {
-  margin: 2px 0 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-dim);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-}
 .pf-acct-sum {
   cursor: pointer;
 }
@@ -12125,20 +12895,96 @@ a.pf-link:hover {
 
 /* ------------------------------------------------------------------ message history (docs/history.md) */
 
-.msg-gone {
-  margin-top: 0;
+/* A kept deleted or disappeared message: one short line, well below the faintest text, that the eye passes over. Its
+   name, its words cut at the edge, and how long it stayed and when it went at the end. A click opens it in place. */
+.msg.msg-gone {
+  --gone: color-mix(in oklab, var(--text) 34%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--text) 22%, var(--bg-center));
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 16px 2px 0;
+  font-size: 12.5px;
+  color: var(--gone);
+  cursor: pointer;
+  min-width: 0;
 }
-/* A kept deleted or disappeared message: in full, with how and when it went in a quiet line under it. */
+/* A mention of you: the whole line in a faint amber, and a faint amber ground. */
+.msg.msg-gone.to-you {
+  --gone: color-mix(in oklab, var(--mention-text) 45%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--mention-text) 30%, var(--bg-center));
+  background: color-mix(in oklab, var(--mention-border) 6%, transparent);
+}
+.msg-gone-face {
+  flex: none;
+  align-self: center;
+  width: 56px;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 4px;
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+.msg-gone-who {
+  flex: none;
+  font-weight: 500;
+}
+.msg-gone-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.msg-gone:not(.open) .msg-gone-text {
+  pointer-events: none;
+}
+/* Folded, the words run on one line: what would be a block of its own flows inline. */
+.msg-gone:not(.open) .msg-gone-text :is(.msg-body, .msg-body *) {
+  display: inline;
+  white-space: nowrap;
+}
+.msg-gone .msg-gone-text .msg-body,
+.msg-gone .msg-gone-text .msg-body :is(a, code, .mention) {
+  color: inherit;
+  background: none;
+  font-size: inherit;
+}
+.msg-gone .msg-gone-text .mention {
+  box-shadow: inset 0 0 0 1px var(--gone-2);
+}
+.msg-gone .msg-gone-text :is(img.emoji, .jumbo img) {
+  height: 1.2em;
+  width: auto;
+  opacity: 0.5;
+}
+.msg-gone.open {
+  align-items: flex-start;
+}
+.msg-gone.open .msg-gone-face {
+  align-self: flex-start;
+}
+.msg-gone.open .msg-gone-text {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+.msg-gone.open .atts {
+  opacity: 0.5;
+}
 .msg-gone-mark {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 3px;
   font-size: 11px;
-  color: var(--text-faint);
+  white-space: nowrap;
+  color: var(--gone-2);
 }
-.msg-gone-when {
-  opacity: 0.8;
+.msg-gone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 button.msg-edited.link {
   font-size: 10px;
@@ -12148,43 +12994,6 @@ button.msg-edited.link {
 }
 button.msg-edited.link:hover {
   color: var(--link);
-}
-.edit-history {
-  min-width: 260px;
-  max-width: 420px;
-  max-height: 360px;
-  overflow-y: auto;
-  padding: 4px 0;
-}
-.edit-loading {
-  margin: 4px 10px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.edit-version {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border-soft);
-}
-.edit-version:first-of-type {
-  border-top: 0;
-}
-.edit-when {
-  font-size: 10.5px;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.edit-body {
-  font-size: 13px;
-  color: var(--text-dim);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.edit-version.now .edit-body {
-  color: var(--text);
 }
 
 /* History on profile pages */
@@ -12397,46 +13206,15 @@ button.msg-edited.link:hover {
   gap: 2px;
   margin-left: 2px;
 }
-.msg-history {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 300px;
+/* The words a message's last edit put in, in the chat: a quiet underline that opens the edits. */
+.msg-changed {
+  text-decoration: underline dotted color-mix(in oklab, var(--accent) 70%, transparent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
-.msg-history h4 {
-  margin: 0 0 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-faint);
-}
-.msg-history-event {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  font-size: 13px;
-  color: var(--text-dim);
-  border-top: 1px solid var(--border-soft);
-}
-.msg-history-event:first-of-type {
-  border-top: 0;
-}
-.msg-history-event b {
-  color: var(--text);
-}
-.msg-history-event time {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-.edit-history .msg-history,
-.menu .msg-history {
-  padding: 8px 10px;
-  max-width: 420px;
-  max-height: 380px;
-  overflow-y: auto;
+.msg-changed:hover {
+  text-decoration-style: solid;
 }
 
 /* Settings → Adversarial features */
@@ -12714,6 +13492,31 @@ button.msg-edited.link:hover {
 .boot-status {
   color: var(--text-dim);
   font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+/* The orb fills from the bottom as the inbox comes (Loader.tsx bootFill): a dim orb, and a lit one shown through a
+   window that slides up while the orb in it slides down, both transforms, so the compositor plays them. */
+.boot-orb {
+  position: relative;
+  display: block;
+  width: 88px;
+  height: 88px;
+}
+.boot-orb-dim {
+  opacity: 0.32;
+}
+.boot-fill,
+.boot-fill-in {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--fill-ms, 250ms) cubic-bezier(0.25, 0.6, 0.4, 1);
+}
+.boot-fill {
+  overflow: hidden;
+  transform: translateY(calc((1 - var(--fill, 0)) * 100%));
+}
+.boot-fill-in {
+  transform: translateY(calc((var(--fill, 0) - 1) * 100%));
 }
 .boot-slow {
   color: var(--text-faint);
@@ -13205,30 +14008,6 @@ button.msg-edited.link:hover {
 .mail-acc-dot.warn {
   box-shadow: 0 0 0 2px var(--bg-sidebar), 0 0 0 3.5px var(--warn);
 }
-/* Mail's views: one row that scrolls sideways, with no scrollbar, rather than wrapping onto a second. */
-.mail-chips {
-  flex-wrap: nowrap;
-  align-items: center;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
-}
-.mail-chips::-webkit-scrollbar {
-  display: none;
-}
-.mail-chips.fade-r {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-}
-.mail-chips.fade-l {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px);
-  mask-image: linear-gradient(to right, transparent, #000 28px);
-}
-.mail-chips.fade-l.fade-r {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
-}
 /* Under "Mail": whose mail the views show, as wheels (ScopeWheel): the choice in use, the rest a click or a turn away. */
 .scope-wheels {
   display: flex;
@@ -13611,8 +14390,31 @@ button.msg-edited.link:hover {
   color: var(--warn);
 }
 /* Over the header while threads are picked, so the list under the finger does not move. */
+/* A mail message in a chat, opened up (ChatMail.tsx): its quote, or the mail as it was sent. */
+.chat-mail-quote {
+  margin-top: 4px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  color: var(--text-dim);
+}
+.chat-mail-sent {
+  margin-top: 6px;
+  max-width: 720px;
+}
+.chat-mail-empty {
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* A mail list in the Inbox's place (ui/mail/MailSidebar.tsx), under the Inbox's header and chips: the rest of the column. */
 .mail-side {
   position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mail-side > .scope-wheels {
+  padding: 8px 12px 0;
 }
 .mail-pickbar {
   position: absolute;
@@ -13695,24 +14497,12 @@ button.msg-edited.link:hover {
   }
 }
 
-/* Mail search (slice 7): in Mail's sidebar, and as a group on the search page. */
-.mail-search-btn + .mail-boxes-btn {
-  margin-left: 0;
-}
-.mail-search-btn.on {
-  color: var(--accent);
-}
+/* Mail search (slice 7): in a mail list's place, and as a group on the search page. */
 .mail-search {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-.mail-search-box {
-  margin: 4px 12px 2px;
-}
-.mail-search-box input {
-  min-width: 0;
 }
 .mail-hit .mail-hit-snip {
   display: -webkit-box;
@@ -13991,8 +14781,7 @@ button.msg-edited.link:hover {
 }
 .mail-img-banner {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 4px 8px;
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -14009,6 +14798,56 @@ button.msg-edited.link:hover {
   gap: 6px;
 }
 .mail-img-banner-faint {
+  color: var(--text-faint);
+}
+.mail-img-banner-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.mail-img-banner-text {
+  flex: 1 1 200px;
+}
+.mail-img-more {
+  width: 24px;
+  height: 24px;
+}
+.mail-pic-details {
+  overflow-x: auto;
+}
+.mail-pic-details table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.mail-pic-details td {
+  padding: 3px 8px 3px 0;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+.mail-pic-details .pic-host {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mail-pic-details .pic-n,
+.mail-pic-details .pic-size {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.mail-pic-details .pic-personal,
+.mail-pic-details .pic-tracker {
+  color: var(--warn);
+}
+.mail-pic-details tr.pic-drop td {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-faint);
+}
+.mail-pic-details tr.pic-drop td.pic-act {
+  text-decoration: none;
+}
+.mail-pic-note {
+  margin: 6px 0 0;
   color: var(--text-faint);
 }
 .mail-files {
@@ -14065,9 +14904,6 @@ button.msg-edited.link:hover {
 }
 
 /* Mail: the composer and the outbox strip (slice 5, ui/mail/Composer.tsx). */
-.side-new + .mail-compose-btn {
-  margin-left: 0;
-}
 .mail-drafts-line {
   display: inline-flex;
   align-items: center;
@@ -14355,6 +15191,14 @@ button.msg-edited.link:hover {
   color: var(--danger);
   text-decoration: underline wavy var(--danger);
 }
+.mc-row-x {
+  flex: none;
+  /* No taller than the To line's own links. */
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  color: var(--text-faint);
+}
 .mc-more {
   display: flex;
   flex: none;
@@ -14520,12 +15364,11 @@ button.msg-edited.link:hover {
 /* The format bar, over the footer when Aa is on. */
 .mc-format {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 4px 8px;
   border-top: 1px solid var(--border-soft);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .mc-fmt {
   flex: none;
@@ -14556,25 +15399,29 @@ button.msg-edited.link:hover {
   font-size: 12.5px;
   font-weight: 600;
 }
+.mc-fmt.on {
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+.mc-fmt-h {
+  font-weight: 700;
+  font-size: 14px;
+}
+.mc-fmt-clear {
+  font-size: 14px;
+}
+.mc-fmt-clear sub {
+  font-size: 9px;
+}
 .mc-fmt-gap {
   flex: 1;
 }
-.mc-preview-btn {
-  font-size: 12.5px;
-}
-.mc-preview-btn.on {
-  background: var(--bg-raised);
-  color: var(--text);
-}
-.mc-preview {
-  min-height: 160px;
-}
-.mc-preview-frame {
-  display: block;
-  width: 100%;
-  height: 160px;
-  border: 0;
-  background: transparent;
+/* A phone: the bar's buttons closer. */
+@media (max-width: 480px) {
+  .mc-fmt {
+    min-width: 28px;
+    padding: 0 4px;
+  }
 }
 .mc-limit {
   flex: 1;
@@ -14587,6 +15434,748 @@ button.msg-edited.link:hover {
 }
 .mc-limit.over {
   color: var(--danger);
+}
+/* ------------------------------------------------------------ the mail editor (ui/mail/editor) */
+.me {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-height: 180px;
+}
+.me-views {
+  position: relative;
+  flex: 1 0 auto;
+  display: grid;
+}
+/* Every view in the same cell: the one leaving fades and lifts away over the one settling in. */
+.me-view {
+  grid-area: 1 / 1;
+  min-width: 0;
+  display: none;
+}
+.me-view.shown,
+.me-view.leaving {
+  display: block;
+}
+.me-view.leaving {
+  pointer-events: none;
+  animation: me-leave 0.24s ease forwards;
+}
+.me-view.entering {
+  animation: me-enter 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes me-leave {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+    filter: blur(1.5px);
+  }
+}
+@keyframes me-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .me-view.leaving,
+  .me-view.entering {
+    animation: none;
+  }
+  .me-view.leaving {
+    display: none;
+  }
+}
+/* Rich: the text as it will look. */
+.me-rich-doc {
+  min-height: 160px;
+  padding: 12px 0;
+  outline: none;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+.me-rich-doc > :first-child {
+  margin-top: 0;
+}
+.me-rich-doc p {
+  margin: 0 0 0.6em;
+}
+.me-rich-doc h1,
+.me-rich-doc h2,
+.me-rich-doc h3 {
+  margin: 0.8em 0 0.4em;
+  line-height: 1.25;
+}
+.me-rich-doc h1 {
+  font-size: 1.5em;
+}
+.me-rich-doc h2 {
+  font-size: 1.25em;
+}
+.me-rich-doc h3 {
+  font-size: 1.1em;
+}
+.me-rich-doc ul,
+.me-rich-doc ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.6em;
+}
+/* A mail quote: the bar mail apps draw, the text in the editor's own colour (it is yours to trim or answer in). */
+/* Over the quote's own inline style, which is for the mail as it goes (schema.ts blockquote): the same bar as Markdown's. */
+.me-rich-doc blockquote {
+  margin: 0 0 0.6em 2px !important;
+  padding-left: 10px !important;
+  border-left: 2px solid var(--text-faint) !important;
+}
+/* A picture from an original that will not go (MailEditor's leftOut): faded and dashed; a held one, already striped, keeps its strength. */
+.me-rich-doc img.dc-out {
+  opacity: 0.35;
+  outline: 2px dashed var(--danger);
+  outline-offset: -2px;
+}
+.me-rich-doc img.dc-out[data-dc-held] {
+  opacity: 1;
+}
+.me-rich-doc code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.me-rich-doc pre {
+  margin: 0 0 0.6em;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  white-space: pre-wrap;
+}
+.me-rich-doc pre code {
+  padding: 0;
+  background: none;
+}
+.me-rich-doc a {
+  color: var(--accent);
+}
+.me-rich-doc img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.me-rich-doc img.ProseMirror-selectednode,
+.me-rich-doc .me-pic-web.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+.me-rich-doc table {
+  border-collapse: collapse;
+  margin: 0 0 0.8em;
+}
+.me-rich-doc td,
+.me-rich-doc th {
+  min-width: 48px;
+  vertical-align: top;
+}
+.me-rich-doc .selectedCell {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.me-rich-doc p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+/* A forward, a quote or kept HTML: a sealed sheet with a bar. */
+.me-island {
+  margin: 8px 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.me-island.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+}
+.me-island-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: grab;
+}
+.me-island-name {
+  /* Its first words ("Kept as its own HTML · 87 KB") on a line of their own on a phone, the buttons under them. */
+  flex: 1 1 14em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.me-island-btn {
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.me-island-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.me-island-frame {
+  display: block;
+  width: 100%;
+  height: 48px;
+  border: 0;
+  background: #fff;
+}
+/* Markdown: drawn as you type. Plain: the text as it goes. */
+.me-markdown .cm-editor,
+.me-plain .cm-editor,
+.me-html .cm-editor {
+  outline: none;
+  background: transparent;
+  color: var(--text);
+}
+.me-markdown .cm-scroller,
+.me-plain .cm-scroller {
+  font-family: inherit;
+}
+.me-markdown .cm-content,
+.me-plain .cm-content {
+  min-height: 160px;
+  padding: 12px 0;
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.55;
+  caret-color: var(--text);
+}
+.me-markdown .cm-line,
+.me-plain .cm-line {
+  padding: 0;
+}
+.me-markdown .md-h1 {
+  font-size: 1.5em;
+  font-weight: 700;
+}
+.me-markdown .md-h2 {
+  font-size: 1.25em;
+  font-weight: 700;
+}
+.me-markdown .md-h3 {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.me-markdown .md-strong {
+  font-weight: 700;
+}
+.me-markdown .md-em {
+  font-style: italic;
+}
+.me-markdown .md-strike {
+  text-decoration: line-through;
+}
+.me-markdown .md-code,
+.me-markdown .md-fence-line {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+.me-markdown .md-code {
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+}
+.me-markdown .md-fence-line {
+  background: var(--bg-raised);
+}
+.me-markdown .md-link {
+  color: var(--accent);
+}
+/* Quoted lines: a bar for each level of quote, in the text's own colour (as Rich draws them). */
+.me-markdown .md-quote-line {
+  border-left: 2px solid var(--text-faint);
+  padding-left: 10px !important;
+}
+.me-markdown .md-quote-line.md-quote-in1 {
+  padding-left: 22px !important;
+  background: linear-gradient(var(--text-faint), var(--text-faint)) 10px 0 / 2px 100% no-repeat;
+}
+.me-markdown .md-quote-line.md-quote-in2 {
+  padding-left: 34px !important;
+  background:
+    linear-gradient(var(--text-faint), var(--text-faint)) 10px 0 / 2px 100% no-repeat,
+    linear-gradient(var(--text-faint), var(--text-faint)) 22px 0 / 2px 100% no-repeat;
+}
+/* Markdown: a block kept whole, drawn as it arrives (its own HTML), with a bar naming it. */
+/* An island's own HTML, edited in place under it. */
+.me-island-code {
+  max-height: 320px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--bg-center);
+  font-size: 12px;
+}
+.me-markdown .md-island-sheet {
+  display: block;
+  /* Its one-line bar must not widen the text to its own length. */
+  contain: inline-size;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 4px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font);
+}
+.me-markdown .md-island-sheet-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg-center);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.me-markdown .md-island-sheet-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.md-island-sheet-btn {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+.me-markdown .md-island-sheet .me-island-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+.me-markdown .md-html {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+.md-bullet {
+  display: inline-block;
+  width: 1em;
+  color: var(--text-dim);
+}
+.md-thumb {
+  max-width: min(100%, 320px);
+  max-height: 200px;
+  vertical-align: middle;
+  border-radius: 4px;
+}
+/* Plain: a forward's or a quote's text, as it goes, under its name; read-only, set off by a rule at its side. */
+.md-island-text {
+  display: block;
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+.md-island-text-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.md-island-x {
+  margin-left: auto;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+}
+.md-island-x:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+/* A picture from the web while you write (editor/schema.ts webBox): a striped box its shape, its host on it, never
+   fetched; dashed red and "left out" when it will not go. */
+.me-pic-web {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 2px 4px;
+  border: 1px dashed var(--text-faint);
+  background: repeating-linear-gradient(45deg, var(--bg-raised) 0 6px, var(--bg-hover) 6px 12px);
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  vertical-align: middle;
+  word-break: break-all;
+}
+.me-pic-web.dc-out {
+  border: 2px dashed var(--danger);
+  color: var(--danger);
+}
+.me-pic-web.dc-out::after {
+  content: 'left out';
+}
+.md-chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+/* HTML: the code, folded where the forward is, and the mail as it arrives beside it. */
+.me-html {
+  display: none;
+}
+.me-html.shown,
+.me-html.leaving {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+}
+.me-html-code .cm-editor {
+  /* A scroll of its own, as the mail beside it has. */
+  max-height: calc(100dvh - 120px);
+  min-height: 220px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.me-html-code .cm-content {
+  font-family: var(--mono);
+}
+.me-html-code .cm-gutters {
+  background: transparent;
+  border-right: 1px solid var(--border-soft);
+}
+.me-html-preview {
+  /* Beside the code as it scrolls, with a scroll of its own: a long mail stays in view. */
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-width: 0;
+  max-height: calc(100dvh - 120px);
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.me-html-panes {
+  display: none;
+}
+.me-html-pane {
+  padding: 3px 12px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.me-html-pane.on {
+  background: var(--bg-raised);
+  color: var(--text);
+  font-weight: 600;
+}
+.me-html-preview-head {
+  padding: 4px 10px;
+  background: var(--bg-raised);
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+/* Narrow: the code over the mail. */
+@container (max-width: 560px) {
+  .me-html.shown,
+  .me-html.leaving {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .me-html.shown,
+  .me-html.leaving {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* A phone: the code or the mail, one at a time; rows as tall as they are. */
+  .me-html.shown,
+  .me-html.leaving {
+    align-content: start;
+  }
+  .me-html-panes {
+    display: flex;
+    gap: 4px;
+  }
+  .me-html[data-pane='code'] .me-html-preview,
+  .me-html[data-pane='preview'] .me-html-code {
+    display: none;
+  }
+  .me-html-preview {
+    position: static;
+    max-height: none;
+  }
+}
+/* The bar stays at the foot of the composer's scroll, over the text. */
+.me-bar {
+  position: sticky;
+  bottom: -12px;
+  z-index: 2;
+  margin: 0 -14px -12px;
+  padding: 4px 8px;
+  background: var(--bg-center);
+}
+/* Rich, Markdown, HTML, Plain: a segmented switch whose thumb slides to the one you pick. */
+.me-modes {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+.me-modes-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  width: var(--w, 0);
+  border-radius: 6px;
+  background: var(--bg-center);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
+  transform: translateX(var(--x, 2px));
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.me-mode {
+  position: relative;
+  padding: 3px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.me-mode.on {
+  color: var(--text);
+  font-weight: 600;
+}
+.me-bar-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A phone: one row that scrolls sideways under the view switch, which stays at its end. (Wider, the bar is one row
+   until ⋯ opens the rest onto a second.) */
+@media (max-width: 480px) {
+  .me-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .me-bar .me-modes {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    box-shadow: -10px 0 8px -4px var(--bg-center);
+  }
+}
+.me-color-a {
+  font-weight: 700;
+  text-decoration: underline 3px #c2410c;
+}
+.me-pop {
+  position: sticky;
+  bottom: 34px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 0 0 4px;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--bg-center);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+.me-pop-input {
+  width: min(320px, 60vw);
+}
+.me-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-center);
+  box-shadow: 0 0 0 1px var(--border);
+}
+/* In the footer: how its pictures from the web go ("12 · Link"), opening the choice. */
+.mc-pics {
+  position: relative;
+  flex: none;
+}
+.mc-pics-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.mc-pics-btn:hover {
+  color: var(--text);
+}
+.mc-pics-what {
+  margin: 0 0 6px;
+  color: var(--text);
+}
+.mc-pics-tell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--text);
+}
+.mc-pics-note {
+  margin: 8px 0 2px;
+  color: var(--text-dim);
+}
+.mc-seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-center);
+}
+.mc-seg-btn {
+  padding: 2px 10px;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.mc-seg-btn.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+/* The footer's size, and its breakdown. */
+.mc-size {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.mc-size-btn {
+  display: block;
+  max-width: 100%;
+  text-align: left;
+}
+.mc-size-btn:hover {
+  color: var(--text);
+}
+.mc-size-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  width: min(340px, 80vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-center);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.22);
+  font-size: 12.5px;
+}
+@media (max-width: 480px) {
+  .mc-foot {
+    position: relative;
+  }
+  .mc-foot .mc-size,
+  .mc-foot .mc-pics {
+    position: static;
+  }
+  .mc-foot .mc-size-pop {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+  /* Room for the size and the pictures: the paperclip says Attach, the paper plane Send. */
+  .mc-foot .hdr-btn-label,
+  .mc-pics-n,
+  .mc-size-cap,
+  .mc-foot .mc-send-label {
+    display: none;
+  }
+  .mc-foot .mc-send {
+    padding-inline: 14px;
+  }
+  /* Big enough for a finger. */
+  .mc-foot .mc-pics-btn,
+  .mc-foot .mc-size-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+  .md-island-x {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .mc-seg-btn {
+    min-height: 34px;
+  }
+  .mc-pics-tell {
+    min-height: 34px;
+  }
+}
+/* A phone: the picture bar in a line or two; why they are held is in Details and on a long press. */
+@media (max-width: 480px) {
+  .mail-img-why,
+  .mail-img-bytes {
+    display: none;
+  }
+}
+.mc-size-pop table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mc-size-pop th {
+  padding: 2px 0;
+  color: var(--text-dim);
+  font-weight: normal;
+  text-align: left;
+}
+.mc-size-pop td {
+  padding: 2px 0;
+  text-align: right;
+  white-space: nowrap;
+}
+.mc-size-total th,
+.mc-size-total td {
+  padding-top: 5px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.mc-seg-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.mc-seg-btn.on .mc-seg-warn {
+  color: inherit;
+}
+.mc-size-note {
+  margin: 8px 0;
+  color: var(--text-faint);
+}
+.mc-body-loading {
+  display: grid;
+  place-items: center;
 }
 .mc-strip {
   position: fixed;
@@ -14880,6 +16469,11 @@ button.msg-edited.link:hover {
 }
 .requests-row .row-preview {
   color: var(--text-faint);
+}
+/* Notification calibration's row (Calibration.tsx): a quiet count, not the accent's call for attention. */
+.calibration-row .requests-count {
+  background: var(--bg-hover);
+  color: var(--text-dim);
 }
 .requests-pane {
   overflow: hidden;
@@ -15266,6 +16860,13 @@ button.msg-edited.link:hover {
   padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
   background: linear-gradient(rgb(0 0 0 / 0.45), transparent);
 }
+/* Beside the window's own buttons in an installed app with the window controls overlay (see .viewer-bar). */
+@media (display-mode: window-controls-overlay) {
+  .cam-top {
+    padding-left: calc(12px + var(--wco-left));
+    padding-right: calc(12px + var(--wco-right));
+  }
+}
 .cam-btn {
   width: 48px;
   height: 48px;
@@ -15407,6 +17008,19 @@ button.msg-edited.link:hover {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+/* The picture viewer open from its photo: it is in the app, under this, so this goes until the viewer closes. */
+.send-screen.under-viewer {
+  visibility: hidden;
+}
+/* The photo, a button that opens it in the picture viewer. */
+.ss-zoom {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
 }
 .ss-file {
   display: flex;
@@ -16063,7 +17677,7 @@ h1:hover > .pair-nick-edit,
   width: 100%;
   min-height: 0;
   border: 0;
-  background: var(--bg);
+  background: var(--bg-center);
 }
 .plan-chip {
   display: flex;
@@ -16762,7 +18376,7 @@ h1:hover > .pair-nick-edit,
   place-items: center;
   padding: 16px;
   overflow: auto;
-  background: var(--bg);
+  background: var(--bg-center);
 }
 .login-card {
   width: 100%;
@@ -17505,5 +19119,186 @@ h1:hover > .pair-nick-edit,
 .place-keys kbd {
   color: var(--text);
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--bg-center);
+}
+
+/* The inbox row's loudness edge: how loud its latest message was, as a thin bar on its left. */
+.conv-row[data-loud] {
+  box-shadow: inset 3px 0 0 color-mix(in oklab, var(--accent) var(--loud-mix), transparent);
+}
+
+/* The profile's tighter cards and merged parts (Profile.tsx): the glance, Between you, Accounts with your standing under
+   each, In common. */
+.pf-cols .pf-card {
+  padding: 10px 12px;
+  gap: 7px;
+}
+.pf-main,
+.pf-side,
+.pf-lead {
+  gap: 10px;
+}
+.pf-lead {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+/* One column: each side's lead (the glance, About, Between you, Accounts, In common) before the rest. */
+@media (max-width: 900px) {
+  .pf-cols {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .pf-main,
+  .pf-side {
+    display: contents;
+  }
+  .pf-lead {
+    order: -1;
+  }
+}
+.pf-cols {
+  padding-bottom: 24px;
+}
+.pf-sub-h {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pf-people-sum {
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.pf-people-sum b {
+  color: var(--text);
+}
+.pf-tie .pf-row-text small {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pf-meter {
+  width: 42px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  flex: none;
+  overflow: hidden;
+}
+.pf-meter i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.pf-more {
+  align-self: flex-start;
+  font-size: 12px;
+}
+.pf-ties {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pf-between-foot {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.pf-between-foot:empty {
+  display: none;
+}
+.pf-between {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pf-between .pf-msg-body b {
+  font-weight: 600;
+}
+.pf-glance {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.pf-glance b {
+  color: var(--text);
+  font-weight: 600;
+}
+.pf-acct-item .pf-acct {
+  padding: 4px 6px;
+  align-items: center;
+}
+/* An account named as the person: its handle leads, on one line with its buttons. */
+.pf-acct-item[data-same] .pf-acct-name {
+  display: none;
+}
+.pf-acct-item[data-same] .pf-acct-text {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 8px;
+}
+.pf-acct-item[data-same] .pf-acct-handle {
+  order: -1;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-item[data-same] .pf-acct-top {
+  flex: none;
+}
+.pf-acct-item[data-same] .pf-acct-edit {
+  flex-basis: 100%;
+}
+/* How yours stand with it, a line each under it, its button small. */
+.pf-acct-item .pf-conn-list {
+  margin: 0;
+  padding: 0;
+}
+.pf-acct-item .pf-conn-title,
+.pf-acct-item .pf-link-row > :first-child {
+  display: none;
+}
+.pf-acct-item .pf-links-list {
+  margin: -2px 6px 6px 52px;
+}
+.pf-acct-item .pf-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.pf-acct-item .pf-link-what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.pf-acct-item .pf-link-what b {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-text, var(--accent));
+}
+.pf-acct-item .pf-link-row .btn {
+  padding: 1px 6px;
+  font-size: 11px;
+  min-height: 0;
+  color: var(--text-faint);
 }

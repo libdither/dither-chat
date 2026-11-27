@@ -20,6 +20,8 @@ import { backPage, closePalette, lookUp, pushPage, scanned } from './Palette.tsx
 import { Frame, type Row } from './PaletteFrame.tsx';
 import { MyCodes, ScanCode } from './QrCodes.tsx';
 import { NEW_GROUP } from './Switcher.tsx';
+import { openCompose } from './mail/lazy.tsx';
+import { canSendFrom } from '../mail/drafts.ts';
 
 interface Person extends Reachable {
   avatar: string | null;
@@ -80,7 +82,7 @@ function groupHere() {
 }
 
 const PLACEHOLDER = { message: 'Name, @username or phone', join: 'Invite link or address', add: 'Username, @handle or phone' } as const;
-const MENU_ICON: Record<string, string> = { 'n:group-with': 'groups', 'n:add-here': 'userPlus', 'n:add': 'userPlus', 'n:group': 'groups', 'n:scan': 'scan', 'n:mine': 'qr' };
+const MENU_ICON: Record<string, string> = { 'n:email': 'mail', 'n:group-with': 'groups', 'n:add-here': 'userPlus', 'n:add': 'userPlus', 'n:group': 'groups', 'n:scan': 'scan', 'n:mine': 'qr' };
 
 /** New: its menu and the people you would most likely message; typed or pasted, everything the box reads. */
 export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
@@ -94,7 +96,7 @@ export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
 
   const here = needle ? undefined : groupHere();
   const dm = needle ? undefined : dmHere();
-  const menu = needle ? [] : newMenu({ mode: e.mode, newGroup: !!NEW_GROUP, canAdd: addableGroups().length > 0, here: here ? here.title : null, groupWith: dm?.name });
+  const menu = needle ? [] : newMenu({ mode: e.mode, newGroup: !!NEW_GROUP, canAdd: addableGroups().length > 0, here: here ? here.title : null, groupWith: dm?.name, email: [...db.mail.accounts.values()].some(canSendFrom) });
   const menuRows = menu.map(
     (m): Row => ({
       key: m.key,
@@ -103,7 +105,9 @@ export function NewPage({ e }: { e: Entry & { kind: 'new' } }) {
       class: `switcher-row ${m.key === 'n:scan' ? 'qr-scan-btn' : m.key === 'n:mine' ? 'qr-mine-btn' : ''}`,
       track: `menu (${m.key.slice(2)})`,
       run: () =>
-        m.key === 'n:scan'
+        m.key === 'n:email'
+          ? (closePalette(), openCompose({ kind: 'new' }))
+          : m.key === 'n:scan'
           ? pushPage({ kind: 'scan', into: e.id })
           : m.key === 'n:mine'
             ? pushPage({ kind: 'mine' })

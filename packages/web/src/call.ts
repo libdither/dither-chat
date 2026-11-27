@@ -7,6 +7,7 @@
  * voice server only through the hub.
  */
 
+import { pauseNowPlaying } from './nowplaying.ts';
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
 import { BRIDGE_MIDS, CALL_INPUT_DEFAULT, callInput, NETWORK_META } from '@dither-chat/protocol';
@@ -234,6 +235,8 @@ function silentMic(): MediaStream {
  */
 export async function startCall(conversationId: string, accountId: string, mode: P.CallMode, ring = false) {
   if (activeCall.value && activeCall.value.phase !== 'ended') leaveCall();
+  // A voice message or video playing stops for the call (nowplaying.ts).
+  pauseNowPlaying();
   clickAt = performance.now();
   speaker = new Audio();
   speaker.autoplay = true;
@@ -367,7 +370,7 @@ async function onServer(m: P.CallServerMessage) {
     case 'state': {
       const st = m.state as P.CallState & { identities?: P.IdentityView[] };
       for (const i of st.identities ?? []) db.identities.set(i.id, i);
-      if (st.identities?.length) changed('shown');
+      if (st.identities?.length) changed('identity');
       const participants = st.participants.map((p) => {
         const native = db.identities.get(p.id)?.nativeId;
         const local = native ? speakingLocal.get(native) : undefined;

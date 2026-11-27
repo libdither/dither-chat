@@ -286,6 +286,11 @@ export const WEIGHTS = {
   owed: 60,
   /** Per unread DM message or mention, up to `unreadCap` of them. */
   unreadAddressed: 12,
+  /**
+   * Per unread @everyone, @all, @here or @topic, up to `unreadCap`: it pinged you with everyone else, so it counts
+   * more than a message that did not and less than one to you.
+   */
+  unreadWildcard: 6,
   /** Per other unread message, up to `unreadCap`. */
   unreadOther: 3,
   unreadCap: 3,
@@ -332,7 +337,10 @@ export interface ScoreInput {
   /** Their name, for the reasons. */
   authorName: string | null;
   unread: number;
+  /** Unread mentions of you, `wildcards` among them. */
   mentions: number;
+  /** Of `mentions`, the @everyone-style ones (vantage.wildcards); absent, none. */
+  wildcards?: number;
   /** The first reason of an unread alert or Conversation message, until you swipe its notification away. */
   pinged: string | null;
   /** That message is an alert. */
@@ -533,11 +541,12 @@ export function scoreConversation(x: ScoreInput): Scored {
 
   // Unread: what is addressed to you counts most.
   if (x.unread > 0) {
-    const addressed = x.shape === 'direct' ? x.unread : Math.min(x.mentions, x.unread);
-    const other = x.unread - addressed;
-    parts.unread = W.unreadAny + W.unreadAddressed * Math.min(addressed, W.unreadCap) + W.unreadOther * Math.min(other, W.unreadCap);
-    const text =
-      x.shape === 'direct' ? plural(x.unread, 'unread message') : x.mentions ? `${plural(x.mentions, 'unread mention')}${other ? `, ${other} more unread` : ''}` : plural(x.unread, 'unread message');
+    const wild = x.shape === 'direct' ? 0 : Math.min(x.wildcards ?? 0, x.mentions, x.unread);
+    const addressed = x.shape === 'direct' ? x.unread : Math.min(x.mentions - wild, x.unread - wild);
+    const other = x.unread - addressed - wild;
+    parts.unread = W.unreadAny + W.unreadAddressed * Math.min(addressed, W.unreadCap) + W.unreadWildcard * Math.min(wild, W.unreadCap) + W.unreadOther * Math.min(other, W.unreadCap);
+    const said = [addressed ? plural(addressed, 'unread mention') : '', wild ? `${wild} @everyone` : ''].filter(Boolean).join(', ');
+    const text = x.shape === 'direct' ? plural(x.unread, 'unread message') : said ? `${said}${other ? `, ${other} more unread` : ''}` : plural(x.unread, 'unread message');
     reasons.push({ w: parts.unread, text });
   }
   if (x.pinged) {
@@ -699,6 +708,8 @@ export class Attention {
   judge?: AttentionJudge;
   /** The activity log's per-place features (docs/activity.md): shown by `explain`, not scored yet. */
   activity?: Pick<ActivityStore, 'features'>;
+  /** Sort by a message's loudness rather than its importance (main.ts: DITHER_ATTENTION=on). */
+  byLoudness = false;
   /** Other rows of the inbox: mail threads (mail/attention.ts). */
   readonly sources: AttentionSource[] = [];
   /** How you answer an author elsewhere (their mail, mail/attention.ts), summed with their chat tallies. */
@@ -1029,9 +1040,13 @@ export class Attention {
     // An open message request waits under Requests, not in the inbox (add.ts); a network's notifications have a row
     // of their own (docs/feed.md).
     if (!c || QUIET_VARIANTS.has(c.variant) || requestHeld(db, cid)) return null;
-    const v = db.query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`).get(cid) as Row;
+    // Across accounts, the most mentions and the most of them to you (not @everyone).
+    const v = db
+      .query(`SELECT MAX(unread) AS unread, MAX(mentions) AS mentions, MAX(mentions - wildcards) AS direct, MIN(COALESCE(last_read_ts, 0)) AS read FROM vantage WHERE target_kind = 'conversation' AND target_id = ?`)
+      .get(cid) as Row;
     const unread = v?.unread ?? 0;
     const mentions = v?.mentions ?? 0;
+    const wildcards = Math.max(0, mentions - Math.max(0, v?.direct ?? 0));
     const listed = !!c.listed;
     if (!listed && !unread) return null;
     const row = db.query('SELECT state FROM conv_feature WHERE conversation_id = ?').get(cid) as Row | null;
@@ -1050,8 +1065,9 @@ export class Attention {
     // Swiped away on the phone since: seen. It stays unread, and counts for nothing more here.
     const seen = pushedUnread && ((db.query('SELECT MAX(dismissed_at) AS at FROM notification WHERE conversation_id = ?').get(cid) as Row | null)?.at ?? 0) >= state.lastPush!.ts;
     if (pushedUnread && !seen) {
-      const t = db.query('SELECT decision, score, reasons FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
-      importance = t?.score ?? null;
+      const t = db.query('SELECT decision, score, reasons, loud FROM triage WHERE message_id = ?').get(state.lastPush!.id) as Row | null;
+      // Once the loudness decides (DITHER_ATTENTION=on), the inbox sorts by it: its owed and exploration stay.
+      importance = this.byLoudness && t?.loud != null ? t.loud / 100 : (t?.score ?? null);
       alerted = t?.decision === 'push' && now - state.lastPush!.ts <= PIN_FOR;
       // The list's rows have their importance; an alert or a Conversation says why it is one.
       if (!t || t.decision === 'push' || t.decision === 'quiet') pinged = (t ? (JSON.parse(t.reasons) as string[])[0] : null) ?? 'a message you have not read';
@@ -1082,6 +1098,7 @@ export class Attention {
       authorName: nameOf(turn?.author ?? peer?.id ?? null),
       unread,
       mentions,
+      wildcards,
       pinged,
       alerted,
       importance,

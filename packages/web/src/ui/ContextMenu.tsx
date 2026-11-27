@@ -66,6 +66,8 @@ export interface MenuSpec {
   label?: string;
   /** The area its items' keys count under (clicks.ts), such as "message menu". */
   track?: string;
+  /** Where it ends when it opens upward: a menu that does not fit below its point goes above this line (a button's top). */
+  flipY?: number;
 }
 
 /** Groups of items with a line between each; empty groups and stray lines go. */
@@ -142,15 +144,15 @@ export async function copy(text: string, what = 'Copied') {
 const PAD = 8;
 
 /** Where a box of this size goes: at the point, flipped or pushed back inside the window. */
-function place(x: number, y: number, w: number, h: number, vw: number, vh: number, flipX?: number): { left: number; top: number } {
+function place(x: number, y: number, w: number, h: number, vw: number, vh: number, flipX?: number, flipY?: number): { left: number; top: number } {
   let left = x;
   if (left + w > vw - PAD) left = flipX !== undefined ? flipX - w : x - w;
   left = Math.max(PAD, Math.min(left, vw - w - PAD));
-  const top = Math.max(PAD, Math.min(y, vh - h - PAD));
+  const top = Math.max(PAD, Math.min(flipY !== undefined && y + h > vh - PAD ? flipY - h : y, vh - h - PAD));
   return { left, top };
 }
 
-function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }: { items: MenuEntry[]; x: number; y: number; flipX?: number; depth: number; onClose: () => void; onBack?: () => void; autoFocus: 'first' | 'none'; track?: string }) {
+function Panel({ items, x, y, flipX, flipY, depth, onClose, onBack, autoFocus, track }: { items: MenuEntry[]; x: number; y: number; flipX?: number; flipY?: number; depth: number; onClose: () => void; onBack?: () => void; autoFocus: 'first' | 'none'; track?: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(autoFocus === 'first' ? items.findIndex(selectable) : -1);
   const [open, setOpen] = useState<{ index: number; x: number; y: number; flipX: number; focus: 'first' | 'none' } | null>(null);
@@ -160,11 +162,24 @@ function Panel({ items, x, y, flipX, depth, onClose, onBack, autoFocus, track }:
     if (!el) return;
     // Its size without the opening animation's scale: measured mid-animation, a tall menu came out a few pixels
     // short and hung past the window's edge.
-    const p = place(x, y, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight, flipX);
-    el.style.left = `${p.left}px`;
-    el.style.top = `${p.top}px`;
+    const put = () => {
+      const p = place(x, y, el.offsetWidth, el.offsetHeight, innerWidth, innerHeight, flipX, flipY);
+      el.style.left = `${p.left}px`;
+      el.style.top = `${p.top}px`;
+    };
+    put();
     el.style.visibility = 'visible';
     el.focus({ preventScroll: true });
+    // A row that fills in after it opens (a message's loudness, fetched) makes it taller: placed again, so it stays
+    // inside the window.
+    // Only when it would hang past an edge: moved under the pointer otherwise, a right-click's release could land on it.
+    const past = () => {
+      const r = el.getBoundingClientRect();
+      if (r.bottom > innerHeight || r.right > innerWidth) put();
+    };
+    const grown = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(past);
+    grown?.observe(el);
+    return () => grown?.disconnect();
   }, [x, y]);
   useEffect(() => () => clearTimeout(hover.current), []);
 
@@ -297,7 +312,7 @@ function DesktopMenu({ spec, onClose }: { spec: MenuSpec & { x: number; y: numbe
   }, []);
   return (
     <div class="cm-root" ref={root} aria-label={spec.label} data-track-area={spec.track}>
-      <Panel items={spec.items} x={spec.x} y={spec.y} depth={0} onClose={onClose} autoFocus="none" track={spec.track} />
+      <Panel items={spec.items} x={spec.x} y={spec.y} flipY={spec.flipY} depth={0} onClose={onClose} autoFocus="none" track={spec.track} />
     </div>
   );
 }

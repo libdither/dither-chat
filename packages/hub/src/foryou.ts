@@ -242,6 +242,11 @@ interface ForYouOptions {
   slices?: SliceOptions;
   /** Straight through, not in slices: for tests. */
   whole?: boolean;
+  /**
+   * What your answers taught (the calibration feed's, and For you's own from before it), as a factor on a candidate's score (loudlearn.ts; only while the loudness
+   * decides, DITHER_ATTENTION=on). Absent: 1.
+   */
+  worth?: (c: { conv: string; author: string | null }) => number;
 }
 
 export class ForYou {
@@ -400,7 +405,9 @@ export class ForYou {
 
   private *snapshot(now: number): Generator<number, Snapshot> {
     const cands = yield* this.candidates(now);
-    const scored = fold(cands, now);
+    let scored = fold(cands, now);
+    const worth = this.o.worth;
+    if (worth) scored = scored.map((x) => ({ ...x, score: x.score * worth({ conv: x.c.conv, author: x.c.author }) })).sort((a, b) => b.score - a.score);
     yield scored.length;
     const items = place(scored, { random: this.o.random ?? Math.random, novelty: this.novelty(now) });
     const snap: Snapshot = { epoch: randomId(), at: now, items, counts: new Map() };
@@ -421,7 +428,8 @@ export class ForYou {
       if (!snap) snap = await this.run('foryou.snapshot', this.snapshot(now));
       const n = Math.min(Math.max(0, limit), 50);
       const slice = snap.items.slice(from, from + n);
-      return { ...this.serve(snap, slice, now), epoch: snap.epoch, at: snap.at, next: from + n < snap.items.length ? from + n : null, ...(reset ? { reset: true } : {}) };
+      const served = this.serve(snap, slice, now);
+      return { ...served, epoch: snap.epoch, at: snap.at, next: from + n < snap.items.length ? from + n : null, ...(reset ? { reset: true } : {}) };
     });
   }
 

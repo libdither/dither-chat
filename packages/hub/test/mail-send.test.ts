@@ -429,6 +429,55 @@ describe('when it does not go', () => {
   });
 });
 
+describe('pictures inside the mail', () => {
+  /** A PNG's bytes: the same picture pasted twice is one part. */
+  const png = (n: number) => Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(n, 7)]);
+  const pasted = (b: Buffer) => `<img src="data:image/png;base64,${b.toString('base64')}" alt="p">`;
+
+  test('they go as parts with content ids; the Sent copy reads them back inline, so they are not listed as files', async () => {
+    const w = await world({ opts: { details: { inlineParts: true } } as FakeOpts });
+    const html = `<p>Two pictures</p>${pasted(png(40))}${pasted(png(60))}`;
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w, { kind: 'new', replyTo: null, draftKey: null, quote: false, text: 'Two pictures', html, pictures: 'embed' })));
+    await clock.advance(50);
+    await until(() => state(w, outboxId) === 'sent', 4000, 'sent');
+    const out = w.fake.sent[0];
+    expect(out.files.map((f) => !!f.contentId)).toEqual([true, true]);
+    const id = msg(out.messageId);
+    await until(() => w.hub.store.one('SELECT 1 FROM mail_message WHERE id = ?', id), 4000, 'the Sent copy');
+    await clock.wait(w.hub.body(id));
+    const view = w.hub.store.bodyView(id)!;
+    expect(view.html).toBeTruthy();
+    expect(view.attachments).toEqual([]);
+  });
+
+  test('embed leaves out what it cannot fetch and what would tell, never links it; the outbox item says so', async () => {
+    const w = await world({ opts: { details: { inlineParts: true } } as FakeOpts });
+    // Private addresses: the hub's image proxy refuses them without a request.
+    const html = `<p style="text-align: center">Look <b>here</b></p>${pasted(png(40))}<img src="https://10.0.0.1/logo.png"><img src="https://10.0.0.2/u/8812344/hero.png">`;
+    const text = '<p style="text-align: center">Look **here**</p>\n\n![p](dc-picture:p1)';
+    const { outboxId } = await clock.wait(w.hub.outbox.accept(reply(w, { kind: 'new', replyTo: null, draftKey: null, quote: false, text, html, pictures: 'embed' })));
+    expect(w.hub.outbox.item(outboxId)!.pictures).toEqual({ embedded: 1, leftOut: { failed: 1, canTell: 1 } });
+    await clock.advance(50);
+    await until(() => state(w, outboxId) === 'sent', 4000, 'sent');
+    const out = w.fake.sent[0];
+    expect(out.mail.html).not.toContain('10.0.0.');
+    expect((out.mail as unknown as Record<string, unknown>).pictures).toBeUndefined();
+    // The text part is plain text: the paragraph's words, no tags.
+    expect(out.mail.text).toBe('Look **here**\n\n[picture: p]');
+    expect(w.hub.outbox.item(outboxId)!.pictures).toEqual({ embedded: 1, leftOut: { failed: 1, canTell: 1 } });
+  });
+
+  test('the cap counts the pictures inside as bytes, as files are counted, parts or data: alike', async () => {
+    for (const inlineParts of [true, false]) {
+      const w = await world({ opts: { details: { inlineParts, sendCap: 1000 } } as FakeOpts });
+      const send = (n: number) => clock.wait(w.hub.outbox.accept(reply(w, { kind: 'new', replyTo: null, draftKey: null, quote: false, text: 'x', html: pasted(png(n)), pictures: 'embed' })));
+      // 8 + 980 bytes go (its base64 would be over 1000); 8 + 1000 do not.
+      expect(await send(980).then((r) => r.state)).toBe('held');
+      expect(await status(w, send(1000))).toBe(413);
+    }
+  });
+});
+
 describe('files', () => {
   test('by path when the manager is on this machine; their uploads go, and so does the outbox’s copy once sent', async () => {
     const w = await world();

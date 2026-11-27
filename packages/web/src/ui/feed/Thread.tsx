@@ -83,6 +83,30 @@ interface Crumb {
 const trail: Crumb[] = [];
 let leaving: { crumb: Crumb; at: number } | null = null;
 
+type MarkdownChunk = typeof import('../files/MarkdownView.tsx');
+let markdown: MarkdownChunk | null = null;
+
+/**
+ * A long-form post's whole body (`article`: Substack, LessWrong), in place of its preview and cover. The renderer is the file
+ * viewer's chunk, loaded the first time an article shows; until then, and if it fails, the post's preview.
+ */
+function Article({ p, kit, network }: { p: P.PostFact; kit: Kit; network: P.Network }) {
+  const [m, setM] = useState<MarkdownChunk | null>(markdown);
+  useEffect(() => {
+    if (m) return;
+    let live = true;
+    import('../files/MarkdownView.tsx').then(
+      (c) => live && setM((markdown = c)),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!m) return <Text p={p} kit={kit} network={network} cls="thread-focal-text" />;
+  return <m.MarkdownBody text={p.article!} cls="thread-article" />;
+}
+
 /** The post asked for, large: who, where, its title, its words (behind a content warning), pictures, the quote, its full time, counts, and Open on its network. */
 function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; kit: Kit; network: P.Network; joined: boolean; answer: AnswerCtx; children?: preact.ComponentChildren }) {
   const shown = p.repostOf ?? p;
@@ -100,8 +124,15 @@ function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; k
       <Place p={shown} />
       {shown.title && <h2 class="post-title thread-focal-title">{shown.title}</h2>}
       <Folded warning={shown.warning} kit={kit}>
-        <Text p={shown} kit={kit} network={network} cls="thread-focal-text" />
-        <Pics media={shown.media} />
+        {shown.article ? (
+          // Its pictures are in it; the cover (media) is the post's picture for cards, usually its first one again.
+          <Article p={shown} kit={kit} network={network} />
+        ) : (
+          <>
+            <Text p={shown} kit={kit} network={network} cls="thread-focal-text" />
+            <Pics media={shown.media} />
+          </>
+        )}
       </Folded>
       {shown.quoteOf && <QuotedIn p={shown.quoteOf} kit={kit} network={network} />}
       <div class="thread-focal-time">{kit.fullTime(shown.ts)}</div>

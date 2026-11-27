@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS vantage (
   last_read_ts INTEGER,
   unread       INTEGER NOT NULL DEFAULT 0,
   mentions     INTEGER NOT NULL DEFAULT 0,
+  -- Of those mentions, how many were @everyone, @all, @here or @topic (attention.ts weighs them less).
+  wildcards    INTEGER NOT NULL DEFAULT 0,
   native_mute  TEXT,                           -- JSON NativeMute, as the network reports it
   PRIMARY KEY (account_id, target_kind, target_id)
 );
@@ -65,7 +67,10 @@ CREATE TABLE IF NOT EXISTS person (
   is_self    INTEGER NOT NULL DEFAULT 0,
   manual     INTEGER NOT NULL DEFAULT 0,      -- the user merged or renamed it; ingest won't touch the name
   created_at INTEGER NOT NULL,
-  name_source TEXT NOT NULL DEFAULT 'network' -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  name_source TEXT NOT NULL DEFAULT 'network', -- network | merge (P.NameSource); 'user' until 2026-11-11, when nicknames moved to identity
+  face_id    TEXT,                            -- the account they are shown by: its name as you see it and its picture
+  face_pinned INTEGER NOT NULL DEFAULT 0,     -- you chose face_id (Make Main Account); else the hub keeps or chooses one
+  picture_identity_id TEXT                    -- the account whose picture they show, when you chose one other than face_id's
 );
 
 CREATE TABLE IF NOT EXISTS identity (
@@ -86,6 +91,13 @@ CREATE TABLE IF NOT EXISTS identity (
   UNIQUE (network, native_id)
 );
 CREATE INDEX IF NOT EXISTS identity_person ON identity(person_id);
+-- A network saying two of its ids are one account (IdentityFact.sameAs: Partiful's chat id beside its user id). Kept so
+-- the two are put with one person once, when first said: a split you made afterwards stays split.
+CREATE TABLE IF NOT EXISTS identity_same (
+  identity_id TEXT PRIMARY KEY REFERENCES identity(id) ON DELETE CASCADE,
+  same_as     TEXT NOT NULL,                  -- the identity it is the same account as
+  at          INTEGER NOT NULL
+) WITHOUT ROWID;
 
 -- 3. places ------------------------------------------------------------------
 
@@ -156,6 +168,8 @@ CREATE TABLE IF NOT EXISTS message (
   mentions_self   INTEGER NOT NULL DEFAULT 0,
   -- The mention of you was @everyone or @here: it notifies like one, but is not addressed to you.
   mentions_all    INTEGER NOT NULL DEFAULT 0,
+  -- The mention of you was of a group you are in (a Zulip user group, a Discord role), not you by name.
+  mentions_group  INTEGER NOT NULL DEFAULT 0,
   deleted         INTEGER NOT NULL DEFAULT 0,
   -- When gone, how and when (docs/history.md): 'deleted' or 'disappeared'; the body stays if the hub kept it.
   gone_how        TEXT,
@@ -333,6 +347,17 @@ CREATE TABLE IF NOT EXISTS chat_route (
   set_at          INTEGER NOT NULL
 );
 
+-- How a place shows in a view, when you chose (docs/mail.md "Mail as chats", rungs.ts): a view is a chat id
+-- ('person:<id>'), a place what shows in it (a mail thread 'mth_…'); `rung` one of protocol RUNGS (hidden, closed,
+-- open). Without a row the view's default holds.
+CREATE TABLE IF NOT EXISTS place_rung (
+  view_id   TEXT NOT NULL,
+  place_id  TEXT NOT NULL,
+  rung      TEXT NOT NULL,
+  set_at    INTEGER NOT NULL,
+  PRIMARY KEY (view_id, place_id)
+);
+
 -- Categories are questions; scores are a provider's answers; overrides are yours and always win.
 CREATE TABLE IF NOT EXISTS category (
   id       TEXT PRIMARY KEY,
@@ -434,11 +459,16 @@ CREATE TABLE IF NOT EXISTS triage (
   was         TEXT,                          -- the level it was decided at before the tiers, when it was
   alert_mark  INTEGER,                       -- your mark: 1 it should have alerted, 0 the alert was wrong
   less_mark   INTEGER,                       -- your mark: 1 less like this
-  marked_at   INTEGER
+  marked_at   INTEGER,
+  loud        REAL,                          -- its loudness on the one scale, 0 to 100 (loudness.ts), deciding or in shadow
+  loud_view   TEXT,                          -- JSON { band, live, parts, reasons, why, moment }: what the loudness was worked out from
+  message_ts  INTEGER                        -- the message's ts, kept with the decision (setTriage) for triage_notified
 );
 CREATE INDEX IF NOT EXISTS triage_created ON triage(created_at);
 -- The inbox's picks by tier, best first (store.ts inboxQueries).
 CREATE INDEX IF NOT EXISTS triage_tier_score ON triage(decision, score);
+-- Alerts and Conversations newest first: the inbox's notified pick walks it and stops at its limit.
+CREATE INDEX IF NOT EXISTS triage_notified ON triage(message_ts) WHERE decision IN ('push', 'quiet');
 CREATE INDEX IF NOT EXISTS triage_feedback ON triage(feedback_at) WHERE feedback IS NOT NULL;
 CREATE INDEX IF NOT EXISTS triage_marked ON triage(marked_at) WHERE marked_at IS NOT NULL;
 
@@ -549,6 +579,9 @@ CREATE TABLE IF NOT EXISTS owed_turn (
   dismissed       INTEGER NOT NULL DEFAULT 0,  -- 1: you marked it "No reply needed" (reply_mark)
   PRIMARY KEY (conversation_id, addressed)
 ) WITHOUT ROWID;
+-- The scorecard's people metrics (scorecard.ts): turns answered on a day, and turns begun in a span.
+CREATE INDEX IF NOT EXISTS owed_turn_answered ON owed_turn(answered_at) WHERE answered_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS owed_turn_addressed ON owed_turn(addressed);
 
 -- The chance a turn needs a reply as shown (needsreply.ts), kept once per open turn at 15 min, 1 h, 6 h and 1 day of
 -- age, to check against what you did (owed_turn): the calibration record (docs/inbox.md, "Needs a reply"). A year.
@@ -562,6 +595,19 @@ CREATE TABLE IF NOT EXISTS needs_prediction (
   PRIMARY KEY (conversation_id, addressed, age)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS needs_prediction_addressed ON needs_prediction(addressed);
+
+-- ------------------------------------------------------------------ status dots (presence.ts, docs/profile.md)
+-- How each person is on their network now, as last heard: one row each, current state only, never a history (that
+-- is the change log's, behind the adversarial presence switch). Hidden while no account that heard it is online; gone
+-- with its accounts, or when stale.
+CREATE TABLE IF NOT EXISTS presence_now (
+  identity_id TEXT PRIMARY KEY,
+  state       TEXT NOT NULL,                   -- online, idle, dnd, offline
+  devices     TEXT,                            -- desktop,mobile,web as the network said, comma-separated
+  at          INTEGER NOT NULL,                -- when it became so
+  heard       INTEGER NOT NULL,                -- when the hub last heard it (written with a change), for staleness
+  accounts    TEXT                             -- the accounts that heard this state, comma-separated: shown while one is online
+) WITHOUT ROWID;
 
 -- ------------------------------------------------------------------ the change journal (journal.ts, docs/sync.md)
 -- What changed, by object, at which position, so a client that comes back asks only for that. Compacted: one row
@@ -657,7 +703,14 @@ CREATE TABLE IF NOT EXISTS notification (
   tapped_at       INTEGER,
   dismissed_at    INTEGER,
   replied_at      INTEGER,
-  visit_id        TEXT                       -- the visit the tap led to
+  visit_id        TEXT,                      -- the visit the tap led to
+  alert           INTEGER,                   -- 1: it sounded where it went (an alert's first push of a burst, a ring); NULL: from before this was kept
+  -- What the devices drew, for the Notification calibration page (docs/notifications.md, "Where you saw it"): the words
+  -- the hub sent, kept WORDS_KEPT (activity.ts) and then cleared; the rest stays with the row.
+  title           TEXT,
+  body            TEXT,
+  look            TEXT,                      -- JSON: network, icon, tier, count, conv { title, shape }, lines [{ author, body, ts }]
+  computer_in_use INTEGER                    -- 1: a computer had the app in use when it went out
 );
 CREATE INDEX IF NOT EXISTS notification_sent ON notification(sent_at);
 CREATE INDEX IF NOT EXISTS notification_conv ON notification(conversation_id, sent_at);
@@ -667,8 +720,30 @@ CREATE TABLE IF NOT EXISTS notification_event (
   device          TEXT NOT NULL DEFAULT '',  -- push registration id, or the page's device id
   event           TEXT NOT NULL,
   at              INTEGER NOT NULL,
+  seen            TEXT,                      -- JSON P.NotificationSeen: where and how it showed, as the device said
   PRIMARY KEY (notification_id, device, event)
 ) WITHOUT ROWID;
+-- Each push registration a notification went to (push.ts), for where you saw it: the device, by its label then.
+CREATE TABLE IF NOT EXISTS notification_device (
+  notification_id TEXT NOT NULL,
+  device          TEXT NOT NULL,             -- push_subscription.id
+  label           TEXT NOT NULL,
+  android         INTEGER NOT NULL DEFAULT 0, -- the Android app (it takes clears), else a browser
+  sounds          INTEGER NOT NULL DEFAULT 0, -- sent to sound there
+  ok              INTEGER NOT NULL DEFAULT 0, -- its push server took it
+  PRIMARY KEY (notification_id, device)
+) WITHOUT ROWID;
+
+-- A push the hub did not send (notify.ts, docs/notifications.md "One notification per conversation"): `watched`, the
+-- chat was open at its newest message on a computer in use; `capped`, a silent Conversation within its chat's ten
+-- minutes. Ids and times only; part of the log (deleted with it, kept for its retention).
+CREATE TABLE IF NOT EXISTS push_skip (
+  message_id      TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  why             TEXT NOT NULL,             -- watched, capped
+  at              INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_skip_at ON push_skip(at);
 
 -- The phone's list (phonelist.ts, docs/notifications.md "The phone's list"): one row per episode of a chat on the
 -- list, from its first list message that asked for the phone until the row went (or, held, would have gone). Kept
@@ -1134,3 +1209,107 @@ END;
 CREATE TRIGGER IF NOT EXISTS people_dirty_change_log AFTER INSERT ON change_log WHEN new.target_kind = 'identity' AND new.field IN ('displayName', 'handle') BEGIN
   INSERT INTO people_dirty (id) SELECT new.target_id WHERE NOT EXISTS (SELECT 1 FROM people_dirty WHERE id = new.target_id);
 END;
+
+-- Who was seen at which event (docs/events.md "People"): hosts, and guests on a list the site showed by name. Never a
+-- guest of a list the host hid (guestsShown 'count' or 'hidden'): such a read removes the event's guest rows instead.
+-- rsvp: theirs when the site said it (your own account's, from the event's `rsvp`). The event is the post the hub logged
+-- as message `post:<event>` on its network.
+CREATE TABLE IF NOT EXISTS event_seen (
+  identity_id TEXT NOT NULL,
+  network     TEXT NOT NULL,
+  event_id    TEXT NOT NULL,
+  role        TEXT NOT NULL,                -- 'host' | 'guest'
+  rsvp        TEXT,
+  first_at    INTEGER NOT NULL,
+  seen_at     INTEGER NOT NULL,
+  PRIMARY KEY (identity_id, network, event_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS event_seen_event ON event_seen(network, event_id);
+
+-- Your answers about messages on the one loudness scale (loudlearn.ts, docs/notifications.md "What it learns from"): a
+-- check-in, Louder / Quieter, a notification's Worth it / Could have waited, and the optional why. Ids, codes and
+-- times only: free text is read by the local model and never kept.
+CREATE TABLE IF NOT EXISTS attn_answer (
+  id              TEXT PRIMARY KEY,
+  message_id      TEXT,
+  conversation_id TEXT,
+  author          TEXT,                      -- the person (else identity) who wrote it
+  answer          TEXT NOT NULL,             -- P.AttnAnswer
+  source          TEXT NOT NULL,             -- P.AttnSource
+  scope           TEXT,                      -- Louder / Quieter: 'person' | 'chat'; null: this kind of message
+  checkin_id      TEXT,                      -- the check-in (before the feed) or feed item it answers
+  band            TEXT,                      -- the loudness band it had (shadow or live)
+  parts           TEXT,                      -- feed: JSON, the parts it was wrong about (the answer moves only those)
+  chance          REAL,                      -- feed: the chance its card was drawn with
+  sounded         INTEGER NOT NULL DEFAULT 0, -- it sounded, as it was actually sent
+  why_asked       INTEGER NOT NULL DEFAULT 0, -- the app was told to ask why
+  reason          TEXT,                      -- P.WhyReason
+  wait            TEXT,                      -- P.WhyWait
+  texted          INTEGER NOT NULL DEFAULT 0, -- the reason came from your words (via the local model)
+  until           INTEGER,                   -- the change ends then
+  at              INTEGER NOT NULL,
+  why_at          INTEGER
+);
+CREATE INDEX IF NOT EXISTS attn_answer_at ON attn_answer(at);
+CREATE INDEX IF NOT EXISTS attn_answer_conv ON attn_answer(conversation_id, at);
+CREATE INDEX IF NOT EXISTS attn_answer_author ON attn_answer(author, at);
+
+-- Check-in questions, before the calibration feed took their place (2026-11): kept for the scorecard's days and the
+-- answers that name them. Half were picked at random (with the chance each had) and half where the model was least sure.
+CREATE TABLE IF NOT EXISTS checkin (
+  id          TEXT PRIMARY KEY,
+  side        TEXT NOT NULL CHECK (side IN ('sounded', 'quiet', 'foryou')),
+  message_id  TEXT NOT NULL,
+  item_id     TEXT,                          -- For you: the served item
+  arm         TEXT NOT NULL CHECK (arm IN ('random', 'unsure')),
+  propensity  REAL NOT NULL,                 -- the chance this one was picked, given its side and day
+  pool        INTEGER NOT NULL,              -- how many it was picked from
+  live_band   TEXT,                          -- how it was actually sent, as a band
+  shadow_band TEXT,                          -- the loudness band beside it
+  created_at  INTEGER NOT NULL,
+  answer      TEXT,                          -- worth | could_wait | shouldnt | sooner | fine | glad | not
+  answered_at INTEGER,
+  skipped     INTEGER NOT NULL DEFAULT 0,
+  expired_at  INTEGER                        -- dropped unanswered: too old, or past the queue's cap
+);
+CREATE INDEX IF NOT EXISTS checkin_created ON checkin(created_at);
+CREATE INDEX IF NOT EXISTS checkin_message ON checkin(message_id);
+
+-- The calibration feed (feed.ts, docs/notifications.md "The calibration feed"): each message that reached you, once
+-- what you did with it is known, scored and drawn as a card, a row or hidden as sure, with the chance it was drawn
+-- with (answers are weighted back by it). What you answered, the chances before and after, the parts you said it was
+-- wrong about, and when a surprising answer comes back once.
+CREATE TABLE IF NOT EXISTS cal_item (
+  id              TEXT PRIMARY KEY,
+  message_id      TEXT NOT NULL UNIQUE,
+  conversation_id TEXT,
+  author          TEXT,                      -- the person (else identity) who wrote it
+  kind            TEXT NOT NULL CHECK (kind IN ('card', 'row', 'sure')),
+  sure_shown      INTEGER NOT NULL DEFAULT 0, -- sure, but shown at random (one in twenty), as a row
+  chance          REAL NOT NULL,             -- the chance it was drawn as it was
+  score           REAL NOT NULL,             -- worth asking, when drawn
+  surprise        REAL NOT NULL,             -- bits
+  unsure          REAL NOT NULL,
+  p               TEXT NOT NULL,             -- JSON [sound, show, inbox]: the model's chances when drawn
+  u               TEXT NOT NULL,             -- JSON: how unsure each is
+  loud            REAL NOT NULL,             -- its loudness then
+  loud_base       REAL,                      -- its loudness worked out again just before your answer was learned
+  did             TEXT NOT NULL,             -- sound | show | inbox: what was done
+  you             TEXT,                      -- sound | show | inbox: what you did
+  you_what        TEXT,
+  held            INTEGER NOT NULL DEFAULT 0, -- a sound held back
+  answers         INTEGER NOT NULL DEFAULT 0, -- answers about its person or chat, when drawn
+  drawn_at        INTEGER NOT NULL,
+  message_ts      INTEGER NOT NULL,
+  answer          TEXT,                      -- sound | show | inbox
+  answer_id       TEXT,                      -- its attn_answer
+  answered_at     INTEGER,
+  before          TEXT,
+  after           TEXT,                      -- JSON: the chances once the answer was learned
+  parts           TEXT,                      -- JSON: the parts you said it was wrong about
+  returns_at      INTEGER,                   -- a surprising answer comes back once, then
+  settled         TEXT,                      -- keep | once | undo
+  skipped         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS cal_item_drawn ON cal_item(drawn_at);
+CREATE INDEX IF NOT EXISTS cal_item_ts ON cal_item(message_ts);

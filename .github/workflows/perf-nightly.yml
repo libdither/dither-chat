@@ -1,0 +1,123 @@
+# verify-perf once a night at 1× and 4× CPU (desktop, phone and fetching ahead; the slow link at 4× only), five runs each,
+# then the memory check at 4×, every number kept:
+# each night's medians and spread go as one line onto the perf-history branch, and the job's summary and an HTML
+# page of charts (the artifact perf-trend) show the last night against the nights before. It never fails on a time
+# or a count: it flags them. It fails only when the measuring itself breaks. docs/perf.md, "Nightly trends".
+name: Perf nightly
+
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: The world's size against the live hub's
+        default: '1'
+      runs:
+        description: Runs at each throttle
+        default: '5'
+      record:
+        description: Add this run to the perf-history branch (a run on main always does)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-nightly
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    # About 23 minutes on a standard runner (2026-11-24) for verify-perf, and about 5 more for verify-memory: runs wait
+    # for the page to settle, so a world a quarter the size took 18. Past 45 something hangs.
+    timeout-minutes: 45
+    steps:
+      # The browser's files from a cold disk in the background, as in ci.yml's perf job.
+      - run: b=$(command -v chromium || command -v google-chrome) && (find -L "$(dirname "$(readlink -f "$b")")" -type f -print0 | xargs -0 cat > /dev/null 2>&1 &) || true
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: mkdir out
+      # Every script here writes its numbers to out/<name>.json; perf-trend.ts records each file it finds there.
+      # Another script's numbers are one more line like this one (its keys are recorded as "<name>.<key>").
+      # No baseline: nothing is judged here. Its own summary is left out (perf-trend.ts writes this job's).
+      - name: verify-perf at 1× and 4×
+        env:
+          SCALE: ${{ inputs.scale || '1' }}
+          RUNS: ${{ inputs.runs || '5' }}
+        run: |
+          GITHUB_STEP_SUMMARY= bun scripts/verify-perf.ts --scale "$SCALE" --runs "$RUNS" --warmup 1 \
+            --cpu 1,4 --phone-cpu 1,4 --ahead-cpu 1,4 --slow-cpu 4 --baseline "$RUNNER_TEMP/no-baseline.json" --out out/perf.json \
+            || echo "::warning::verify-perf exited $? (a ceiling or floor; its numbers are recorded all the same)"
+          test -s out/perf.json
+      # The memory check at full size and 4× (docs/perf.md, "Memory"): its growth, last values, heap and the hub's
+      # memory, charted night to night as memory.<key>. A count it would fail on is a warning here, as above.
+      # Ten rounds on each page, side by side: about 5 minutes on a standard runner (under a minute to build and seed;
+      # the warm-up round about 40 s; then 18-20 s a round on the phone and 22-25 on the computer; 2026-11-24).
+      - name: verify-memory at full size and 4×
+        if: ${{ !cancelled() }}
+        env:
+          SCALE: ${{ inputs.scale || '1' }}
+        run: |
+          GITHUB_STEP_SUMMARY= bun scripts/verify-memory.ts --scale "$SCALE" --cpu 4 --cycles 10 --phone-cycles 10 --out out/memory.json \
+            || echo "::warning::verify-memory exited $? (a count grew past what it may; its numbers are recorded all the same)"
+          test -s out/memory.json
+      - name: The night as one line
+        if: always()
+        env:
+          SCALE: ${{ inputs.scale || '1' }}
+          RUNS: ${{ inputs.runs || '5' }}
+        run: bun scripts/perf-trend.ts night --dir out --meta "scale=$SCALE" --meta "runs=$RUNS" > night.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-night
+          path: |
+            night.json
+            out/
+
+  # The only job that may write, and only to perf-history: a branch of one file, history.jsonl, never merged.
+  history:
+    needs: measure
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: perf-night
+          path: night
+      - name: Add the night
+        env:
+          RECORD: ${{ github.ref == 'refs/heads/main' || inputs.record }}
+        run: |
+          if git fetch -q --depth=1 origin perf-history; then
+            git worktree add -q -B perf-history hist FETCH_HEAD
+          else
+            git worktree add -q --orphan -b perf-history hist
+            printf '%s\n' '# perf-history' '' 'One line a night from .github/workflows/perf-nightly.yml (docs/perf.md, "Nightly trends"). Never merged.' > hist/README.md
+          fi
+          cat night/night.json >> hist/history.jsonl
+          if [ "$RECORD" = true ]; then
+            cd hist
+            git add README.md history.jsonl 2>/dev/null || git add history.jsonl
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -qm "Perf night of $(date -u +%F) at ${GITHUB_SHA::12}"
+            git push -q origin perf-history
+          else
+            echo "::notice::Not on main and not asked to record: this night is in the summary only."
+          fi
+      - run: bun scripts/perf-trend.ts report --history hist/history.jsonl --html perf-trend.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-trend
+          path: perf-trend.html

@@ -101,8 +101,17 @@ item's weight is divided by its propensity, at most 10.
   scores logged in `foryou_item.score` before it sorts.
 - Scroll-pasts as "no" labels for importance (behind a switch, checked in the replay first).
 
+## Worth seeing
+
+For you never sends a push, and asks nothing of its own. Until 2026-11-25 one card a day was asked about, **Worth
+seeing?**, on the Notification calibration page; that page is now one feed of notifications
+([notifications.md](notifications.md#the-calibration-feed)), and its Sound, Show and Inbox answers are what For you
+learns from. With the loudness scale on, an item's score is multiplied by what the answers say of its chat and its
+author (0 to 2, 1 knowing nothing), and the page sorted again.
+
 ## On the scorecard
 
 How it sorts' scorecard ([scorecard.md](scorecard.md)) charts, day by day, the share of items on screen that you
-opened, for all items and for exploration slots alone (`foryou.clicked`, `foryou.clicked_explore`).
+opened, for all items and for exploration slots alone (`foryou.clicked`, `foryou.clicked_explore`), and, for the
+days it still asked, the share of asked cards you were glad to see, weighted back (`foryou.worth`).
 `GET /api/foryou/stats` gives the same over any span.

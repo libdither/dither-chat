@@ -1,13 +1,15 @@
 import type { Server, ServerWebSocket, Socket, WebSocketHandler } from 'bun';
 import { createHmac } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, normalize, resolve } from 'node:path';
+import { codeBuild } from './restarts.ts';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
-import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, parseCursor } from './chats.ts';
-import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, sendBlocker, UPLOAD_CHUNK } from '@dither-chat/protocol';
+import type { DownloadAs } from '@dither-chat/protocol';
+import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
+import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
-import { ACCOUNT_COLORS, type Store } from './store.ts';
+import { ACCOUNT_COLORS, loudViewOf, type Store } from './store.ts';
 import type { AdapterSocketData, Supervisor } from './supervisor.ts';
 import type { PushService } from './push.ts';
 import type { ReadQueue } from './readqueue.ts';
@@ -15,7 +17,9 @@ import { setNativeMute } from './nativemute.ts';
 import { markUnreadFrom } from './unread.ts';
 import { validQuietHours, type Triage } from './triage.ts';
 import type { TriageVotes } from './votes.ts';
-import type { Scorecard } from './scorecard.ts';
+import type { LoudLearner } from './loudlearn.ts';
+import { selfIds, type Scorecard } from './scorecard.ts';
+import { attentionReport } from './attnreport.ts';
 import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
@@ -25,14 +29,16 @@ import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
 import { realClock } from './clock.ts';
 import { NetSearch } from './netsearch.ts';
 import { linkPath, MediaArchiver } from './mediaarchive.ts';
-import { infoFor, MediaInfo } from './mediainfo.ts';
+import { infoFor, MediaInfo, mediaKey } from './mediainfo.ts';
 import { genericType } from './fileinfo.ts';
-import { mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
+import { downloadDisposition, mediaHeaders, SAFE_HEADERS, sniffMime } from './mediaheaders.ts';
+import { findJxl, JxlServe, MediaPacker, PACKED_TYPES, takesJxl, type JxlTools } from './jxl.ts';
+import { JXL } from './jxlformat.ts';
 import { ImportSources } from './imports/sources.ts';
 import { Calls, type CallSocketData, type TurnConfig, type VoiceSocketData } from './calls.ts';
 import { type CallRoomSocketData, demoCallRoom } from './democalls.ts';
-import { clampDays, parseZone } from './activitychart.ts';
-import { compress } from './compress.ts';
+import { clampDays, offsetAt, parseZone } from './activitychart.ts';
+import { compress, PackedFiles, pickEncoding } from './compress.ts';
 import { forwardMessage } from './forward.ts';
 import { firstLink, unfurl } from './unfurl.ts';
 import { UsageStore } from './usage.ts';
@@ -57,20 +63,28 @@ import { Moderation } from './moderation.ts';
 import { asked, attempt, candidatesAttempt } from './attempts.ts';
 import { Groups } from './groups.ts';
 import { People } from './people.ts';
+import { Answers } from './theiranswer.ts';
+import { Clocks } from './theirclock.ts';
 import { AccountSelf, ignoredOf } from './accountself.ts';
 import { mentionables } from './mentions.ts';
 import { lowerForSend } from './mentionrefs.ts';
 import { graphTuning, peopleGraph, setGraphTuning } from './graph.ts';
-import { activityView, Closeness } from './closeness.ts';
+import { activityView, Closeness, closeTo } from './closeness.ts';
+import { personVoice } from './voicetime.ts';
 import { ProfileCollector, SameMatches } from './samepeople.ts';
 import type { MailHub } from './mail/index.ts';
 import type { Notices } from './notices/index.ts';
 import type { Approvals } from './approvals.ts';
 import { mailPeople } from './mail/people.ts';
+import { mailPlaces } from './mail/places.ts';
+import { personPage } from './mail/chatpage.ts';
+import { isRung, setPlaceRung } from './rungs.ts';
 import { Adding, profileLinksOf, requestHeld, requestViews } from './add.ts';
 import { feedRefusalFor, isFeed } from './feed.ts';
 import { Posts, PostsError } from './posts.ts';
 import { Follows, type FollowConfig } from './follows.ts';
+import { Events } from './events.ts';
+import { eventsOf } from './eventseen.ts';
 import { Timelines } from './timelines.ts';
 import { TranslateError, Translator } from './translate.ts';
 import { calendarOff, type CalendarLink } from './calendar.ts';
@@ -79,14 +93,31 @@ import { ReplyMarks, type ReplyMark } from './replymarks.ts';
 import { mailAttention } from './mail/attention.ts';
 import { AnswerClock, clientReport, jobFailed, lossCovered, PerClientCap, reportedInRequest, reportError, withRequest } from './errors.ts';
 import { callRoute } from './callstate.ts';
+import { PHONE } from './delivery.ts';
 import { handlesPolls, pollRoute } from './polls.ts';
 import { SendExtras } from './sendextras.ts';
 import { reminderWords } from './saved.ts';
 import { ASK_LEVEL, isChatKind, type ManagerLink } from './accounts-manager.ts';
+import { SearchCalledOff, SearchThread, type SearchAsk } from './search-thread.ts';
 import { Auth, bearerOf, clientIp, COOKIE, cookieOf, fileTicket, fromOwnPage, MIN_PASSWORD, overHttps, sessionCookie, ticketGood, USER, type Who } from './auth.ts';
 
 
-type ClientData = { kind: 'client' };
+/** A page's socket, and what it says it is watching (`P.ClientWatching`), with when it said so. */
+/** `resume`: the position it asked to be caught up from, as its first frame (docs/sync.md "On the socket"). */
+type ClientData = { kind: 'client'; watching?: { label: string; conversationIds: string[]; at: number }; resume?: P.SyncPosition };
+/** A catch-up on the socket longer than this goes gzip'd, as the same answer by POST would go compressed. */
+const RESUME_GZIP_OVER = 2048;
+
+/** The position a live socket asks to be caught up from, when it offers LIVE_RESUME (docs/sync.md "On the socket"). */
+function liveResume(url: URL, protocols: string | null): P.SyncPosition | undefined {
+  if (!protocols?.split(',').some((p) => p.trim() === LIVE_RESUME)) return undefined;
+  const q = url.searchParams;
+  const v = Number(q.get('v'));
+  const seq = Number(q.get('since'));
+  const epoch = q.get('epoch');
+  if (!epoch || !Number.isSafeInteger(v) || !Number.isSafeInteger(seq) || seq < 0) return undefined;
+  return { v, epoch, seq };
+}
 /** What a send carries (POST /api/conversations/:id/send, and a chat's /messages). */
 type SendBody = {
   body?: string;
@@ -161,10 +192,19 @@ interface ServerOpts {
   devices?: Devices;
   /** Your votes on triage and the rules learned from them (votes.ts, docs/notifications.md). */
   votes?: TriageVotes;
+  /** The loudness scale's answers, check-ins and settings (loudlearn.ts). */
+  loud?: LoudLearner;
   /** How the models did, day by day (scorecard.ts, docs/scorecard.md): GET /api/model/scores. */
   scorecard?: Scorecard;
   /** Fetch every remote attachment into the media cache soon after it arrives (mediaarchive.ts). A real hub, not a demo. */
   archiveMedia?: boolean;
+  /**
+   * cjxl and djxl (jxl.ts, docs/files.md "JPEG XL"): to show a JPEG XL to a device that doesn't, and send one to a
+   * network as a JPEG or PNG. Asked once, when first needed. Absent: looked for on PATH and in DITHER_JXL_DIR.
+   */
+  jxl?: () => Promise<JxlTools | null>;
+  /** Store kept JPEGs and PNGs as JPEG XL (jxl.ts MediaPacker). A real hub, not a demo. */
+  packMedia?: boolean;
   /** How index jobs and the gap fill read (readingpace.ts): a person's pace unless told otherwise. */
   pace?: PaceConfig;
   /** Mail (mail/index.ts, docs/mail.md): its routes, its part of the bootstrap and of each flush. */
@@ -184,6 +224,8 @@ interface ServerOpts {
   onSavedReminder?: (n: { title: string; body: string; conversationId: string; messageId: string }) => void;
   /** Same person? (samepeople.ts): the database file for its worker (none: worked out on this thread), and jev's address. */
   matches?: { file: string | null; jevUrl: string | null };
+  /** The database file: /api/search runs on a thread of its own with a read-only connection to it (search-thread.ts). None: on this thread. */
+  searchFile?: string | null;
   /** New live messages the hub made itself (a followed post's replies, follows.ts): triage decides them (main.ts). */
   onFresh?: (messageIds: string[]) => void;
   /** How often a followed post is read again (follows.ts FOLLOW unless told otherwise). */
@@ -254,23 +296,7 @@ export const validAdapterName = (a: unknown): a is string => typeof a === 'strin
 
 // ------------------------------------------------------------------ media
 
-export function mediaSigner(secret: string) {
-  // The same link signs the same way every time: a bootstrap signs every picture it names (15k on the live hub), so
-  // they are remembered rather than worked out again.
-  const signed = new Map<string, string>();
-  return (raw: string | null | undefined, accountId: string | null | undefined): string | null => {
-    if (!raw) return null;
-    if (raw.startsWith('data:')) return raw;
-    const key = `${raw}|${accountId ?? ''}`;
-    const hit = signed.get(key);
-    if (hit) return hit;
-    const sig = createHmac('sha256', secret).update(key).digest('base64url').slice(0, 16);
-    const out = `/media/${sig}/${Buffer.from(raw).toString('base64url')}${accountId ? `?a=${accountId}` : ''}`;
-    if (signed.size >= 100_000) signed.clear();
-    signed.set(key, out);
-    return out;
-  };
-}
+export { mediaSigner } from './mediasign.ts';
 
 /**
  * A request answered with 5xx, as a line of traces/errors.ndjson: the route's template, the status, and the answer's
@@ -337,6 +363,12 @@ export class HubServer {
   private archiver?: MediaArchiver;
   /** What each kept file is (mediainfo.ts, docs/files.md). */
   readonly mediaInfo: MediaInfo;
+  /** cjxl and djxl, asked for once (jxl.ts). */
+  private readonly jxlTools: () => Promise<JxlTools | null>;
+  /** Pictures rebuilt for devices that don't show JPEG XL (jxl.ts). */
+  private readonly jxlServe: JxlServe;
+  /** Kept pictures stored as JPEG XL (jxl.ts). */
+  readonly packer?: MediaPacker;
   private typingGate = new TypingGate();
   private usage: UsageStore;
   /** Button counts (clicks.ts). */
@@ -345,16 +377,24 @@ export class HubServer {
   readonly abouts: Abouts;
   readonly groups: Groups;
   readonly people: People;
+  /** What time it is for someone, and their usual day (theirclock.ts, docs/profile.md "Their time"). */
+  readonly clocks: Clocks;
+  /** When someone is likely to answer you (theiranswer.ts, docs/profile.md "When they answer"). */
+  readonly theirAnswers: Answers;
   /** Same person? suggestions, and profiles collected in the background (samepeople.ts, docs/same-person.md). */
   readonly matches: SameMatches;
   /** How much you have had to do with each person, by month, for the people graph (closeness.ts). */
   readonly closeness: Closeness;
+  /** Message search on its own thread, when the hub was given its database file (search-thread.ts). */
+  readonly searchThread: SearchThread | null;
   readonly collector: ProfileCollector;
   /** Public posts read and logged as messages (posts.ts, docs/feed.md "Threads"). */
   readonly posts: Posts;
   /** Posts you follow, read again for new replies (follows.ts, docs/feed.md "Following a post"). */
   readonly follows: Follows;
   readonly timelines: Timelines;
+  /** Events from Luma and Partiful: an event's page and RSVPs (events.ts, docs/events.md). */
+  readonly events: Events;
   /** Translating posts and messages: the network's own, or a translation server (translate.ts). */
   readonly translator: Translator;
   /** The account's own self, block, ignore and notes (accountself.ts). */
@@ -382,6 +422,8 @@ export class HubServer {
   readonly auth: Auth;
   /** This process. A client that sees it change knows the hub restarted, and may have a new web build. */
   readonly boot = Buffer.from(crypto.getRandomValues(new Uint8Array(6))).toString('base64url');
+  /** The hub's code (its git commit), read once: a page back after a restart says "updated" when it changed (restarts.ts). */
+  readonly build = codeBuild(resolve(import.meta.dir, '../../..'));
   /** Sends by the client's id for them, so one retried after a lost answer goes out once (state.ts queues sends). */
   private sends = new Map<string, { at: number; done: Promise<Response> }>();
   /** Messages a viewed receipt was asked for (once each; viewed). */
@@ -423,6 +465,10 @@ export class HubServer {
     });
     if (opts.archiveMedia)
       this.archiver = new MediaArchiver(store, join(opts.dataDir, 'media-cache'), (url, acc, from) => this.archiveOne(url, acc, from), (msg) => console.warn(msg), (acc, urls) => this.refreshUrls(acc, urls), (a) => this.mediaInfo.kept(a));
+    let tools: Promise<JxlTools | null> | null = null;
+    this.jxlTools = () => (tools ??= (opts.jxl ?? (() => findJxl()))().catch(() => null));
+    this.jxlServe = new JxlServe(this.jxlTools);
+    if (opts.packMedia) this.packer = new MediaPacker(store, join(opts.dataDir, 'media-cache'), this.jxlTools, (msg) => console.warn(msg));
     this.calls = new Calls(store, sup, { turn: opts.turn, pickAccount: (c, a) => this.pickAccount(c, a) });
     this.abouts = new Abouts({
       store,
@@ -435,15 +481,24 @@ export class HubServer {
     this.posts = new Posts({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), changed: () => this.flush(), fresh: (ids) => this.opts.onFresh?.(ids) });
     // Through the same pace: a check never reads while a job or the gap fill does on that account.
     this.follows = new Follows({ store, posts: this.posts, online: (a) => sup.online(a), pace, config: opts.follow, changed: () => this.flush(), log: (l) => console.warn(l) });
-    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.uploads.get(ids), changed: () => this.flush() });
+    this.events = new Events({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
+    this.timelines = new Timelines({ store, posts: this.posts, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), files: (ids) => this.postFiles(ids), changed: () => this.flush() });
     this.translator = new Translator({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t) });
     this.self = new AccountSelf({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), flush: () => this.flush(), quietHours: () => store.quietHours() });
     this.people = new People({ store, online: (a) => sup.online(a), command: (a, c, t) => sup.command(a, c, t), note: (a, line) => sup.note(a, line), posts: (a, ps) => this.posts.log(a, ps) });
     // A note joined from yours and the network's goes back to the network (store.ts networkNotes).
     store.contactNotesOut = (id, change) => this.people.pushContactNotes(id, change);
+    this.clocks = new Clocks({
+      db: store.db,
+      pins: { get: store.zonePins, set: store.setZonePins },
+      askProfile: (id) => this.people.get(id),
+      logged: () => ({ presence: store.logsPresence(), statuses: store.logsStatuses() }),
+    });
+    this.theirAnswers = new Answers({ db: store.db, clocks: this.clocks });
     this.matches = new SameMatches({ store, file: opts.matches?.file ?? null, jevUrl: opts.matches?.jevUrl ?? null, log: (l) => console.log(l), flush: () => this.flush() });
     this.closeness = new Closeness({ store, file: opts.matches?.file ?? null, log: (l) => console.log(l) });
+    this.searchThread = opts.searchFile ? new SearchThread({ store, file: opts.searchFile, secret: opts.secret, log: (l) => console.log(l) }) : null;
     // Its timer starts in start() with the others: a hub built and never started (a test's) runs nothing after its
     // store closes.
     this.collector = new ProfileCollector({ store, people: this.people, online: (a) => sup.online(a), log: (l) => console.log(l) });
@@ -505,6 +560,7 @@ export class HubServer {
 
   start() {
     this.self.start();
+    this.searchThread?.start();
     const self = this;
     const guarded = (handler: (req: Request, server: Server<WsData>) => Promise<Response | undefined> | Response | undefined) =>
       (req: Request, server: Server<WsData>) => {
@@ -542,8 +598,11 @@ export class HubServer {
       maxPayloadLength: 32 * 1024 * 1024,
         open(ws) {
           const d = ws.data;
-          if (d.kind === 'client') self.clients.add(ws as ServerWebSocket<ClientData>);
-          else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
+          if (d.kind === 'client') {
+            // Its catch-up first, then it joins: every frame it gets after is newer than the answer.
+            if (d.resume) self.resumeOn(ws as ServerWebSocket<ClientData>, d.resume);
+            self.clients.add(ws as ServerWebSocket<ClientData>);
+          } else if (d.kind === 'adapter') self.sup.attach(ws as ServerWebSocket<AdapterSocketData>);
           else if (d.kind === 'call') return;
           else if (d.kind === 'voice') self.calls.voiceOpen(ws as ServerWebSocket<VoiceSocketData>);
           else if (d.kind === 'callroom') demoCallRoom.attach(ws as ServerWebSocket<CallRoomSocketData>);
@@ -554,6 +613,7 @@ export class HubServer {
           if (d.kind === 'client') {
             // The client's heartbeat: after a phone wakes, a dead socket shows in seconds rather than at a TCP timeout.
             if (msg === 'ping') ws.send('pong');
+            else if (typeof msg === 'string' && msg.startsWith('{')) self.clientSaid(ws as ServerWebSocket<ClientData>, msg);
           } else if (d.kind === 'adapter') self.sup.receive(ws as ServerWebSocket<AdapterSocketData>, msg);
           else if (d.kind === 'call') self.calls.message(ws as ServerWebSocket<CallSocketData>, msg);
           else if (d.kind === 'voice') self.calls.voiceMessage(ws as ServerWebSocket<VoiceSocketData>, msg);
@@ -612,6 +672,7 @@ export class HubServer {
     this.catchup.start({ unclean: this.store.journal.started === 'unclean' });
     void this.archiver?.start();
     this.mediaInfo.start();
+    this.packer?.start();
     this.store.journal.prune();
     this.pruneTimer = setInterval(() => this.store.journal.prune(), 3_600_000);
     this.sendExtras.later.start();
@@ -633,16 +694,93 @@ export class HubServer {
     this.catchup.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
+    this.packer?.stop();
     this.imports.stop();
     this.matches.stop();
+    this.searchThread?.stop();
     this.collector.stop();
-    this.flush();
+    // The last frame carries presence held for coalescing too, so the journal a clean stop closes has it.
+    this.flush(true);
     this.server?.stop(true);
     this.plain?.stop(true);
     for (const s of this.extra) s.stop(true);
   }
 
-  flush() {
+  private async loudRoute(path: string, method: string, body: <T>() => Promise<T>): Promise<Response | null> {
+    const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
+    const L = this.opts.loud;
+    if (!L) return bad('No loudness here', 404);
+    const s = this.store;
+    const ok = (x: unknown = { ok: true }) => Response.json(x);
+    let m: RegExpMatchArray | null;
+    try {
+      if (path === '/api/loudness/state' && method === 'GET') return ok(L.view());
+      if (path === '/api/loudness/prefs' && method === 'PUT') {
+        L.setPrefs(await body<Partial<P.AttentionPrefs>>());
+        return ok(L.view());
+      }
+      // The inbox's Notification calibration row: how many cards and past answers wait on the feed.
+      if (path === '/api/loudness/feed/count' && method === 'GET') {
+        L.feed.fill(L.prefs());
+        return ok({ pending: L.feed.pendingCount() });
+      }
+      // The calibration feed (feed.ts): cards, rows, past answers back, and the sure ones apart.
+      if (path === '/api/loudness/feed' && method === 'GET') return ok(L.feed.view(L.prefs()));
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)$/)) && method === 'POST') {
+        const b = await body<{ answer?: unknown }>();
+        const r = L.feedAnswer(m[1], b.answer as P.CalAnswer);
+        this.flush();
+        return ok(r);
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/parts$/)) && method === 'POST') {
+        const b = await body<{ parts?: unknown }>();
+        if (!Array.isArray(b.parts)) return bad('Say parts: a list');
+        return ok(L.feedParts(m[1], b.parts as P.CalPart[]));
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/settle$/)) && method === 'POST') {
+        const b = await body<{ settle?: unknown }>();
+        if (b.settle !== 'keep' && b.settle !== 'once' && b.settle !== 'undo') return bad('Say settle: keep, once or undo');
+        L.feedSettle(m[1], b.settle);
+        this.flush();
+        return ok();
+      }
+      if ((m = path.match(/^\/api\/loudness\/feed\/([\w-]+)\/skip$/)) && method === 'POST') {
+        const b = await body<{ skip?: unknown }>();
+        L.feed.skip(m[1], b.skip !== false);
+        return ok();
+      }
+      if (path === '/api/loudness/answers' && method === 'POST') {
+        const b = await body<Partial<P.AttnAnswerBody>>();
+        const answers: P.AttnAnswer[] = ['worth', 'could_wait', 'shouldnt', 'sooner', 'fine', 'louder', 'quieter'];
+        const sources: P.AttnSource[] = ['sheet', 'notification', 'followup'];
+        if (typeof b.messageId !== 'string' || !answers.includes(b.answer as P.AttnAnswer)) return bad(`Say messageId and answer: one of ${answers.join(', ')}`);
+        const r = L.answer({ messageId: b.messageId, answer: b.answer as P.AttnAnswer, source: sources.includes(b.source as P.AttnSource) ? (b.source as P.AttnSource) : 'sheet', ...(b.scope === 'person' || b.scope === 'chat' ? { scope: b.scope } : {}) });
+        this.flush();
+        return ok(r);
+      }
+      if (path === '/api/loudness/why' && method === 'POST') {
+        const b = await body<Partial<P.WhyBody>>();
+        if (typeof b.answerId !== 'string') return bad('Say answerId');
+        return ok(await L.why({ answerId: b.answerId, ...(typeof b.reason === 'string' ? { reason: b.reason as P.WhyReason } : {}), ...(typeof b.wait === 'string' ? { wait: b.wait as P.WhyWait } : {}), ...(typeof b.text === 'string' ? { text: b.text } : {}), ...(typeof b.until === 'number' ? { until: b.until } : {}) }));
+      }
+      if (path === '/api/loudness/forget' && method === 'POST') {
+        const b = await body<{ key?: unknown; rejected?: unknown }>();
+        if (typeof b.key !== 'string' || typeof b.rejected !== 'boolean') return bad('Say key and rejected: true or false');
+        L.forget(b.key, b.rejected);
+        return ok(L.view());
+      }
+      // The Why sheet: a message's loudness, whole, with its reasons.
+      if ((m = path.match(/^\/api\/messages\/([\w-]+)\/loudness$/)) && method === 'GET') {
+        const raw = s.one<{ loud_view: string | null }>('SELECT loud_view FROM triage WHERE message_id = ?', m[1])?.loud_view;
+        return ok(raw ? loudViewOf(raw) : null);
+      }
+    } catch (e: any) {
+      return bad(e.message, 409);
+    }
+    return null;
+  }
+
+  flush(all = false) {
     // What a flush writes (attention's folds, one transaction per conversation; the journal) is one transaction: one
     // commit, and each commit waits for the disk on the hub's thread. The frame goes out once it is committed.
     // Every 80 ms: a span only when there was something to send (docs/tracing.md).
@@ -653,11 +791,12 @@ export class HubServer {
     const s = startSpan('flush');
     let events: P.ClientEvent[] = [];
     let frame: string | null = null;
+    const mark = this.store.journal.mark();
     try {
       frame = timedWrite('flush', () =>
         this.store.db
           .transaction(() => {
-            events = this.gather();
+            events = this.gather(all);
             return this.record(events);
           })
           .immediate(),
@@ -665,12 +804,21 @@ export class HubServer {
     } catch (e) {
       // The commit failed (a lock held past busy_timeout): attention's folds are undone and fold again later; what
       // the store gave up goes out and into the journal on its own.
+      // The journal's rows went with the transaction: it takes back what it thought written, and what it cannot write now
+      // (a full disk) it holds for the next frame, so this one still reaches every connected device.
       console.error('flush: one transaction failed; sending what changed as it is', e);
       jobFailed('flush', e);
+      this.store.journal.undo(mark);
       frame = this.record(events);
       s.fail(e);
     }
     if (frame) for (const c of this.clients) c.send(frame);
+    // Status dots are written after the commit, so a failed one leaves them to write next time (presence.ts).
+    try {
+      this.store.presenceNow.save();
+    } catch (e) {
+      console.error('flush: presence not written; again next time', e);
+    }
     if (!events.length) s.drop();
     else {
       s.set({ events: events.length });
@@ -679,10 +827,10 @@ export class HubServer {
   }
 
   /** What changed since the last flush: the store's, mail's, and the scores they move. */
-  private gather(): P.ClientEvent[] {
+  private gather(all = false): P.ClientEvent[] {
     // What the store gives up here is no longer dirty: it goes out even when mail's or attention's part fails (a
     // locked database), or devices would miss it until their next bootstrap.
-    const events = this.store.flush();
+    const events = this.store.flush(all);
     if (events.length) noteWork('flush');
     // A picture came without its size: the archive keeps the new files now, and the hub reads their sizes as it does
     // (mediainfo.ts kept), instead of up to a minute later. A walk already under way gets to them by itself.
@@ -720,6 +868,45 @@ export class HubServer {
   resync() {
     this.flush();
     this.broadcast([{ t: 'resync' }]);
+  }
+
+  private syncContext() {
+    return { store: this.store, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot, build: this.build };
+  }
+
+  /**
+   * A socket's catch-up from `pos`, as its first frame, before it joins the clients (docs/sync.md "On the socket"): what
+   * POST /api/sync would answer without timelines. Flushed first, so what was waiting to go out is in the answer, and
+   * all of it in this one task: no frame can fall between the answer and the socket's first live one.
+   */
+  resumeOn(ws: ServerWebSocket<ClientData>, pos: P.SyncPosition) {
+    const s = startSpan('live resume');
+    let answer: P.SyncResponse | null = null;
+    try {
+      this.flush();
+      answer = syncResponse(this.syncContext(), { v: pos.v, epoch: pos.epoch, since: pos.seq });
+    } catch (e) {
+      // The client asks by POST instead.
+      console.error('live resume failed', e);
+      s.fail(e);
+    }
+    const text = JSON.stringify({ resume: answer } satisfies P.LiveResume);
+    if (text.length > RESUME_GZIP_OVER) ws.send(Bun.gzipSync(Buffer.from(text)));
+    else ws.send(text);
+    s.set({ bytes: text.length });
+    s.end();
+  }
+
+  /**
+   * The stop has begun (main.ts): every page hears it before its socket closes, so it says "restarting" at once and
+   * tries every second (docs/sync.md "Restarts"). Not journaled: a page that was not there has nothing to catch up on.
+   */
+  sayStopping(usualMs: number | undefined) {
+    const frame = JSON.stringify([{ t: 'stopping', ...(usualMs !== undefined ? { usualMs } : {}) } satisfies P.ClientEvent]);
+    for (const c of this.clients)
+      try {
+        c.send(frame);
+      } catch {}
   }
 
   /** To every client, and into the journal: a frame that changed something ends with its position (docs/sync.md). */
@@ -861,7 +1048,7 @@ export class HubServer {
       if (dave) return this.daveFile(dave[1]!, dave[2]!);
       if (!ticketed) {
         if (GATED.test(path)) return this.signIn();
-        return this.static(path);
+        return this.static(path, req);
       }
     }
     // Cross-site: a browser's write or socket must come from this page (its cookie is SameSite=Lax, and this is the
@@ -972,7 +1159,10 @@ export class HubServer {
     }
 
     if (path === '/api/live') {
-      if (server.upgrade(req, { data: { kind: 'client' } satisfies ClientData })) return undefined;
+      // Asked from a position: the catch-up comes as its first frame, and LIVE_RESUME back says it will.
+      const resume = liveResume(url, req.headers.get('sec-websocket-protocol'));
+      const data: ClientData = resume ? { kind: 'client', resume } : { kind: 'client' };
+      if (server.upgrade(req, { data, ...(resume ? { headers: { 'Sec-WebSocket-Protocol': LIVE_RESUME } } : {}) })) return undefined;
       return new Response('upgrade failed', { status: 400 });
     }
     if (path === '/api/call') {
@@ -1015,12 +1205,12 @@ export class HubServer {
     if ((m = path.match(DAVE_FILE))) return this.daveFile(m[1]!, m[2]!);
     if (path === '/api/voice/sounds') return this.callSounds();
     if ((m = path.match(/^\/voice\/sounds\/([a-z0-9_]{1,40})\.mp3$/))) return this.callSound(m[1]);
-    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'));
+    if ((m = path.match(/^\/media\/([\w-]+)\/([\w-]+)$/))) return this.media(m[1], m[2], url.searchParams.get('a'), takesJxl(req), url.searchParams.get('as'), url.searchParams.get('name'));
     // Custom emoji inside message bodies: the id is all a body has, and it can only reach Discord's CDN.
     if ((m = path.match(/^\/emoji\/discord\/(\d+)(\.animated)?$/))) return this.fetchMedia(discordEmojiUrl(m[1], !!m[2]), null);
     if (path === '/api/errors' && req.method === 'POST') return this.clientError(req, clientIp(req, ip));
     if (path.startsWith('/api/')) return this.api(req, url, path);
-    return this.static(path);
+    return this.static(path, req);
   }
 
   /** At most 60 of the page's error reports a minute from one address. */
@@ -1079,7 +1269,7 @@ export class HubServer {
       // Everything changed so far is in the journal, so the position below covers what this reads.
       this.flush();
       const calendar = this.opts.calendar?.link();
-      return ok({ ...s.bootstrap(), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot } satisfies P.Bootstrap);
+      return ok({ ...s.bootstrap({ edgesInConversations: url.searchParams.get('edges') === 'spaces' }), attention: this.opts.attention?.list(), devices: this.opts.devices?.list(), ...(this.opts.mail ? { mail: this.opts.mail.bootstrap() } : {}), requests: requestViews(s), ...(calendar ? { calendar: calendar.view() } : {}), ...(this.opts.notices ? { notices: this.opts.notices.boot() } : {}), sync: s.journal.position(), boot: this.boot, ...(this.build ? { build: this.build } : {}) } satisfies P.Bootstrap);
     }
     // Plans the calendar found in chats, from the hub's cache (calendar.ts): the chips under messages.
     if (path === '/api/plans' && method === 'GET') {
@@ -1089,7 +1279,7 @@ export class HubServer {
     if (path === '/api/sync' && method === 'POST') {
       const b = await body<P.SyncRequest>();
       this.flush();
-      return ok(syncResponse({ store: s, attention: this.opts.attention, usage: this.usage, devices: this.opts.devices, mail: this.opts.mail, boot: this.boot }, b));
+      return ok(syncResponse(this.syncContext(), b));
     }
     // Calls ringing you and voice channels (callstate.ts, docs/calls.md "Ringing").
     if (path.startsWith('/api/calls/') || path === '/api/voice') {
@@ -1165,12 +1355,22 @@ export class HubServer {
       const a = this.opts.attention;
       if (!a) return bad('attention is off', 404);
       if (path === '/api/attention' && method === 'GET') return ok({ now: Date.now(), items: a.list() });
-      // Scores still to come out of what already happened (attention.ts `waiting`).
-      if (path === '/api/attention/waiting' && method === 'GET') return ok({ waiting: a.waiting });
+      // Scores still to come out of what already happened (attention.ts `waiting`). What changed is sent first, so a
+      // false here also means the hub has nothing more to say about it (verify-response.ts settle()).
+      if (path === '/api/attention/waiting' && method === 'GET') {
+        this.flush();
+        return ok({ waiting: a.waiting });
+      }
       // The learned order (ranker.ts): its mode and what it learned, as weights on named features.
       if (path === '/api/attention/model' && method === 'GET') return ok((a.judge as { view?: () => unknown } | undefined)?.view?.() ?? { mode: 'off' });
       // How well "needs a reply" chances matched what you did (needsreply.ts): by day, and in bins.
       if (path === '/api/attention/needs-reply' && method === 'GET') return ok(a.needsCalibration(Date.now(), Math.min(365, Math.max(1, num('days') ?? 60))));
+      // The weekly report of what attention cost (attnreport.ts, docs/scorecard.md "The weekly report").
+      if (path === '/api/attention/report' && method === 'GET') {
+        const r = attentionReport(this.store.db, { owed: () => a.list(), self: () => selfIds(this.store.db) });
+        // Settings → "People you're drifting from" off: the report names no one.
+        return ok(this.opts.loud && !this.opts.loud.prefs().drifting ? { ...r, drifting: null } : r);
+      }
       if ((m = path.match(/^\/api\/attention\/([\w-]+)$/)) && method === 'GET') {
         const x = a.explain(m[1]);
         return x ? ok(x) : bad('not in the inbox', 404);
@@ -1197,6 +1397,19 @@ export class HubServer {
     // People and the places they share (graph.ts, docs/people-graph.md).
     if (path === '/api/graph' && method === 'GET') return ok(peopleGraph(s));
     if (path === '/api/graph/activity' && method === 'GET') return ok(activityView(s, await this.closeness.get()));
+    // A person's time in voice and who they are closest to (docs/profile.md "Voice", "Close to"), keyed as the graph is.
+    if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/(voice|close)$/)) && method === 'GET') {
+      const ids = m[1] === 'persons' ? (s.db.query('SELECT id FROM identity WHERE person_id = ?').all(m[2]) as { id: string }[]).map((r) => r.id) : [m[2]];
+      if (!ids.length) return bad('nobody by that id', 404);
+      const key = m[1] === 'persons' ? m[2] : (((s.db.query('SELECT person_id FROM identity WHERE id = ?').get(m[2]) as { person_id: string | null } | null)?.person_id ?? m[2]) as string);
+      if (m[3] === 'voice') {
+        const keyOf = s.db.query('SELECT person_id FROM identity WHERE id = ?');
+        const voice = personVoice(s.db, ids, (i) => ((keyOf.get(i) as { person_id: string | null } | null)?.person_id ?? i) as string);
+        return ok({ voice, identities: s.identitiesByIds(voice?.with.map((w) => w.identityId) ?? []) });
+      }
+      const close = closeTo(s, await this.closeness.get(), key, graphTuning(s.db), Math.max(1, Math.min(200, Number(url.searchParams.get('limit')) || 12)));
+      return ok({ close, identities: s.identitiesByIds(close.map((c) => c.identityId)) });
+    }
     if (path === '/api/graph/tuning' && method === 'GET') return ok(graphTuning(s.db));
     if (path === '/api/graph/tuning' && method === 'PUT') {
       const b = await body<{ tuning?: unknown }>();
@@ -1244,7 +1457,18 @@ export class HubServer {
       const v = m[2] && method === 'POST' ? await this.netsearch.more(m[1]) : this.netsearch.view(m[1]);
       return v ? ok(v) : bad('that search is over; search again', 404);
     }
-    if (path === '/api/search') return ok(s.search(url.searchParams.get('q') ?? '', Math.min(num('limit') ?? 40, 100), url.searchParams.get('cursor'), num('context') ?? 0));
+    if (path === '/api/search') {
+      // typing=1: asked as you type, so without the slow fallbacks (docs/search.md, "How a search runs").
+      const ask: SearchAsk = { q: url.searchParams.get('q') ?? '', limit: Math.min(num('limit') ?? 40, 100), cursor: url.searchParams.get('cursor'), context: num('context') ?? 0, typing: url.searchParams.get('typing') === '1' };
+      if (!this.searchThread) return ok(s.search(ask.q, ask.limit, ask.cursor, ask.context, { typing: ask.typing }));
+      try {
+        // A newer search as you type from the same session takes the place of one still queued.
+        return ok(await this.searchThread.search(ask, { key: cookieOf(req) ?? bearerOf(req) ?? '', signal: req.signal }));
+      } catch (e) {
+        if (e instanceof SearchCalledOff) return bad(e.message, 409);
+        throw e;
+      }
+    }
 
     if ((m = path.match(/^\/api\/messages\/([\w-]+)\/context$/))) {
       const page = s.messageContext(m[1], Math.min(num('around') ?? 30, 100));
@@ -1255,7 +1479,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/profile$/)) || (m = path.match(/^\/api\/identities\/([\w-]+)\/profile$/))) {
       const p = s.profile(path.startsWith('/api/persons/') ? { personId: m[1] } : { identityId: m[1] });
       const mail = p && mailPeople(this.opts.mail)?.profile(p.identityIds);
-      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
+      return p ? ok({ ...p, abouts: this.people.kept(p.identityIds), links: profileLinksOf(s.db, p.identityIds), ...((ev) => (ev.length ? { events: ev } : {}))(eventsOf(s, p.identityIds)), ...((i) => (i.length ? { ignored: i } : {}))(ignoredOf(s.db, p.identityIds)), ...(mail ? { mail } : {}) }) : bad('nobody by that id', 404);
     }
     // Their message count per server, estimated from what the hub holds (msgcount.ts, docs/profile.md).
     if ((m = path.match(/^\/api\/(persons|identities)\/([\w-]+)\/activity$/))) {
@@ -1270,6 +1494,28 @@ export class HubServer {
       const v = s.activityChart(m[1].startsWith('idn_') ? { identityId: m[1] } : { personId: m[1] }, days, zone);
       return v ? ok(v) : bad('nobody by that id', 404);
     }
+    // Their time: each author's clock, and someone's usual day by hour (theirclock.ts, docs/profile.md "Their time").
+    if (path === '/api/people/clocks' && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const ids = (url.searchParams.get('ids') ?? '').split(',').filter((x) => /^[\w-]{1,80}$/.test(x)).slice(0, 100);
+      return ok(this.clocks.clocks(ids, offsetAt(zone, Date.now()) / 60_000));
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/day$/)) && method === 'GET') {
+      const zone = parseZone(url.searchParams.get('tz'), url.searchParams.get('offset'));
+      if (!zone) return bad('unknown time zone');
+      const v = this.clocks.day(m[1], zone);
+      return v ? ok(v) : bad('nobody by that id', 404);
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/answer$/)) && method === 'GET') {
+      const v = this.theirAnswers.answer(m[1]);
+      return v ? ok(v) : bad('nobody by that id, or you', 404);
+    }
+    if ((m = path.match(/^\/api\/people\/([\w-]+)\/zone$/)) && method === 'PUT') {
+      const b = await body<Partial<P.ZonePinBody>>();
+      if (b.zone !== null && typeof b.zone !== 'string') return bad('zone: an IANA name, or null');
+      return this.clocks.pin(m[1], b.zone) ? ok() : bad('nobody by that id, or no such zone', 404);
+    }
     // What changed (docs/history.md): a place's name, description, settings and members; a person's names, pictures
     // and profile across their identities.
     if ((m = path.match(/^\/api\/(conversations|spaces|persons|identities)\/([\w-]+)\/changes$/))) {
@@ -1281,7 +1527,9 @@ export class HubServer {
           : [{ kind: kind as P.ChangeView['target']['kind'], id: m[2] }];
       // ?fields=status,presence: only those; ?except=…: all but those.
       const list = (k: string) => url.searchParams.get(k)?.split(',').filter((f) => /^\w{1,32}$/.test(f)).slice(0, 20);
-      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except') });
+      // A person's page also has the roles they were given and lost in places.
+      const rolesOf = kind === 'identity' ? targets.map((t) => t.id) : undefined;
+      const changes = s.changes(targets, limit, { fields: list('fields'), except: list('except'), rolesOf });
       // Whoever they name, and whoever made them, for rendering.
       const named = new Set(changes.flatMap((c) => [c.identityId, c.actorId, c.target.kind === 'identity' ? c.target.id : undefined].filter((x): x is string => !!x)));
       return ok({ changes, identities: s.identitiesByIds(named) });
@@ -1395,7 +1643,7 @@ export class HubServer {
           else {
             const file = typeof b.avatar === 'string' ? this.uploads.get([b.avatar])?.[0] : undefined;
             if (!file) return bad('avatar: an upload id, or null to remove the picture');
-            change.avatar = file;
+            change.avatar = (await this.uploads.common([file], await this.jxlTools()))[0];
           }
         }
         // Pronouns, the banner and its colour (docs/account-self.md, Discord).
@@ -1408,7 +1656,7 @@ export class HubServer {
           else {
             const file = typeof b.banner === 'string' ? this.uploads.get([b.banner])?.[0] : undefined;
             if (!file) return bad('banner: an upload id, or null to remove it');
-            change.banner = file;
+            change.banner = (await this.uploads.common([file], await this.jxlTools()))[0];
           }
         }
         if (b.accent !== undefined) {
@@ -1510,6 +1758,17 @@ export class HubServer {
         const r = await this.posts.unpublish(network, m[2], typeof b.account === 'string' && b.account ? b.account : undefined);
         this.flush();
         return ok(r);
+      } catch (e) {
+        return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
+      }
+    }
+    // An event (events.ts, docs/events.md): its page with every guest the site showed, and an RSVP sent as an account.
+    if ((m = path.match(/^\/api\/events\/([a-z]+)\/([A-Za-z0-9_.~:-]{1,120})(\/rsvp)?$/)) && (m[3] ? method === 'POST' : method === 'GET')) {
+      try {
+        if (!m[3]) return ok(this.events.page(m[1], m[2], url.searchParams.get('account')));
+        const v = await this.events.rsvp(m[1], m[2], await body<unknown>());
+        this.flush();
+        return ok(v);
       } catch (e) {
         return bad((e as Error).message, e instanceof PostsError ? e.status : 500);
       }
@@ -1619,7 +1878,7 @@ export class HubServer {
       const ref = chatRef(s, decodeURIComponent(m[1]));
       if (!ref) return bad('no such chat', 404);
       const id = chatIdOf(ref);
-      const convs = () => [...new Set(chatRoutes(s, ref).map((r) => r.conversationId))];
+      const convs = () => [...new Set(chatRoutes(s, ref).filter((r) => !isEmailRoute(r)).map((r) => r.conversationId))];
       if (!m[2] && method === 'GET') return ok(chatView(s, ref));
       if (!m[2] && method === 'PATCH') {
         const b = await body<{ route?: { conversationId?: unknown; accountId?: unknown } | null; name?: unknown }>();
@@ -1634,6 +1893,10 @@ export class HubServer {
         // A person's chat is their person timeline, so live events and sync (journal.ts) know it by the same key.
         const before = parseCursor(url.searchParams.get('before'));
         const limit = Math.min(num('limit') ?? 60, 200);
+        // With mail (docs/mail.md "Mail as chats"): their mail with you alone, merged in by the same cursor, and what
+        // they wrote in threads with others in the page's range.
+        const places = ref.kind === 'person' ? mailPlaces(this.opts.mail) : null;
+        if (ref.kind === 'person' && places?.chat) return ok(personPage(this.opts.mail!, places, s, ref.personId, before, limit));
         return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
       }
       if (m[2] === '/messages' && method === 'POST') {
@@ -1650,6 +1913,21 @@ export class HubServer {
         return ok();
       }
       return bad('not found', 404);
+    }
+    // How much of a place a view shows, chosen (rungs.ts, docs/mail.md "Mail as chats"): null takes the choice back.
+    if (path === '/api/rungs' && method === 'PUT') {
+      const b = await body<{ view?: unknown; place?: unknown; rung?: unknown }>();
+      if (typeof b.view !== 'string' || !b.view || b.view.length > 300) return bad('view: a chat id');
+      if (typeof b.place !== 'string' || !b.place || b.place.length > 300) return bad('place: a place id');
+      if (b.rung !== null && !isRung(b.rung)) return bad(`rung: one of ${RUNGS.join(', ')}, or null`);
+      setPlaceRung(s.db, b.view, b.place, b.rung);
+      this.broadcast([{ t: 'rung', view: b.view, place: b.place, rung: b.rung }]);
+      return ok();
+    }
+    // A channel's stream: its own messages and every thread's, by time (docs/threads.md "The channel stream").
+    if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stream$/)) && method === 'GET') {
+      if (!s.one('SELECT 1 FROM conversation WHERE id = ?', m[1])) return bad('no such conversation', 404);
+      return ok(s.mergedTimeline(s.channelStream(m[1]), parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));
@@ -1678,8 +1956,9 @@ export class HubServer {
           if (change?.key === 'avatar') {
             if (!req.headers.get('origin')) return bad('The picture is changed from the app itself', 403);
             upload = typeof change.value === 'string' ? change.value : null;
-            const file = upload ? this.uploads.get([upload])?.[0] : undefined;
-            if (!file) return bad('avatar: an upload id');
+            const got = upload ? this.uploads.get([upload])?.[0] : undefined;
+            if (!got) return bad('avatar: an upload id');
+            const [file] = await this.uploads.common([got], await this.jxlTools());
             if (!P_PICTURE_TYPES.includes(file.mime)) return bad('A picture is a PNG, JPEG, GIF or WebP image', 415);
             if (file.size > P_PICTURE_MAX) return bad(`A picture is at most ${P_PICTURE_MAX / 1024 / 1024} MB`, 413);
             change = { key: 'avatar', value: pathToFileURL(file.path).href };
@@ -2095,11 +2374,18 @@ export class HubServer {
       }
       try {
         const r = this.opts.votes.mark(m[1], marks);
+        // The same as Louder / Quieter on the loudness scale (loudlearn.ts): the old marks are its aliases.
+        this.opts.loud?.fromMark(m[1], marks);
         this.flush();
         return ok(r);
       } catch (e: any) {
         return bad(e.message, 409);
       }
+    }
+    // The one loudness scale (loudlearn.ts, docs/notifications.md): its state and settings, check-ins, answers and why.
+    if (path.startsWith('/api/loudness/') || /^\/api\/messages\/[\w-]+\/loudness$/.test(path)) {
+      const r = await this.loudRoute(path, method, body);
+      if (r) return r;
     }
     if (path === '/api/triage/policy' && method === 'GET') {
       if (!this.opts.votes) return bad('No triage here', 404);
@@ -2140,11 +2426,23 @@ export class HubServer {
       const b = await body<{ into: string; from: string }>();
       s.mergePersons(b.into, b.from);
       this.flush();
+      this.matches.changed();
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
+      // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
+      const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
+      if (!idOrNull(b.face) || !idOrNull(b.picture)) return bad('face and picture are an identity id or null');
+      if (b.face !== undefined || b.picture !== undefined) {
+        if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
+        // Both checked before either is saved, so a refused request changes nothing.
+        for (const id of [b.face, b.picture]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
+        if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
+        if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
+      }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
       if (typeof b.note === 'string') this.people.pushPersonNote(m[1], b.note);
@@ -2165,6 +2463,7 @@ export class HubServer {
     if ((m = path.match(/^\/api\/identities\/([\w-]+)\/split$/)) && method === 'POST') {
       const personId = s.splitIdentity(m[1]);
       this.flush();
+      this.matches.changed();
       return ok({ personId });
     }
     if (path === '/api/folders' && method === 'PUT') {
@@ -2583,7 +2882,9 @@ export class HubServer {
     const s = this.store;
     const ref = chatRef(s, chatId);
     if (!ref) return 'no such chat';
-    const routes = chatRoutes(s, ref);
+    // Mail is sent through POST /api/mail/send (docs/mail.md "Mail as chats"): a chat route by email is not one here.
+    if (b.route?.conversationId && isEmailRoute({ conversationId: b.route.conversationId })) return 'mail is sent through /api/mail/send';
+    const routes = chatRoutes(s, ref).filter((r) => !isEmailRoute(r));
     const asked = b.route ? routes.find((r) => r.conversationId === b.route!.conversationId && (!b.route!.accountId || r.accountId === b.route!.accountId)) : undefined;
     if (b.route && !asked) return 'that is not a route of this chat';
     const replied = !asked && b.replyTo ? s.one<{ conversation_id: string }>('SELECT conversation_id FROM message WHERE id = ?', b.replyTo) : null;
@@ -2647,6 +2948,8 @@ export class HubServer {
     const replyTo = b.replyTo ? s.nativeOf('message', b.replyTo)?.nativeId : undefined;
     let files = this.uploads.get(ids);
     if (!files) return bad('that upload has expired, attach the file again', 410);
+    // A JPEG XL goes as a JPEG or PNG: no chat network shows one as a picture (jxl.ts). Mail keeps the file as it is.
+    if (conv.network !== 'email') files = await this.uploads.common(files, await this.jxlTools());
     const acc = s.account(accountId)!;
     const accCaps = JSON.parse(acc.capabilities) as P.Capability[];
     const name = NETWORK_META[conv.network].name;
@@ -2838,11 +3141,93 @@ export class HubServer {
 
   // ---------------------------------------------------------------- media
 
-  private async media(sig: string, b64: string, accountId: string | null): Promise<Response> {
+  /** A post's pictures (timelines.ts), a JPEG XL as a JPEG or PNG: no feed network shows one (jxl.ts). */
+  private async postFiles(ids: string[]): Promise<P.OutgoingAttachment[] | null> {
+    const f = this.uploads.get(ids);
+    return f && this.uploads.common(f, await this.jxlTools());
+  }
+
+  /** `jxl`: the device shows JPEG XL (jxl.ts takesJxl). `as`: what it is, or a download in a chosen form (mediaAs). */
+  private async media(sig: string, b64: string, accountId: string | null, jxl = false, as: string | null = null, name: string | null = null): Promise<Response> {
     const raw = Buffer.from(b64, 'base64url').toString('utf8');
     const expect = createHmac('sha256', this.opts.secret).update(`${raw}|${accountId ?? ''}`).digest('base64url').slice(0, 16);
     if (sig !== expect) return new Response('bad signature', { status: 403 });
-    return this.fetchMedia(raw, accountId);
+    if (as !== null) return this.mediaAs(raw, accountId, as, name, jxl);
+    return this.fetchMedia(raw, accountId, undefined, jxl);
+  }
+
+  /**
+   * Where a kept file's bytes are and what it is: the media cache's file, or its packed `.jxl` (`packed`), or a file
+   * under the hub's data. Null when it is not kept (yet).
+   */
+  private keptFile(raw: string): { src: string; key: string; type: string; packed: boolean; base: string } | null {
+    const key = mediaKey(raw);
+    const file = join(this.opts.dataDir, 'media-cache', key);
+    if (raw.startsWith('file://')) {
+      // One under the hub's data is read where it is; an account's own (fetchMedia asks the account) is in the cache.
+      const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
+      if (resolve(p).startsWith(resolve(this.opts.dataDir) + '/')) return existsSync(p) && statSync(p).isFile() ? { src: p, key, type: this.diskType(p, key), packed: false, base: file } : null;
+    }
+    if (!existsSync(file + '.mime')) return null;
+    const type = this.trueType(key, readFileSync(file + '.mime', 'utf8'));
+    if (existsSync(file)) return { src: file, key, type, packed: false, base: file };
+    if (existsSync(file + '.jxl')) return { src: file + '.jxl', key, type, packed: true, base: file };
+    return null;
+  }
+
+  /** A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes. */
+  private diskType(p: string, key: string): string {
+    const f = Bun.file(p);
+    const named = f.type.split(';')[0];
+    if (named !== 'application/octet-stream') return f.type;
+    const fd = openSync(p, 'r');
+    const head = new Uint8Array(16);
+    try {
+      readSync(fd, head, 0, 16, 0);
+    } finally {
+      closeSync(fd);
+    }
+    return sniffMime(head) ?? this.trueType(key, named);
+  }
+
+  /**
+   * A kept file as the viewer's download menu asks for it (docs/files.md "Downloading"). `info`: what it came as, how it
+   * is kept and what this device is sent, as JSON. Otherwise a download (`attachment`, named `name` with the form's
+   * extension): `original` the bytes as they came (a packed picture rebuilt), `jxl`, `png` or `jpeg` converted.
+   */
+  private async mediaAs(raw: string, accountId: string | null, as: string, name: string | null, jxl: boolean): Promise<Response> {
+    if (as !== 'info' && !['original', 'jxl', 'png', 'jpeg'].includes(as)) return new Response('as: info, original, jxl, png or jpeg', { status: 400 });
+    let k = this.keptFile(raw);
+    if (!k) {
+      // Not fetched yet: fetched as showing it would, then looked at.
+      const res = await this.fetchMedia(raw, accountId, undefined, true);
+      await res.body?.cancel().catch(() => {});
+      if (!res.ok) return new Response('not found', { status: res.status });
+      k = this.keptFile(raw);
+      if (!k) return new Response('not kept', { status: 404 });
+    }
+    const essence = k.type.split(';')[0].trim().toLowerCase();
+    const forms = downloadsAs(essence);
+    if (as === 'info') {
+      const kept = statSync(k.src).size;
+      const known = k.packed ? (this.store.db.query('SELECT size FROM media_info WHERE key = ?').get(k.key) as { size: number } | null) : null;
+      // What a plain fetch of the link sends this device (serveKept): null when it is made for it (a JPEG XL turned
+      // into a JPEG or PNG).
+      const sent = k.packed ? (jxl ? JXL : essence) : essence === JXL && !jxl ? null : essence;
+      const body = { type: essence, size: k.packed ? (known?.size ?? null) : kept, kept: { type: k.packed ? JXL : essence, size: kept }, sent, as: forms };
+      return Response.json(body, { headers: { 'cache-control': 'no-store', ...SAFE_HEADERS } });
+    }
+    if (!forms.includes(as as DownloadAs)) return new Response(`a ${essence} file is not offered as ${as}`, { status: 400 });
+    const send = (body: BodyInit, mime: string) =>
+      new Response(body, { headers: { ...mediaHeaders(raw, k.key, mime), 'content-disposition': downloadDisposition(raw, k.key, mime, name) } });
+    if (as === 'original') {
+      if (!k.packed) return send(Bun.file(k.src), k.type);
+      const r = await this.jxlServe.rebuilt(k.key, k.src);
+      return r ? send(Buffer.from(r.bytes), r.mime) : new Response('this picture could not be rebuilt', { status: 503 });
+    }
+    if (as === 'jxl' && k.packed) return send(Bun.file(k.src), JXL);
+    const r = await this.jxlServe.as(k.key, k.src, k.packed ? JXL : essence, as as Exclude<DownloadAs, 'original'>, k.base);
+    return r ? send(Buffer.from(r.bytes), r.mime) : new Response('this picture could not be converted', { status: 503 });
   }
 
   /**
@@ -2857,7 +3242,8 @@ export class HubServer {
 
   /** Fetch one URL into the media cache, as showing it would (mediaarchive.ts); true when it is there. */
   private async archiveOne(url: string, accountId: string | null, from?: string): Promise<boolean> {
-    const res = await this.fetchMedia(url, accountId, from);
+    // Whether it is there, not its bytes: a packed picture isn't rebuilt for it.
+    const res = await this.fetchMedia(url, accountId, from, true);
     await res.body?.cancel().catch(() => {});
     return res.ok;
   }
@@ -2908,19 +3294,18 @@ export class HubServer {
    * The bytes behind `raw`, from the media cache, else fetched and kept there. `from` is where to fetch them when not
    * from `raw` itself: a Discord link signed again, whose bytes are kept under the old link the message has.
    */
-  private async fetchMedia(raw: string, accountId: string | null, from?: string): Promise<Response> {
+  private async fetchMedia(raw: string, accountId: string | null, from?: string, jxl = false): Promise<Response> {
     const cacheDir = join(this.opts.dataDir, 'media-cache');
     if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const key = new Bun.CryptoHasher('sha256').update(raw).digest('hex');
     const file = join(cacheDir, key);
-    const headers = (mime: string) => mediaHeaders(raw, key, mime);
-    if (existsSync(file) && existsSync(file + '.mime')) {
+    if (existsSync(file + '.mime') && (existsSync(file) || existsSync(file + '.jxl'))) {
       // Recently seen stays longest when the cache is trimmed (mediacache.ts).
       try {
         const t = new Date();
-        utimesSync(file, t, t);
+        utimesSync(existsSync(file) ? file : file + '.jxl', t, t);
       } catch {}
-      return new Response(Bun.file(file), { headers: headers(this.trueType(key, readFileSync(file + '.mime', 'utf8'))) });
+      return this.serveKept(file, key, raw, this.trueType(key, readFileSync(file + '.mime', 'utf8')), jxl);
     }
 
     let bytes: Uint8Array;
@@ -2935,16 +3320,16 @@ export class HubServer {
       const r = await fetchPublicToFile(from ?? raw, file);
       if (!r.ok) return new Response(r.error, { status: r.status });
       writeFileSync(file + '.mime', r.mime, { mode: 0o600 });
-      return new Response(Bun.file(file), { headers: headers(r.mime) });
+      return this.serveKept(file, key, raw, r.mime, jxl);
     } else if (raw.startsWith('file://') && resolve(normalize(decodeURIComponent(raw.slice('file://'.length)))).startsWith(resolve(this.opts.dataDir) + '/')) {
       // A file under this hub's data (an import, an account whose session the hub keeps): read here. One elsewhere is
       // the account's own (an account dither-accounts made keeps its files in its own folder): asked of it below.
       const p = normalize(decodeURIComponent(raw.slice('file://'.length)));
       if (!existsSync(p) || !statSync(p).isFile()) return new Response('not found', { status: 404 });
-      // A file kept on disk (an import, Signal's own copy) has no type recorded: by its name, else by its first bytes.
       const f = Bun.file(p);
-      const named = f.type.split(';')[0];
-      const type = named !== 'application/octet-stream' ? f.type : (sniffMime(new Uint8Array(await f.slice(0, 16).arrayBuffer())) ?? this.trueType(key, named));
+      const type = this.diskType(p, key);
+      const common = !jxl && type.split(';')[0] === JXL ? await this.jxlServe.common(key, p) : null;
+      if (common) return new Response(Buffer.from(common.bytes), { headers: mediaHeaders(raw, key, common.mime) });
       return new Response(f, { headers: mediaHeaders(raw, key, type) });
     } else {
       if (!accountId) return new Response('no account to resolve media', { status: 404 });
@@ -2956,32 +3341,95 @@ export class HubServer {
     // Decrypted attachments end up here too.
     writeFileSync(file, bytes, { mode: 0o600 });
     writeFileSync(file + '.mime', mime, { mode: 0o600 });
-    return new Response(Buffer.from(bytes), { headers: headers(mime) });
+    return this.serveKept(file, key, raw, mime, jxl);
+  }
+
+  /**
+   * A file in the media cache as this device gets it (jxl.ts, docs/files.md "JPEG XL"): a packed picture as JPEG XL
+   * where the device shows it, else rebuilt as it came; a JPEG XL someone sent as a JPEG or PNG where it doesn't.
+   * `type`: what the file is; `jxl`: the device shows JPEG XL.
+   */
+  private async serveKept(file: string, key: string, raw: string, type: string, jxl: boolean): Promise<Response> {
+    const headers = (mime: string) => mediaHeaders(raw, key, mime);
+    const essence = type.split(';')[0].trim().toLowerCase();
+    if (!existsSync(file) && existsSync(file + '.jxl')) {
+      if (jxl) return new Response(Bun.file(file + '.jxl'), { headers: headers(JXL) });
+      const r = await this.jxlServe.rebuilt(key, file + '.jxl');
+      return r ? new Response(Buffer.from(r.bytes), { headers: headers(r.mime) }) : new Response('this picture could not be rebuilt', { status: 503 });
+    }
+    if (essence === JXL && !jxl) {
+      const r = await this.jxlServe.common(key, file);
+      if (r) return new Response(Buffer.from(r.bytes), { headers: headers(r.mime) });
+    }
+    if (!PACKED_TYPES.has(essence)) return new Response(Bun.file(file), { headers: headers(type) });
+    // One the packer may pack meanwhile is read now, not as the answer goes out.
+    try {
+      return new Response(readFileSync(file), { headers: headers(type) });
+    } catch (e) {
+      if (existsSync(file + '.jxl')) return this.serveKept(file, key, raw, type, jxl);
+      throw e;
+    }
   }
 
   // ---------------------------------------------------------------- static PWA
 
-  private static(path: string): Response {
+  private static(path: string, req: Request): Response {
     const root = resolve(this.opts.webDist);
     const candidate = resolve(join(root, normalize(decodeURIComponent(path))));
     if (candidate.startsWith(root) && existsSync(candidate) && statSync(candidate).isFile()) {
       const immutable = path.startsWith('/assets/');
-      return new Response(Bun.file(candidate), {
-        headers: {
-          'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-          ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
-        },
+      return this.webFile(req, candidate, {
+        'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        ...(path.endsWith('.webmanifest') ? { 'content-type': 'application/manifest+json' } : {}),
       });
     }
     // A hashed asset from another build must fail as itself: as HTML it would poison a cache.
     if (path.startsWith('/assets/')) return new Response('not found', { status: 404 });
     const index = join(root, 'index.html');
-    if (existsSync(index)) return new Response(Bun.file(index), { headers: { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' } });
+    if (existsSync(index)) return this.webFile(req, index, { 'cache-control': 'no-cache', 'content-type': 'text/html; charset=utf-8' });
     return new Response('dither-chat hub is running; the web app has not been built yet (bun run web:build).', { status: 200 });
+  }
+
+  /** The web build's files, packed once with zstd at its hardest for a client that takes it (compress.ts PackedFiles). */
+  readonly packed = new PackedFiles();
+
+  private webFile(req: Request, file: string, headers: Record<string, string>): Response {
+    const f = Bun.file(file);
+    if (req.method === 'GET' && !req.headers.has('range') && pickEncoding(req.headers.get('accept-encoding')) === 'zstd') {
+      const st = statSync(file);
+      const body = this.packed.get(file, st.size, st.mtimeMs);
+      if (body) return new Response(body, { headers: { 'content-type': f.type, ...headers, 'content-encoding': 'zstd', vary: 'accept-encoding' } });
+    }
+    return new Response(f, { headers });
   }
 
   /** Queue a notification for connected clients. */
   notify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
     this.store.dirty.extra.push(ev);
+  }
+
+  /** A page's word over its socket: what it is watching (`P.ClientWatching`). Anything else is ignored. */
+  private clientSaid(ws: ServerWebSocket<ClientData>, msg: string, now = Date.now()) {
+    let m: Partial<P.ClientWatching>;
+    try {
+      m = JSON.parse(msg);
+    } catch {
+      return;
+    }
+    if (m?.t !== 'watching' || !Array.isArray(m.conversationIds)) return;
+    const ids = m.conversationIds.filter((x): x is string => typeof x === 'string').slice(0, 20);
+    ws.data.watching = ids.length ? { label: String(m.label ?? '').slice(0, 100), conversationIds: ids, at: now } : undefined;
+  }
+
+  /**
+   * Is this chat open at its newest message on a computer in use, as its page last said (within twice
+   * `P.WATCH_EVERY`)? Then a push about it would only buzz a phone about what is being read (notify.ts).
+   */
+  watched(conversationId: string, now = Date.now()): boolean {
+    for (const ws of this.clients) {
+      const w = ws.data.watching;
+      if (w && now - w.at <= 2 * WATCH_EVERY && !PHONE.test(w.label) && w.conversationIds.includes(conversationId)) return true;
+    }
+    return false;
   }
 }

@@ -8,7 +8,7 @@
  * longer does comes out.
  */
 import type * as P from '@dither-chat/protocol';
-import { MAIL_PLATFORM_NAMES, mailPlatform, parseMailList, parseWithList, platformScope, viewList } from '@dither-chat/protocol';
+import { bareSubject, MAIL_PLATFORM_NAMES, mailboxList, mailPlatform, parseMailList, parseWithList, platformScope, searchOfList, viewList } from '@dither-chat/protocol';
 import { inboxView, type Ranked } from '../ordering.ts';
 
 interface MailList {
@@ -36,12 +36,16 @@ interface MailState {
   lists: Map<string, MailList>;
   /** What the hub's outbox still shows (slice 5): held, on its way, failed, or just sent. */
   outbox: Map<string, P.MailOutboxView>;
+  /** Each person's email routes (mail as chats, mail/chats.ts), by route id `email:<account>:<address>`. */
+  chats: Map<string, P.MailChatView>;
+  /** The rungs you chose for places in people's chats, by `<view> <place>`. */
+  rungs: Map<string, P.PlaceRungView>;
 }
 
 const OFF: P.MailAccess = { state: 'off', managerUrl: null };
 
 export function emptyMail(): MailState {
-  return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map(), outbox: new Map() };
+  return { access: OFF, accounts: new Map(), mailboxes: new Map(), threads: new Map(), lists: new Map(), outbox: new Map(), chats: new Map(), rungs: new Map() };
 }
 
 /** Newest first; ties by id, as the hub pages them. */
@@ -142,6 +146,8 @@ export function applyMailBootstrap(s: MailState, b: P.MailBootstrap | undefined)
   s.mailboxes = new Map((b?.mailboxes ?? []).map((m) => [m.id, m]));
   s.threads = new Map((b?.threads ?? []).map((t) => [t.id, t]));
   s.outbox = new Map((b?.outbox ?? []).map((o) => [o.id, o]));
+  s.chats = new Map((b?.chats ?? []).map((c) => [c.id, c]));
+  s.rungs = new Map((b?.rungs ?? []).map((r) => [rungKey(r.view, r.place), r]));
   // Loaded lists may be behind what the hub has now: each loads again when shown.
   s.lists = new Map();
 }
@@ -187,10 +193,22 @@ export function applyMailEvent(s: MailState, ev: P.ClientEvent): boolean {
       // The whole list, each time.
       s.outbox = new Map(ev.items.map((o) => [o.id, o]));
       return true;
+    case 'rung': {
+      const k = rungKey(ev.view, ev.place);
+      if (ev.rung) s.rungs.set(k, { view: ev.view, place: ev.place, rung: ev.rung, setAt: Date.now() });
+      else s.rungs.delete(k);
+      return true;
+    }
+    case 'mail.chats':
+      for (const id of ev.removed) s.chats.delete(id);
+      for (const c of ev.chats) s.chats.set(c.id, c);
+      return true;
     default:
       return false;
   }
 }
+
+export const rungKey = (view: string, place: string) => `${view} ${place}`;
 
 function removeThreads(s: MailState, ids: string[]) {
   if (!ids.length) return;
@@ -214,7 +232,12 @@ function placeInList(s: MailState, l: MailList, changed: P.MailThreadView[]) {
  * `next` empty, so the threads the hub sends meanwhile go in wherever they sort.
  */
 export function mergePage(s: MailState, key: string, page: P.MailThreadPage, more: boolean) {
-  for (const t of page.threads) s.threads.set(t.id, t);
+  // A thread the page holds as it was is kept as the same object, so a list opened again (Updates, then Everything)
+  // does not draw its rows again (ui/memo.ts: the same object is the same thing).
+  for (const t of page.threads) {
+    const had = s.threads.get(t.id);
+    if (!had || JSON.stringify(had) !== JSON.stringify(t)) s.threads.set(t.id, t);
+  }
   const l = s.lists.get(key) ?? newList(key);
   let ids = page.threads.map((t) => t.id);
   let dry = false;
@@ -288,6 +311,33 @@ export function senderLine(t: P.MailThreadView, max = 3): string {
   return shown.join(', ');
 }
 
+/**
+ * A thread with more people than you and one other: a chat of its own (docs/mail.md "Mail as chats"), named by its
+ * subject (threadName) where a thread with one person is named by them.
+ */
+export const isGroupThread = (t: P.MailThreadView) => t.participants > 2;
+
+/** "Alice, Jo": who wrote in a thread besides you, by first name, in the order they first wrote. */
+export function threadPeople(t: P.MailThreadView): string {
+  return [...new Set(t.from.filter((f) => !f.self).map((f) => firstName(f.name ?? f.email, true)))].join(', ');
+}
+
+/**
+ * A thread's name where it is a chat of its own: its subject as drawn (no Re: or Fwd:), or with no subject its people
+ * ("Alice, Jo"). The same in the inbox's row, the chat's header, Ctrl+K, search and the mail lists.
+ */
+export function threadName(t: P.MailThreadView): string {
+  return bareSubject(t.subject ?? '') || threadPeople(t) || '(no subject)';
+}
+
+/** "Jo: Done on my side too…": a group thread's preview with who wrote it, as a group chat's row has ("You" for you). */
+export function threadSnippet(t: P.MailThreadView): string {
+  if (!t.preview) return '';
+  const last = t.from[t.from.length - 1];
+  const who = t.lastFromMe || last?.self ? 'You' : last ? firstName(last.name ?? last.email, true) : null;
+  return who ? `${who}: ${t.preview}` : t.preview;
+}
+
 /** A name for a list row: the whole name alone, the first name among several. */
 function firstName(n: string, several: boolean): string {
   if (!several) return n;
@@ -311,22 +361,62 @@ export function listTitle(s: MailState, key: string): string {
   return acc ? `${names[l.view]} · ${acc.address ?? acc.label}` : names[l.view];
 }
 
+/** A list's name on its chip: Starred, Sent, a mailbox's name, without whose mail it is (the account picker says that). */
+export function listName(s: MailState, key: string): string {
+  const search = searchOfList(key);
+  if (search !== null) return searchIn(search).list ? listName(s, searchIn(search).list!) : 'Search';
+  return listTitle(s, key).split(' · ')[0];
+}
+
+/** The operators that keep a search in a list (the mail lists' search box), by view. */
+const VIEW_SCOPE: Partial<Record<P.MailView, string>> = { updates: 'in:inbox is:update', all: 'in:inbox', starred: 'is:starred', sent: 'in:sent' };
+
 /**
- * The Mail section's chips: Inbox, ranked or newest first (its label follows `prefs.mailOrder`), the whole of Inbox, and its
- * mail not from a person, which is also Inbox's folded row (slice 8).
+ * What a search in list `key` starts with, so it finds only that list's mail (docs/inbox.md "Mail lists"): its view's
+ * or mailbox's operators, and its account. Null for a list a search cannot keep to.
  */
-export const MAIL_VIEWS: { view: P.MailView; label: string }[] = [
-  { view: 'inbox', label: 'Ranked' },
-  { view: 'all', label: 'Everything' },
-  { view: 'updates', label: 'Updates' },
-];
+export function listScope(key: string): string | null {
+  const l = parseMailList(key);
+  if (!l) return null;
+  if ('mailbox' in l) return `in:${l.mailbox}`;
+  const view = VIEW_SCOPE[l.view];
+  if (!view) return null;
+  return l.accountId ? `${view} account:${l.accountId}` : view;
+}
+
+/** A search in a list as its key (`s:<the list's operators> <words>`). */
+export const listSearch = (key: string, words: string) => {
+  const scope = listScope(key);
+  return `s:${scope ? `${scope} ${words.trim()}` : words.trim()}`;
+};
+
+/** A search's list (listScope's operators at its start) and the words typed after them; no list when it has none. */
+export function searchIn(q: string): { list: string | null; words: string } {
+  const lead = q.match(/^((?:(?:in|is|account):\S+\s+)+)/)?.[1] ?? '';
+  const ops = lead.trim().split(/\s+/).filter(Boolean);
+  const acc = ops.find((o) => o.startsWith('account:'))?.slice(8) ?? null;
+  const box = ops.find((o) => /^in:mbx_/.test(o))?.slice(3);
+  const view = (Object.keys(VIEW_SCOPE) as P.MailView[]).find((v) => VIEW_SCOPE[v] === ops.filter((o) => !o.startsWith('account:')).join(' '));
+  const list = box ? mailboxList(box) : view ? viewList(view, acc) : null;
+  if (!list || listScope(list) !== ops.join(' ')) return { list: null, words: q };
+  return { list, words: q.slice(lead.length) };
+}
+
 /** Views in the folder menu, above each account's mailboxes: newest first, of the scope in use. */
 export const MAIL_FOLDER_VIEWS: { view: P.MailView; label: string }[] = [
   { view: 'starred', label: 'Starred' },
   { view: 'sent', label: 'Sent' },
 ];
 
-export const DEFAULT_LIST = viewList('inbox');
+/**
+ * The mail lists shown in the Inbox's place (docs/mail.md "Mail as chats"): mail is chats, so its Inbox is the
+ * Inbox's; these are what mail has besides, newest first.
+ */
+export const MAIL_LISTS: { view: P.MailView; label: string }[] = [
+  { view: 'updates', label: 'Updates' },
+  { view: 'all', label: 'Everything' },
+  ...MAIL_FOLDER_VIEWS,
+];
 
 /**
  * A mailbox that only holds others (IMAP \Noselect, Gmail's `[Gmail]`): it has no counts and has mailboxes in it. The

@@ -6,15 +6,16 @@ per post of yours. Everyone in it becomes a person on the hub with their profile
 person's recent posts. The same page puts your accounts' home timelines together in feeds of your own, in an order you
 swap at will, and posts as several accounts at once.
 
-X, Mastodon, Reddit, Lemmy, Substack and Bluesky bring feeds (all but X by the accounts dither-accounts runs for them).
+X, Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong bring feeds (all but X by the accounts dither-accounts runs
+for them).
 The shapes are not X's own: each network's notifications and timelines arrive the same way, and the page names them
-in the network's own words (section "A feed of posts, for any network"). Mastodon, Reddit, Lemmy, Substack and Bluesky accounts
-bring posts only: they have no chats here, and the inbox and a direct send say so.
+in the network's own words (section "A feed of posts, for any network"). Mastodon, Reddit, Lemmy, Substack, Bluesky and
+LessWrong accounts bring posts only: they have no chats here, and the inbox and a direct send say so.
 
 Code: `packages/protocol/src/feed.ts` (the shapes), `packages/hub/src/feed.ts` (what makes a feed, its refusals, its
 messages' `feed` for the page), `people.ts` (`keepAbout`: unasked profiles), `triage.ts` (its notifications),
 `timelines.ts` (home timelines, your feeds, posting to several accounts, drafts), `demo-x.ts` (the demo's two X
-accounts), `demo-posts.ts` (its Mastodon, Reddit, Lemmy, Substack and Bluesky accounts); `packages/protocol/src/mix.ts` (a feed's orders, pure);
+accounts), `demo-posts.ts` (its Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong accounts); `packages/protocol/src/mix.ts` (a feed's orders, pure);
 `packages/web/src/feed.ts` (units by post, pure), `ui/feed/` (the Feed page, threads and a profile's posts, a lazy
 chunk; `FeedPage.tsx` the page, `Units.tsx` the notification cards, `Post.tsx` a post). The X extractor is in
 dither-accounts.
@@ -114,11 +115,12 @@ conversation (`#/inbox/c/<feed>`, an old notification's) opens that account's Ac
 | --- | --- | --- |
 | Following | `#/feed/following` | a feed: every account's Following, newest first; a post two accounts follow once |
 | Discover | `#/feed/discover` | a feed: every account's For you, taking turns, each with its reason ("Alice Chen liked") |
+| Events | `#/feed/events` | a feed, there once an event site's account is: every Luma and Partiful account's Explore and Your events, taking turns, as event cards ([events.md](events.md#the-feeds)) |
 | a feed you made | `#/feed/m-<id>` | the timelines you chose, in the order you chose |
 | Activity | `#/feed/activity` | every account's notifications, by post ([The feed's page](#the-feeds-page)); a filter picks one account (`#/feed/<account>:activity`) |
 | Your posts | `#/feed/mine` | what your accounts posted, newest first; posts made in one press as one entry with "Also posted as"; a filter picks one account (`:mine`) |
 | Drafts | `#/feed/drafts` | posts kept for later and scheduled ones, with when and as whom |
-| one timeline alone | `#/feed/<account>:following`, `:foryou` | an account's own Following or For you, in its order (from Tune, a timeline's name) |
+| one timeline alone | `#/feed/<account>:following`, `:foryou`, `:explore` | an account's own Following or For you, in its order (from Tune, a timeline's name) |
 
 `#/feed/home`, Home's old route, is Following.
 
@@ -131,7 +133,8 @@ post link (Ctrl or ⌘ opens one in a new tab).
 A feed is home timelines from any of your accounts (and, later, any network) in one list. Each timeline in it has a
 **share**: Off, Less, Even, More or Most (weights 0, ½, 1, 2, 4). A post two timelines show is in it once, its card
 saying which timeline it came through ("@you · For you (+1)") when the feed takes more than one, and acting as that
-timeline's account. Following and Discover are always there; **New feed** makes another (every Following, taking
+timeline's account. Following and Discover are always there, and Events once an event site's account is (Following
+and Discover leave event sites out, docs/events.md); **New feed** makes another (every Following, taking
 turns, named "New feed" for you to change); you can change any of them, delete yours, and put Following or Discover
 back as they were.
 
@@ -230,12 +233,20 @@ its post at once, from the page, "Reading the replies from X…" under it until 
 A post card draws whatever a `PostFact` carries, so a network that brings these needs no card of its own: `title`
 (Reddit, Lemmy, Hacker News, a forum), shown over the words; `warning` (Mastodon's content warning, a spoiler), the
 words and pictures folded behind it until **Show**; `place` (a subreddit, a community, a channel), "in r/rust" over
-it; `replies`, who may reply. The composer reads the network's rules (`compose.ts`: limit, how it counts, pictures,
-reply gates, a title, a place, a content warning). X, Mastodon, Reddit, Lemmy, Substack and Bluesky bring posts. Post ids are
+it; `replies`, who may reply; `article`, a long-form post's whole body as Markdown (Substack, LessWrong), which only a
+post's thread brings: the thread draws it in place of the preview (the file viewer's Markdown renderer, its chunk
+loaded the first time, raw HTML shown as text, links http(s) only) with its pictures in place and no cover above it,
+and the hub signs its pictures as it does a post's others (feed.ts `articleView`), so they come through the hub's
+media cache. A card never has it. The composer reads the network's rules (`compose.ts`: limit, how it counts, pictures,
+reply gates, a title, a place, a content warning). X, Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong bring posts. Post ids are
 the network's own, opaque to the hub (`POST_ID_PATTERN`: letters, digits and `_.~:-`, up to 120): Reddit's `t3_…`
 and `t1_…`, Lemmy's `post:…` and `comment:…`, Bluesky's `<did>~<rkey>` (the author's DID and the post's record
 key, as dither-accounts' `bluesky` kind writes them: `did:plc:…~3k…`). A Bluesky post's link is
-`https://bsky.app/profile/<handle or did>/post/<rkey>`.
+`https://bsky.app/profile/<handle or did>/post/<rkey>`. LessWrong's are `p-<id>` for a post and `c-<id>` for a comment
+(the site's own ids, as dither-accounts' `lesswrong` kind writes them).
+
+A long-form post (Substack's, LessWrong's) also carries `article`, its whole body as Markdown, but only in its own
+thread (`PostThread.focal`); its card keeps `text`, the short preview, so timelines stay light.
 
 ## The feed's page
 
@@ -290,6 +301,7 @@ that answer it), and who reacted and how (identity ids by kind, with the network
 | Lemmy | your post or comment | comments, as a tree | upvotes, a score only (no names) |
 | Substack | your note or post | comments | likes, restacks (named) |
 | Bluesky | your post | replies, as a tree; quote posts | likes, reposts (named) |
+| LessWrong | your post or comment | comments, as a tree | upvotes, as karma only (no names) |
 | YouTube | your video or comment | comments, one level of replies | likes, a count only |
 | Discourse | your topic or post | replies | likes (named) |
 
@@ -301,7 +313,8 @@ no one who reacted shows the count alone: the line opens no list.
 Each network's words are its own, on the bar, the counts, the cards and Activity (`compose.ts` `words`, `likeIcon`;
 `web/src/feed.ts` `reactWords`): Mastodon favourites (a star) and boosts, Reddit and Lemmy upvote (an arrow) and have
 no repost, so the bar has none and the hub refuses one (409) before anything is sent; Substack likes and restacks; Bluesky
-likes (a heart) and reposts, as X does, and quotes.
+likes (a heart) and reposts, as X does, and quotes; LessWrong upvotes (an arrow, its count the post's karma, its
+replies the comment count) and has no repost, refused (409) as Reddit's is.
 Downvotes are not built yet: a press that downvotes, and a score that counts them, are open.
 
 Each account brings two timelines, named as the network names them (`timelineName`), in Tune, a timeline's header
@@ -315,6 +328,10 @@ and the feeds:
 | Lemmy | Subscribed (newest) | All (hot) |
 | Substack | Inbox | Notes |
 | Bluesky | Following | Discover |
+| LessWrong | Subscribed (posts by the people whose new posts you subscribe to, the last 90 days) | For you (the front page's own feed: posts, quick takes and comment threads) |
+
+The event sites (Luma, Partiful) bring **Explore** (`explore`, their city's events) and **Your events** (`following`)
+instead, and no For you (`homeFeedsOf`; [events.md](events.md#the-feeds)).
 
 Deep comment trees come as `PostThread.replies` chains, as every network's do; a branch deeper than the page draws
 ends in "Continue this thread", which opens that comment as a thread of its own, read by its id.
@@ -332,7 +349,7 @@ ends in "Continue this thread", which opens that comment as a thread of its own,
   ([profile.md](profile.md#connections)). X cannot follow or unfollow from here yet, so there is no Follow back. Until 2026-11-13 About carried a **Follows you** tag.
 - **Feed actors' profiles** show what the hub logged (bio, counts, links, how you follow each other) at once, without
   asking.
-  Asking X then brings their posts. Their feed items are in **Recent messages** ("X notifications", "Liked your post:
+  Asking X then brings their posts. Their feed items are in **Between you** ("X notifications", "Liked your post:
   “…”") and open the feed. The feed is not listed in **In common**.
 
 ## Threads
@@ -433,21 +450,24 @@ bar X has**: Reply, Repost, Like, and the views X counts. Code: `protocol/src/co
 
 The rules are data (`POST_RULES`), one composer draws them all:
 
-| | X | Mastodon | Reddit | Lemmy | Substack | Bluesky |
-| --- | --- | --- | --- | --- | --- | --- |
-| Limit | 280, weighted | 500 | 40,000 in a post, 10,000 in a comment | 10,000 | 10,000 | 300 |
-| Counting | twitter-text v3: Latin, Greek, Cyrillic and common punctuation one, other characters (CJK) two, each emoji two (a ZWJ family, a flag: one emoji), every link 23 however long | graphemes, every link 23 | graphemes | graphemes | graphemes | graphemes (an emoji, a flag, a ZWJ family one), links as written |
-| Counter | a ring that fills; from 20 left it grows and shows the number (yellow), at the limit red, past it a negative count in red, and the ring goes past -10 | a count from 50 left | "1,204 left" from 1,000 left | the same | the same | X's ring, from 20 left |
-| Title and place | none | none | a new post needs a title (300) and a subreddit (r/…) | a title (200) and a community (!name or !name@server) | none | none |
-| Content warning | none | CW, folding the post | none | none | none | none (Bluesky's labels are a fixed few, not built) |
-| Words | Post, Reply, Quote; "Post your reply" | Publish, Favourite, Boost | Comment, Upvote; Markdown | Reply, Upvote; Markdown | Like, Restack | Post, Reply, Quote post; Like, Repost; "What's up?" |
-| Likers | only the author sees who liked (X since 2024) | named | nobody: a score only | nobody | named | named |
+| | X | Mastodon | Reddit | Lemmy | Substack | Bluesky | LessWrong |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Limit | 280, weighted | 500 | 40,000 in a post, 10,000 in a comment | 10,000 | 10,000 | 300 | 100,000, in a comment (no new post from here) |
+| Counting | twitter-text v3: Latin, Greek, Cyrillic and common punctuation one, other characters (CJK) two, each emoji two (a ZWJ family, a flag: one emoji), every link 23 however long | graphemes, every link 23 | graphemes | graphemes | graphemes | graphemes (an emoji, a flag, a ZWJ family one), links as written | graphemes; Markdown |
+| Counter | a ring that fills; from 20 left it grows and shows the number (yellow), at the limit red, past it a negative count in red, and the ring goes past -10 | a count from 50 left | "1,204 left" from 1,000 left | the same | the same | X's ring, from 20 left | "1,204 left" from 1,000 left |
+| Title and place | none | none | a new post needs a title (300) and a subreddit (r/…) | a title (200) and a community (!name or !name@server) | none | none | none: a comment has neither |
+| Content warning | none | CW, folding the post | none | none | none | none (Bluesky's labels are a fixed few, not built) | none |
+| Words | Post, Reply, Quote; "Post your reply" | Publish, Favourite, Boost | Comment, Upvote; Markdown | Reply, Upvote; Markdown | Like, Restack | Post, Reply, Quote post; Like, Repost; "What's up?" | Comment, Upvote; "Write a comment"; Markdown, no pictures |
+| Likers | only the author sees who liked (X since 2024) | named | nobody: a score only | nobody | named | named | nobody: karma only |
 
 Past the limit, what is too much is marked red in the text itself and Post greys. Choosing a Reddit or Lemmy account
 in the Feed page's composer adds a place field (plain text this round: `r/name`, `name`, `!name@server`) and a title;
 Post stays grey, with a note saying why, until both are there. A titled post may have no body. Mastodon's **CW**
 button adds the warning; a reply in a thread keeps the warning of the post it answers. A comment or reply takes no title
-or place, and a network without them refuses one (422), as it refuses a warning where there is none. Sending to
+or place, and a network without them refuses one (422), as it refuses a warning where there is none. LessWrong takes
+comments only (`replyOnly`): its posts are articles written on the site, so the Feed page's composer leaves LessWrong
+accounts out (and draws none on a LessWrong timeline), a reply in a LessWrong thread is a comment, and the hub refuses
+a new post there (409) before anything is sent, one press to several accounts posting to the others. Sending to
 several accounts at once sends each what it takes: the title and place only where they belong, who can reply only
 where the network has it. The `publish` command carries `title`, `place` (the name without its `r/` or `!`) and
 `warning`.
@@ -484,7 +504,7 @@ logged follows `reply_to_id` across every account's posts (index `message_post_r
 docs/mail-design.md) because a mail is not a chat message: subjects, folders and labels, threads by headers, bodies of
 megabytes, a server to keep in step with. A post is a short text by an identity, answering another post, with
 pictures: what a message already is. As a message it gets, with no code of its own: search (full text,
-`from:`, `has:image`, `network:x`, misspellings, `in:"X posts"`); the person's Recent messages, activity and message
+`from:`, `has:image`, `network:x`, misspellings, `in:"X posts"`); the person's Between you, activity and message
 counts; the history of an edit; the media archive keeping its pictures; sync to devices; and the thread read back
 when X cannot be asked, through `reply_to_id`. What a post has that a message lacks (counts, the quoted post, the
 thread's first post as `root`) rides in `extra.post`, as the feed's `FeedItem` does in `extra.feed`.
@@ -497,7 +517,7 @@ scores and a profile's In common, and the forward picker. Nothing learns from it
 rank history or its refolds. The hub never asks the network for its history (or a feed's): there is no such chat on
 X. Everyone in a thread is an identity, not a person: no person is made for them, as
 one is for someone in your notifications. Opening the conversation lists what was logged, newest first; a message
-of it (a search hit, Recent messages) opens its thread (`GET /api/messages/:id/thread`).
+of it (a search hit, a profile's Between you) opens its thread (`GET /api/messages/:id/thread`).
 
 ## Following a post
 
@@ -564,12 +584,14 @@ post when none is named) has someone answer a post now, first on its first page 
 follow has news. scripts/perf-world.ts leaves it out (`createDemoAccounts(store, { x: false })`): the perf
 baselines predate it.
 
-It also has one account each of Mastodon, Reddit, Lemmy, Substack and Bluesky (`demo-posts.ts`, made up throughout, on
+It also has one account each of Mastodon, Reddit, Lemmy, Substack, Bluesky and LessWrong (`demo-posts.ts`, made up throughout, on
 `.example` hosts): two timelines each, posts with titles, places and content warnings, a boost and restacks, a
 Reddit post whose comments go nine levels deep, Lemmy's ancestors, Bluesky's `<did>~<rkey>` ids, a quote post and a
-repost, likers named where the network names them, a
+repost, LessWrong's `p-`/`c-` ids and karma, whole articles (Markdown) in the threads of a Substack essay and two
+LessWrong posts, likers named where the network names them, a
 notifications feed in each network's words, profiles, and the logs (`writeLog`, `postLog`, `homeLog`,
-`publishLog`). It refuses a repost on Reddit and Lemmy, and a new Reddit or Lemmy post without its title and place.
+`publishLog`). It refuses a repost on Reddit, Lemmy and LessWrong, a new Reddit or Lemmy post without its title and place, and any
+new LessWrong post.
 `DITHER_DEMO_POSTS=0` (or `createDemoAccounts(store, { posts: false })`) leaves them out: the X verify scripts
 count X's own.
 
@@ -644,14 +666,17 @@ count X's own.
   opening a profile), like and repost reaching the demo X once each, Repost asking Repost or Quote, the counter at 100,
   15 left, 6 over (marked), CJK and links, a reply to the top of the tree, a reply to a reply, Escape, a quote with
   Ctrl+Enter, the style pictures, a long press on a phone showing a sheet, and X getting exactly the presses made.
-- `packages/hub/test/feed-networks.test.ts`: the five demo accounts of Mastodon, Reddit, Lemmy, Substack and Bluesky:
+- `packages/hub/test/feed-networks.test.ts`: the six demo accounts of Mastodon, Reddit, Lemmy, Substack, Bluesky and
+  LessWrong:
   sources, Following and Discover with titles, places, a content warning, a boost and reasons; Reddit's comment tree
   past six levels and a deep comment opened by its id, Lemmy's ancestors, a Mastodon reply's own warning; like
   everywhere and repost refused on Reddit and Lemmy with nothing sent; a Reddit or Lemmy post refused without title
   and place, posted with them; Mastodon's warning and limit with links counted 23; one press to several accounts
   sending each what it takes; who favourited named, Reddit naming nobody; Bluesky's thread and a reply read by `<did>~<rkey>`, 300 graphemes
   (an emoji family one), title, place and warning refused, a reply and a quote post sent, likers and reposters named, a
-  quote in its notifications; the notifications read-only.
+  quote in its notifications; LessWrong's `p-`/`c-` ids, its article only in a post's thread (and a Substack essay's),
+  karma and comment counts, an upvote taken back, repost and a new post refused with nothing sent, comments on a post
+  and on a comment, 100,000 characters, no pictures, one press leaving it out; the notifications read-only.
 - `scripts/verify-feed-networks.ts`: in a real browser on a fresh demo hub, desktop and phone: Following mixing the
   networks, Tune naming each timeline in its network's words, each network's cards (Reddit's title and subreddit,
   Lemmy's community, Substack's publication, Mastodon's warning until Show and a boost) and bar (no Repost on Reddit
@@ -662,4 +687,4 @@ count X's own.
 - `packages/web/test/tree.test.ts`: chains and logged branches as one tree, a post seen twice, posts outside the
   thread, cycles, what is hidden to load, the tree read back as chains.
 
-Not run against a real X, Mastodon, Reddit, Lemmy, Substack or Bluesky account.
+Not run against a real X, Mastodon, Reddit, Lemmy, Substack, Bluesky or LessWrong account.

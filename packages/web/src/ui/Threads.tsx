@@ -5,14 +5,14 @@
  * through the hub, which asks the network afresh whether this account may; a refusal comes back as its sentence.
  */
 import type * as P from '@dither-chat/protocol';
-import { namedTags, POST_TAGS_MAX, postProblem, THREAD_NAME_MAX, THREAD_NOTIFY_LABEL, threadNameProblem } from '@dither-chat/protocol';
+import { NETWORK_META, namedTags, POST_TAGS_MAX, postProblem, THREAD_NAME_MAX, THREAD_NOTIFY_LABEL, threadNameProblem } from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
 import { ago } from '../format.ts';
-import { authorName, convTitle, plainBody, threadsOf } from '../model.ts';
-import { api, db, isSelfIdentity, rev, toast } from '../state.ts';
+import { authorName, convTitle, effectiveLevel, netName, plainBody, resolvedTopic, ruleIcon, threadsOf, threadWords, topicForum, unreadOf } from '../model.ts';
+import { api, db, isSelfIdentity, metaRev, rev, toast } from '../state.ts';
 import { ableAccount, followThread, threadDialog, threadMuteChoices, threadNotify, type ThreadDialog } from '../threads.ts';
 import { uploadFile } from '../upload.ts';
-import { Empty, Modal } from './bits.tsx';
+import { Count, Empty, Modal } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import { Card } from './ProfileShell.tsx';
 import { openConv } from '../opening.ts';
@@ -26,6 +26,8 @@ function allThreads(convId: string): P.ConversationView[] {
 
 /** A post's start: when it was made, else its id's time is not known here, so its first or latest message. */
 const startedAt = (t: P.ConversationView) => t.thread?.createdAt ?? t.thread?.first?.ts ?? t.lastMessageAt ?? 0;
+/** The network said when it started: else "Newest first" would sort as "Latest activity" does (Zulip's topics). */
+const dated = (t: P.ConversationView) => t.thread?.createdAt != null || !!t.thread?.first;
 
 function TagChips({ forum, ids }: { forum: P.ForumView | undefined; ids: string[] }) {
   const tags = namedTags(forum, ids);
@@ -46,14 +48,29 @@ function PostRow({ t, forum, gallery }: { t: P.ConversationView; forum: P.ForumV
   const first = t.thread?.first ?? null;
   const shown = first ?? t.lastMessage;
   const by = t.thread?.ownerId ?? first?.authorId ?? null;
+  // A resolved Zulip topic is done, not put away: it stays as bright as the rest.
+  const resolved = resolvedTopic(t);
+  const u = unreadOf(t);
   return (
-    <button class={`forum-post ${t.archived ? 'archived' : ''} ${gallery ? 'tile' : ''}`} onClick={() => openConv(t)}>
+    <button class={`forum-post ${t.archived && !resolved ? 'archived' : ''} ${gallery ? 'tile' : ''} ${u.unread && !u.muted ? 'unread' : ''} ${u.muted ? 'muted' : ''}`} onClick={() => openConv(t)}>
       {gallery && (t.thread?.cover ? <img class="forum-cover" src={t.thread.cover} alt="" loading="lazy" /> : <span class="forum-cover none"><Icon name="image" size={22} /></span>)}
       <span class="forum-post-head">
         {t.thread?.pinned && <Icon name="pin" size={12} />}
         <b>{convTitle(t)}</b>
-        {t.archived && <span class="forum-tag muted">Archived</span>}
+        {resolved ? (
+          <span class="forum-tag resolved">
+            <Icon name="check" size={11} /> Resolved
+          </span>
+        ) : (
+          t.archived && <span class="forum-tag muted">Archived</span>
+        )}
         {t.thread?.locked && <Icon name="lock" size={12} />}
+        {(u.unread > 0 || u.muted) && (
+          <span class="forum-count">
+            {u.muted && <Icon name={ruleIcon(effectiveLevel(t).level)} size={12} class="chan-muted" />}
+            {u.badge > 0 ? <Count n={u.badge} /> : u.unread > 0 && <span title={`${u.unread} unread`}>{u.unread > 99 ? '99+' : u.unread} new</span>}
+          </span>
+        )}
       </span>
       <TagChips forum={forum} ids={t.thread?.tags ?? []} />
       {!gallery && shown && (
@@ -76,14 +93,32 @@ function PostRow({ t, forum, gallery }: { t: P.ConversationView; forum: P.ForumV
 export function ForumView({ c }: { c: P.ConversationView }) {
   rev.value;
   const forum = c.forum;
+  const words = threadWords(c);
   const [sort, setSort] = useState<'activity' | 'created'>(forum?.sort ?? 'activity');
   const [tags, setTags] = useState<ReadonlySet<string>>(new Set());
-  const [archived, setArchived] = useState(false);
+  // Zulip's resolved topics are done, not put away: its own apps list them with the rest.
+  const [archived, setArchived] = useState(topicForum(c));
+  // Older posts than the account said at start, a page at a time (a Zulip channel's older topics): asked of the network.
+  const [older, setOlder] = useState<{ next: number | null; busy: boolean; note?: string }>({ next: 0, busy: false });
+  const loadOlder = async () => {
+    if (older.next === null) return;
+    setOlder({ ...older, busy: true });
+    try {
+      const r = await api<P.ThreadPageView>(`/api/conversations/${c.id}/threads?offset=${older.next}`);
+      setOlder({ next: r.next, busy: false, ...(r.note ? { note: r.note } : {}) });
+    } catch (e) {
+      setOlder({ next: older.next, busy: false, note: (e as Error).message });
+    }
+  };
   const gallery = (forum?.layout ?? (c.variant === 'media' ? 'gallery' : 'list')) === 'gallery';
-  const posts = allThreads(c.id)
+  const all = allThreads(c.id);
+  // "Newest first" only where some post says when it started; else it is "Latest activity" again.
+  const sorts = all.some(dated);
+  const order = sorts ? sort : 'activity';
+  const posts = all
     .filter((t) => archived || !t.archived)
     .filter((t) => !tags.size || (t.thread?.tags ?? []).some((x) => tags.has(x)))
-    .sort((a, b) => Number(!!b.thread?.pinned) - Number(!!a.thread?.pinned) || (sort === 'created' ? startedAt(b) - startedAt(a) : (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0)));
+    .sort((a, b) => Number(!!b.thread?.pinned) - Number(!!a.thread?.pinned) || (order === 'created' ? startedAt(b) - startedAt(a) : (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0)));
   const toggle = (id: string) => setTags((s) => (s.has(id) ? new Set([...s].filter((x) => x !== id)) : new Set([...s, id])));
   return (
     <div class="forum">
@@ -91,22 +126,25 @@ export function ForumView({ c }: { c: P.ConversationView }) {
       <div class="forum-bar">
         {ableAccount(c, 'forumPosts') && (
           <button class="btn primary small" onClick={() => (threadDialog.value = { kind: 'post', convId: c.id })}>
-            <Icon name="pencil" size={13} /> New post
+            <Icon name="pencil" size={13} /> New {words.one}
           </button>
         )}
-        <select class="select small" value={sort} aria-label="Order" onChange={(e) => setSort((e.target as HTMLSelectElement).value as 'activity' | 'created')}>
-          <option value="activity">Latest activity</option>
-          <option value="created">Newest first</option>
-        </select>
+        {sorts && (
+          <select class="select small" value={sort} aria-label="Order" onChange={(e) => setSort((e.target as HTMLSelectElement).value as 'activity' | 'created')}>
+            <option value="activity">Latest activity</option>
+            <option value="created">Newest first</option>
+          </select>
+        )}
         <label class="forum-check">
-          <input type="checkbox" checked={archived} onChange={(e) => setArchived((e.target as HTMLInputElement).checked)} /> Show archived
+          <input type="checkbox" checked={archived} onChange={(e) => setArchived((e.target as HTMLInputElement).checked)} /> Show {words.archived.toLowerCase()}
         </label>
         {ableAccount(c, 'listThreads') && (
           <button class="btn ghost small" onClick={() => (threadDialog.value = { kind: 'browse', convId: c.id, tab: 'archived' })}>
-            <Icon name="archive" size={13} /> Load archived posts
+            <Icon name="archive" size={13} /> Load {words.archived.toLowerCase()} {words.many}
           </button>
         )}
       </div>
+      {older.note && <p class="pf-hint">{older.note}</p>}
       {!!forum?.tags.length && (
         <div class="forum-filter" role="group" aria-label="Filter by tag">
           {forum.tags.map((t) => (
@@ -117,12 +155,17 @@ export function ForumView({ c }: { c: P.ConversationView }) {
           ))}
         </div>
       )}
-      {posts.length === 0 && <Empty icon="forum" title={tags.size ? 'No posts with those tags loaded' : 'No posts loaded'} />}
+      {posts.length === 0 && <Empty icon="forum" title={tags.size ? `No ${words.many} with those tags loaded` : `No ${words.many} loaded`} />}
       <div class={gallery ? 'forum-grid' : 'forum-list'}>
         {posts.map((t) => (
           <PostRow t={t} forum={forum} gallery={gallery} />
         ))}
       </div>
+      {c.network === 'zulip' && ableAccount(c, 'listThreads') && older.next !== null && (
+        <button class="btn ghost small forum-more" disabled={older.busy} onClick={() => void loadOlder()}>
+          {older.busy ? 'Loading…' : `Load older ${words.many}`}
+        </button>
+      )}
     </div>
   );
 }
@@ -155,17 +198,18 @@ function ThreadBrowser({ c, tab: first }: { c: P.ConversationView; tab: 'active'
     threadDialog.value = null;
     openConv(t);
   };
+  const words = threadWords(c);
   return (
     <div class="thread-browser">
       <div class="thread-tabs" role="tablist">
         {(['active', 'archived', ...(ableAccount(c, 'myThreads') && c.variant !== 'forum' && c.variant !== 'media' ? (['mine'] as const) : [])] as const).map((t) => (
           <button role="tab" aria-selected={tab === t} class={tab === t ? 'on' : ''} onClick={() => setTab(t)}>
-            {t === 'active' ? 'Active' : t === 'archived' ? 'Archived' : 'Your private ones'}
+            {t === 'active' ? 'Active' : t === 'archived' ? words.archived : 'Your private ones'}
           </button>
         ))}
       </div>
       {page?.note && <p class="pf-hint">{page.note}</p>}
-      {list.length === 0 && !busy && <Empty icon="thread" title={tab === 'active' ? 'No active threads loaded' : 'None found'} />}
+      {list.length === 0 && !busy && <Empty icon="thread" title={tab === 'active' ? `No active ${words.many} loaded` : 'None found'} />}
       <div class="pf-rows">
         {list.map((t) => (
           <button class="pf-row" onClick={() => pick(t)}>
@@ -182,7 +226,7 @@ function ThreadBrowser({ c, tab: first }: { c: P.ConversationView; tab: 'active'
           </button>
         ))}
       </div>
-      {busy && <p class="pf-hint">Asking Discord…</p>}
+      {busy && <p class="pf-hint">Asking {netName(c.network)}…</p>}
       {page?.next != null && !busy && (
         <button class="btn ghost small" onClick={() => void load(tab, page.next!)}>
           More
@@ -247,6 +291,8 @@ function StartThread({ c, messageId, name: first }: { c: P.ConversationView; mes
 
 function NewPost({ c }: { c: P.ConversationView }) {
   const forum = c.forum;
+  // A Zulip channel starts a topic: its name and first message.
+  const topic = topicForum(c);
   const [name, setName] = useState('');
   const [body, setBody] = useState('');
   const [tags, setTags] = useState<string[]>([]);
@@ -262,9 +308,9 @@ function NewPost({ c }: { c: P.ConversationView }) {
       threadDialog.value = null;
       const t = db.conversations.get(r.conversationId);
       if (t) openConv(t);
-      toast({ kind: 'info', title: 'Posted', body: name.trim() }, 3000);
+      toast({ kind: 'info', title: topic ? 'Topic started' : 'Posted', body: name.trim() }, 3000);
     } catch (e) {
-      toast({ kind: 'error', title: 'Could not post it', body: (e as Error).message });
+      toast({ kind: 'error', title: topic ? 'Could not start the topic' : 'Could not post it', body: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -272,7 +318,7 @@ function NewPost({ c }: { c: P.ConversationView }) {
   return (
     <form class="thread-form" onSubmit={(e) => (e.preventDefault(), !problem && void submit())}>
       <label>
-        Title
+        {topic ? 'Topic' : 'Title'}
         <input class="input" value={name} maxLength={THREAD_NAME_MAX} autoFocus onInput={(e) => setName((e.target as HTMLInputElement).value)} />
       </label>
       <label>
@@ -295,7 +341,7 @@ function NewPost({ c }: { c: P.ConversationView }) {
       </label>
       {(name || body || files.length > 0) && problem && <small class="about-reason">{problem}</small>}
       <button class="btn primary" disabled={busy || !!problem}>
-        {busy ? 'Posting…' : 'Post'}
+        {busy ? (topic ? 'Starting…' : 'Posting…') : topic ? 'Start topic' : 'Post'}
       </button>
     </form>
   );
@@ -308,7 +354,9 @@ export function ThreadsLayer() {
   const c = d ? db.conversations.get(d.convId) : undefined;
   if (!d || !c) return null;
   const close = () => (threadDialog.value = null);
-  const title = d.kind === 'browse' ? `Threads in ${convTitle(c)}` : d.kind === 'post' ? `New post in ${convTitle(c)}` : d.messageId ? 'Create thread from message' : `Start a thread in ${convTitle(c)}`;
+  const words = threadWords(c);
+  const More = words.many.replace(/^./, (x) => x.toUpperCase());
+  const title = d.kind === 'browse' ? `${More} in ${convTitle(c)}` : d.kind === 'post' ? `New ${words.one} in ${convTitle(c)}` : d.messageId ? 'Create thread from message' : `Start a thread in ${convTitle(c)}`;
   return (
     <Modal title={title} onClose={close}>
       {d.kind === 'browse' && <ThreadBrowser c={c} tab={d.tab ?? 'active'} />}
@@ -322,26 +370,32 @@ export function ThreadsLayer() {
 
 /** A thread's About card: following and how it notifies, archiving and locking where you may. */
 export function ThreadCard({ c, view, onDone }: { c: P.ConversationView; view: P.AboutView; onDone: (v: P.AboutView) => void }) {
+  metaRev.value; // whether an account that can follow it is connected
   const t = view.thread!;
   const [busy, setBusy] = useState(false);
   const follow = !!ableAccount(c, 'followThreads');
+  const words = threadWords(c);
   const state = async (change: { archived?: boolean; locked?: boolean }, what: string) => {
     setBusy(true);
     try {
       onDone(await api<P.AboutView>(`/api/conversations/${c.id}/thread-state`, { body: { ...change, ...(view.accountId ? { accountId: view.accountId } : {}) } }));
       toast({ kind: 'info', title: what, body: convTitle(c) }, 3000);
     } catch (e) {
-      toast({ kind: 'error', title: `Could not change the thread`, body: (e as Error).message });
+      toast({ kind: 'error', title: `Could not change the ${words.one}`, body: (e as Error).message });
     } finally {
       setBusy(false);
     }
   };
   const joined = !!c.thread?.following.length || t.joined;
+  const net = NETWORK_META[c.network].name;
+  // A Zulip topic: muted or not, for good (no timers), whether followed or not; no locking; archiving is resolving.
+  const zulip = c.network === 'zulip';
+  const muted = zulip ? !!(c.nativeMute?.muted ?? t.muted) : !!(c.thread?.muted ?? t.muted);
   return (
-    <Card title="Thread" icon="thread">
+    <Card title={words.one === 'topic' ? 'Topic' : 'Thread'} icon="thread">
       {follow && (
         <>
-          <p class="pf-hint">{joined ? 'You follow it: Discord tells you of its messages as set below.' : 'You do not follow it: only mentions of you reach you from it.'}</p>
+          <p class="pf-hint">{joined ? `You follow it: ${net} tells you of its messages as set below.` : zulip ? 'You do not follow it: it notifies you as its channel does.' : 'You do not follow it: only mentions of you reach you from it.'}</p>
           <div class="pf-actions-row">
             <button class="btn ghost small" disabled={busy} onClick={() => void followThread(c, !joined)}>
               <Icon name={joined ? 'bellOff' : 'bell'} size={13} /> {joined ? 'Unfollow' : 'Follow'}
@@ -359,38 +413,47 @@ export function ThreadCard({ c, view, onDone }: { c: P.ConversationView; view: P
               </select>
             </label>
           )}
-          {joined && (
+          {(joined || zulip) && (
             <label class="pf-level">
               <select
                 class="select"
-                value={(c.thread?.muted ?? t.muted) ? 'on' : ''}
-                aria-label="Mute the thread on Discord"
+                value={muted ? 'on' : ''}
+                aria-label={`Mute the ${words.one} on ${net}`}
                 onChange={(e) => {
                   const v = (e.target as HTMLSelectElement).value;
-                  void threadNotify(c, v === '' ? { muted: false } : { muted: true, minutes: v === 'forever' ? null : Number(v) });
+                  void threadNotify(c, v === '' ? { muted: false } : { muted: true, minutes: v === 'forever' || v === 'on' ? null : Number(v) });
                 }}
               >
-                <option value="">Not muted on Discord</option>
-                {(c.thread?.muted ?? t.muted) && (
-                  <option value="on" disabled>
-                    Muted on Discord{c.thread?.mutedUntil ? ` until ${new Date(c.thread.mutedUntil).toLocaleString()}` : ''}
-                  </option>
+                <option value="">Not muted on {net}</option>
+                {zulip ? (
+                  <option value="on">Muted on {net}</option>
+                ) : (
+                  <>
+                    {muted && (
+                      <option value="on" disabled>
+                        Muted on {net}
+                        {c.thread?.mutedUntil ? ` until ${new Date(c.thread.mutedUntil).toLocaleString()}` : ''}
+                      </option>
+                    )}
+                    {threadMuteChoices().map(([v, label]) => (
+                      <option value={v}>{label}</option>
+                    ))}
+                  </>
                 )}
-                {threadMuteChoices().map(([v, label]) => (
-                  <option value={v}>{label}</option>
-                ))}
               </select>
             </label>
           )}
         </>
       )}
       <div class="pf-actions-row">
-        <button class="btn ghost small" disabled={busy || !t.canArchive} title={t.canArchive ? undefined : t.reason} onClick={() => void state({ archived: !t.archived }, t.archived ? 'Unarchived' : 'Archived')}>
-          <Icon name="archive" size={13} /> {t.archived ? 'Unarchive' : 'Archive'}
+        <button class="btn ghost small" disabled={busy || !t.canArchive} title={t.canArchive ? undefined : t.reason} onClick={() => void state({ archived: !t.archived }, t.archived ? words.unarchived : words.archived)}>
+          <Icon name={zulip ? 'check' : 'archive'} size={13} /> {t.archived ? words.unarchive : words.archive}
         </button>
-        <button class="btn ghost small" disabled={busy || !t.canLock} title={t.canLock ? undefined : 'You need the Manage Threads permission.'} onClick={() => void state({ locked: !t.locked }, t.locked ? 'Unlocked' : 'Locked')}>
-          <Icon name="lock" size={13} /> {t.locked ? 'Unlock' : 'Lock'}
-        </button>
+        {!zulip && (
+          <button class="btn ghost small" disabled={busy || !t.canLock} title={t.canLock ? undefined : 'You need the Manage Threads permission.'} onClick={() => void state({ locked: !t.locked }, t.locked ? 'Unlocked' : 'Locked')}>
+            <Icon name="lock" size={13} /> {t.locked ? 'Unlock' : 'Lock'}
+          </button>
+        )}
       </div>
       {!t.canArchive && t.reason && (
         <small class="about-reason">

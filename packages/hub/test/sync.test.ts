@@ -5,7 +5,9 @@
  * watch the same hub while it goes through every kind of change a client can see:
  *   - `live` applies the socket's frames as they come,
  *   - `step` syncs a delta after every step,
- *   - `late` syncs once, at the end, from where it started.
+ *   - `late` syncs once, at the end, from where it started,
+ *   - `onSocket` catches up after every step on a new socket asked from its position, whose first frame is the delta
+ *     (docs/sync.md "On the socket"), and its timelines by POST beside it, as state.ts does.
  * After each step each of them is compared with a fresh bootstrap, through the web app's own reducer (syncmodel.ts),
  * timelines and the inbox and usage included. Then the fallbacks: when the hub refuses a delta, and why.
  */
@@ -14,7 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { SYNC_VERSION } from '@dither-chat/protocol';
+import { LIVE_PROTOCOL, LIVE_RESUME, SYNC_VERSION } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { Attention } from '../src/attention.ts';
 import { Journal } from '../src/journal.ts';
@@ -69,7 +71,8 @@ interface Client {
 
 async function newClient(keys: string[]): Promise<Client> {
   const c: Client = { db: emptyDb(), timelines: new Map(), inbox: [], usage: await get('/api/usage'), regrouped: new Set() };
-  applyBootstrapTo(c.db, await get('/api/bootstrap'));
+  // As the app asks for it (state.ts BOOTSTRAP_PATH): conversations' edges as positions beside them.
+  applyBootstrapTo(c.db, await get('/api/bootstrap?edges=spaces'));
   c.inbox = (await get<P.InboxPage>('/api/inbox')).items.map((i) => i.message);
   for (const k of keys) c.timelines.set(k, await page(k));
   return c;
@@ -125,6 +128,36 @@ async function catchUpLive(c: Client) {
   for (const tl of r.timelines) applyTimelineDelta(c.timelines.get(tl.key)!, tl);
 }
 
+/** A live socket asked from `pos`, its first frame (the catch-up), and the frames after it. */
+async function resumeSocket(pos: P.SyncPosition, protocols: string[] = [LIVE_PROTOCOL, LIVE_RESUME]) {
+  const q = `?v=${pos.v}&epoch=${encodeURIComponent(pos.epoch)}&since=${pos.seq}`;
+  const sock = new WebSocket(`ws://127.0.0.1:${port}/api/live${q}`, protocols);
+  sock.binaryType = 'arraybuffer';
+  const frames: { text: string; binary: boolean }[] = [];
+  let first: (x: { text: string; binary: boolean }) => void;
+  const firstFrame = new Promise<{ text: string; binary: boolean }>((r) => (first = r));
+  sock.onmessage = (e) => {
+    const binary = typeof e.data !== 'string';
+    const f = { text: binary ? new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(e.data as ArrayBuffer))) : String(e.data), binary };
+    if (frames.push(f) === 1) first(f);
+  };
+  await new Promise((r) => (sock.onopen = r));
+  return { sock, firstFrame, frames };
+}
+
+/** What state.ts's resync does when the socket brings the catch-up: timelines by POST beside it. Returns the answer. */
+async function resyncOnSocket(c: Client) {
+  const pos = c.db.sync!;
+  const { sock, firstFrame } = await resumeSocket(pos);
+  expect(sock.protocol).toBe(LIVE_RESUME);
+  const first = JSON.parse((await firstFrame).text) as P.LiveResume;
+  sock.close();
+  const r = first.resume;
+  if (!r || r.full) throw new Error(`no catch-up on the socket: ${JSON.stringify(r)}`);
+  expect(r.timelines).toEqual([]);
+  return applyResync(c, r, await syncReq({ v: pos.v, epoch: pos.epoch, timelines: [...c.timelines].map(([key, t]) => timelineReq(key, t, pos.seq)) }));
+}
+
 /** What state.ts's resync does. Returns the answer. */
 async function resync(c: Client) {
   const pos = c.db.sync!;
@@ -134,7 +167,14 @@ async function resync(c: Client) {
     since: pos.seq,
     timelines: [...c.timelines].map(([key, t]) => timelineReq(key, t, pos.seq)),
   });
+  return applyResync(c, r);
+}
+
+/** `side`: the timelines, asked for apart. */
+function applyResync(c: Client, r: P.SyncResponse, side?: P.SyncResponse) {
   if (r.full) throw new Error(`refused: ${r.reason}`);
+  if (side?.full) throw new Error(`refused: ${side.reason}`);
+  if (side) r = { ...r, timelines: side.timelines, identities: [...r.identities, ...side.identities], quoted: [...r.quoted, ...side.quoted] };
   for (const tl of r.timelines) applyTimelineDelta(c.timelines.get(tl.key)!, tl);
   applySyncTo(c.db, r);
   for (const ev of r.events) c.usage = applyUsageEvent(c.usage, ev);
@@ -170,6 +210,7 @@ function norm(d: Db) {
     rules: d.rules,
     reactionUsage: d.reactionUsage,
     attention: sortBy([...d.attention.values()], (a) => a.id),
+    presence: sortBy([...d.presence.values()], (p) => p.identityId),
   };
 }
 
@@ -216,6 +257,7 @@ const settle = async () => {
 let live: Client;
 let step: Client;
 let late: Client;
+let onSocket: Client;
 let ws: WebSocket;
 /**
  * Pages a device kept (keptpages.ts), as stored text: at the start with the start's position, and after the edits with
@@ -275,6 +317,7 @@ beforeAll(async () => {
   live = await newClient(keys);
   step = await newClient(keys);
   late = await newClient(keys);
+  onSocket = await newClient(keys);
   ws = new WebSocket(`ws://127.0.0.1:${port}/api/live`);
   await new Promise((r) => (ws.onopen = r));
   // Live from here; the bootstrap above is from before the socket, so the first sync covers the gap.
@@ -364,6 +407,16 @@ const steps: [string, () => void | Promise<unknown>][] = [
     say(d1, 'thread-1', 'carl');
     store.touchConversation(cnv(d1, 'dm-dee'));
   }],
+  ['status dots: heard, changed, and gone with the account that heard them stopping', async () => {
+    store.ingest(d1, { t: 'presence', who: 'ann', state: 'online', devices: ['desktop'] });
+    store.ingest(d1, { t: 'presence', who: 'dee', state: 'idle' });
+    store.ingest(sig, { t: 'presence', who: 'ann-sig', state: 'dnd' });
+    hub.flush(true);
+    await settle();
+    store.ingest(d1, { t: 'presence', who: 'dee', state: 'offline' });
+    store.ingest(sig, { t: 'status', status: 'offline' });
+    hub.flush(true);
+  }],
   ['leaving: a space another account still sees, a conversation no one does', () => {
     store.ingest(d2, { t: 'leave', kind: 'space', nativeId: 'guild' });
     store.ingest(sig, { t: 'leave', kind: 'conversation', nativeId: 'dm-ann-sig' });
@@ -402,6 +455,8 @@ describe('a client applying deltas ends up where a fresh bootstrap puts it', () 
       await settle();
       await resync(step);
       await expectCurrent('step', step);
+      await resyncOnSocket(onSocket);
+      await expectCurrent('onSocket', onSocket);
       await catchUpLive(live);
       await expectCurrent('live', live);
       if (name === 'edits, deletions, reactions') keep('kept after the edits, at the position before them', step, before);
@@ -441,12 +496,115 @@ describe('a client applying deltas ends up where a fresh bootstrap puts it', () 
     expect(JSON.stringify(r).length).toBeLessThan(2500);
   });
 
+  test("a bootstrap with conversations' edges beside them reads as the one with every edge, in fewer bytes", async () => {
+    await resync(step);
+    const full = await get<P.Bootstrap>('/api/bootstrap');
+    const short = await get<P.Bootstrap>('/api/bootstrap?edges=spaces');
+    expect(full.conversationEdges).toBeUndefined();
+    expect(short.edges.every((e) => e.childKind === 'space')).toBe(true);
+    expect(short.conversationEdges!.length).toBe(short.conversations.length);
+    // Places with conversations in them, and at least one position: the test world has both.
+    expect(full.edges.filter((e) => e.childKind === 'conversation' && e.position !== null).length).toBeGreaterThan(0);
+    const a = emptyDb();
+    const b = emptyDb();
+    applyBootstrapTo(a, full);
+    applyBootstrapTo(b, short);
+    expect(norm(b)).toEqual(norm(a));
+    expect(JSON.stringify(short).length).toBeLessThan(JSON.stringify(full).length);
+  });
+
   test('a bootstrap names the hub process as a sync does, so a page that reconnects by either sees a restart', async () => {
     const r = await resync(step);
     if (r.full) throw new Error('refused');
     const b = await get<P.Bootstrap>('/api/bootstrap');
     expect(b.boot).toBeTruthy();
     expect(b.boot).toBe(r.boot);
+  });
+});
+
+// ------------------------------------------------------------------ the catch-up on the socket
+
+describe('the catch-up on the socket (docs/sync.md "On the socket")', () => {
+  const pos = () => store.journal.position();
+  const parse = (f: { text: string }) => JSON.parse(f.text);
+
+  test('what comes after it on the socket is newer: applied in order, nothing is lost or doubled', async () => {
+    const annPerson = store.one<{ person_id: string }>('SELECT person_id FROM identity WHERE id = ?', idn(d1, 'ann'))!.person_id;
+    const c = await newClient([`c:${cnv(d1, 'general')}`, `p:${annPerson}`]);
+    const from = c.db.sync!;
+    // Changed before the socket: in its catch-up.
+    say(d1, 'general', 'ann');
+    store.ingest(d1, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann before' } });
+    const { sock, firstFrame, frames } = await resumeSocket(from);
+    expect(sock.protocol).toBe(LIVE_RESUME);
+    const r = (parse(await firstFrame) as P.LiveResume).resume;
+    if (!r || r.full) throw new Error('no catch-up');
+    expect(r.events.some((e) => e.t === 'identity' && e.identity.displayName === 'Ann before')).toBe(true);
+    // Changed after: in the frames after it, each with its position.
+    say(d1, 'general', 'carl');
+    const edited = say(d1, 'dm-ann', 'ann');
+    store.ingest(d1, { t: 'message', live: true, message: { nativeId: edited, conversation: 'dm-ann', author: 'ann', ts, editedTs: ts + 5, body: 'edited after' } });
+    store.ingest(d1, { t: 'identity', identity: { nativeId: 'ann', displayName: 'Ann after' } });
+    await settle();
+    sock.close();
+    const live = frames.slice(1).map((f) => parse(f) as P.ClientEvent[]);
+    expect(live.length).toBeGreaterThan(0);
+    for (const f of live) expect(f.at(-1)).toMatchObject({ t: 'sync' });
+    expect((live[0].at(-1) as { seq: number }).seq).toBe(r.sync.seq + 1);
+    // As state.ts: the catch-up and the timelines beside it, then the frames held meanwhile.
+    applyResync(c, r, await syncReq({ v: from.v, epoch: from.epoch, timelines: [...c.timelines].map(([key, t]) => timelineReq(key, t, from.seq)) }));
+    for (const f of live) applyLive(c, f);
+    await expectCurrent('caught up on the socket, then live', c);
+  });
+
+  test('nothing changed: a short answer, as text', async () => {
+    const p = pos();
+    const { sock, firstFrame } = await resumeSocket(p);
+    const f = await firstFrame;
+    sock.close();
+    expect(f.binary).toBe(false);
+    expect(parse(f)).toMatchObject({ resume: { sync: p, events: [], timelines: [] } });
+  });
+
+  test('a long one comes gzip\'d', async () => {
+    const { sock, firstFrame } = await resumeSocket({ ...pos(), seq: store.journal.floor });
+    const f = await firstFrame;
+    sock.close();
+    expect(f.binary).toBe(true);
+    const r = (parse(f) as P.LiveResume).resume;
+    if (!r || r.full) throw new Error('no catch-up');
+    expect(r.events.length).toBeGreaterThan(10);
+  });
+
+  test('a position the hub cannot vouch for is refused there as by POST', async () => {
+    const p = pos();
+    for (const bad of [{ ...p, epoch: 'elsewhere' }, { ...p, v: SYNC_VERSION + 1 }, { ...p, seq: p.seq + 100 }]) {
+      const { sock, firstFrame } = await resumeSocket(bad);
+      expect(sock.protocol).toBe(LIVE_RESUME);
+      const f = await firstFrame;
+      sock.close();
+      expect(parse(f)).toMatchObject({ resume: { full: true } });
+    }
+  });
+
+  test('a socket that does not offer it, or gives no position, gets no catch-up: an older client, as before', async () => {
+    const p = pos();
+    const cases: [string, string[] | undefined][] = [
+      [`?v=${p.v}&epoch=${p.epoch}&since=${p.seq}`, undefined],
+      [`?v=${p.v}&epoch=${p.epoch}&since=${p.seq}`, [LIVE_PROTOCOL]],
+      ['', [LIVE_PROTOCOL, LIVE_RESUME]],
+      [`?v=${p.v}&epoch=${p.epoch}&since=-1`, [LIVE_PROTOCOL, LIVE_RESUME]],
+    ];
+    for (const [q, protocols] of cases) {
+      const sock = new WebSocket(`ws://127.0.0.1:${port}/api/live${q}`, protocols);
+      const first = new Promise<string>((r) => (sock.onmessage = (e) => r(String(e.data))));
+      await new Promise((r) => (sock.onopen = r));
+      expect(sock.protocol).not.toBe(LIVE_RESUME);
+      // The heartbeat's answer is its first frame: nothing came before it.
+      sock.send('ping');
+      expect(await first).toBe('pong');
+      sock.close();
+    }
   });
 });
 
@@ -505,6 +663,46 @@ describe('when the hub refuses a delta', () => {
     expect(await syncReq({ v: p.v, epoch: p.epoch, since: p.seq })).toMatchObject({ sync: p });
   });
 
+  test('a journal the disk cannot write to: the frame still goes out, and its changes go in with the next one', async () => {
+    const frames: P.ClientEvent[][] = [];
+    const sock = new WebSocket(`ws://127.0.0.1:${port}/api/live`);
+    await new Promise((r) => (sock.onopen = r));
+    sock.onmessage = (e) => frames.push(JSON.parse(String(e.data)));
+    const p = pos();
+    const seen = new Promise<void>((r) => {
+      const was = sock.onmessage!;
+      sock.onmessage = (e) => {
+        (was as (e: MessageEvent) => void)(e);
+        if (frames.length === 2) r();
+      };
+    });
+    // Writes into the journal fail as a full disk's do, after the message itself is in (SQLITE_FULL in the live hub).
+    const full = ['INSERT', 'UPDATE'].map((op) => `CREATE TEMP TRIGGER full_${op} BEFORE ${op} ON sync_change BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
+    const first = say(d1, 'general', 'ann');
+    for (const t of full) store.db.exec(t);
+    try {
+      expect(() => hub.flush()).not.toThrow();
+    } finally {
+      store.db.exec('DROP TRIGGER temp.full_INSERT; DROP TRIGGER temp.full_UPDATE');
+    }
+    // No position was handed out, and nothing is in the journal yet: a client resuming from before has missed nothing.
+    expect(pos()).toEqual(p);
+    const second = say(d1, 'random', 'bob');
+    hub.flush();
+    await seen;
+    sock.close();
+    // The connected device got the first message at once, in a frame with no position.
+    expect(frames[0].some((e) => e.t === 'message' && e.message.id === msg(d1, first))).toBe(true);
+    expect(frames[0].some((e) => e.t === 'sync')).toBe(false);
+    expect(frames[1].at(-1)).toEqual({ t: 'sync', seq: p.seq + 1 });
+    // The next frame carries what was held: a client from before both finds both conversations changed.
+    const changed = store.journal.since(p.seq).map((r) => `${r.kind}:${r.id}`);
+    expect(changed).toContain(`conversation:${cnv(d1, 'general')}`);
+    expect(changed).toContain(`conversation:${cnv(d1, 'random')}`);
+    const rows = store.db.query('SELECT id FROM sync_change WHERE kind = ? AND seq = ?').all('message', p.seq + 1) as { id: string }[];
+    expect(rows.map((r) => r.id).sort()).toEqual([msg(d1, first), msg(d1, second)].sort());
+  });
+
   test('a reset world starts the journal over', async () => {
     const p = pos();
     hub.broadcast([{ t: 'resync' }]);
@@ -531,6 +729,44 @@ describe('the journal across restarts', () => {
     expect(crashed.seq).toBe(first.seq);
     expect(crashed.since(0)).toEqual([]);
     db.db.close();
+  });
+
+  test('changes a full disk would not take are held: kept through a rolled-back caller, and a stop with them left is unclean', () => {
+    const db = new Store(join(dir, 'held.sqlite'), mediaSigner('s'));
+    const j = db.journal;
+    const fail = (on: boolean) => db.db.exec(on ? `CREATE TEMP TRIGGER full BEFORE INSERT ON sync_change BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END` : 'DROP TRIGGER temp.full');
+    fail(true);
+    expect(j.record([{ kind: 'account', id: 'a' }])).toBeNull();
+    fail(false);
+    expect(j.seq).toBe(0);
+    // A caller's own transaction writes them, then is rolled back: the journal takes back what it thought written.
+    const mark = j.mark();
+    expect(() =>
+      db.db.transaction(() => {
+        expect(j.record([{ kind: 'account', id: 'b' }])).toBe(1);
+        throw new Error('the commit failed');
+      })(),
+    ).toThrow('the commit failed');
+    j.undo(mark);
+    expect(j.seq).toBe(0);
+    expect(j.since(0)).toEqual([]);
+    // Still unwritable at the stop: the journal stays open, and the next start is a new epoch.
+    fail(true);
+    j.close();
+    fail(false);
+    expect(new Journal(db.db).started).toBe('unclean');
+    db.db.close();
+    // Written by the next frame instead: both in at its position.
+    const db2 = new Store(join(dir, 'held2.sqlite'), mediaSigner('s'));
+    const k = db2.journal;
+    db2.db.exec(`CREATE TEMP TRIGGER full BEFORE INSERT ON sync_change BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`);
+    expect(k.record([{ kind: 'account', id: 'a' }])).toBeNull();
+    db2.db.exec('DROP TRIGGER temp.full');
+    expect(k.record([{ kind: 'account', id: 'b' }])).toBe(1);
+    expect(k.since(0).map((r) => `${r.id}@${r.seq}`)).toEqual(['a@1', 'b@1']);
+    k.close();
+    expect(new Journal(db2.db).started).toBe('continued');
+    db2.db.close();
   });
 
   test('too many changed objects: the oldest go, and the floor rises', () => {

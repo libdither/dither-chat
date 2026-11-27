@@ -1,27 +1,30 @@
 import { computed, effect, signal, type ReadonlySignal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
-import { ATTACHMENT_LIMITS, fileBatches, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
+import { ATTACHMENT_LIMITS, fileBatches, LIVE_PROTOCOL, LIVE_RESUME, splitsFiles, SYNC_VERSION } from '@dither-chat/protocol';
 import { leaveLayerEntry, takeOverLayers } from './phone.ts';
-import { cachedTimeline, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { cachedTimeline, copyAt, freshFromHub, persistSoon, touchTimeline } from './snapshot.ts';
+import { waitDone, waitOn } from './waits.ts';
 import { arrivedInto, carryArrived, doneArrived, dropArrived, heldEnds, isArrivedCopy, stripArrived } from './arrived.ts';
-import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, mergeInbox as merged, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
-import { changed, mailChanged, timelineChanged, timelineRev } from './versions.ts';
+import { applyBootstrapTo, applyEventTo, applySyncTo, applyTimelineDelta, conversationMetaChanged, identityVersion, indexThreads, onlyOpens, leaveOtherTimelines, mergeInbox as merged, streamChannelOf, prefKey, putIdentity as put, upsertInto } from './syncmodel.ts';
+import { changed, mailChanged, presenceRev, timelineChanged, timelineRev } from './versions.ts';
 import { applyTyping, type TypingState } from './typers.ts';
 import { ECHO_SKEW, mayBeOut, openOutbox, settled, type Echo, type OutboxEntry, type SendMedia } from './outbox.ts';
 import { hubTransport, UploadJob } from './upload.ts';
 import { href, parseHash, type Route } from './routes.ts';
 import { inboxFilterOf, type InboxFilter } from './ordering.ts';
 import { applyPlanEvent, calendarAt, calendarFromBootstrap, loadPlans } from './plans.ts';
-import { api } from './api.ts';
+import { api, hedged, hubFetch } from './api.ts';
 import { isLoginRefusal, login, needLogin } from './login.ts';
 import { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines, type Timeline } from './store.ts';
+import { convById, holdsMail, isMailPlace, isMailThread, mailPageUrl } from './mail/chats.ts';
 import { applyCalls, applyVoice, loadCalls } from './ringing.ts';
 import { closeCleared, closeNotifications, readIn, tidyNotifications } from './shade.ts';
+import { sized } from './perf.ts';
 
 // ------------------------------------------------------------------ data
 
 /** What components read to re-render: `rev` for the lists, `metaRev` for names and settings, one per timeline (versions.ts). */
-export { changed, dataVersion, mailRev, metaRev, rev,  timelineRev } from './versions.ts';
+export { changed, dataVersion, mailRev, metaRev, readMinute, rev, timelineRev } from './versions.ts';
 export { db, eventHooks, inbox, loaded, mailTriage, quoted, timelines,  } from './store.ts';
 export const connected = signal(false);
 /** Notices on this hub (docs/notices.md): whether it may read them; null when it has none. */
@@ -32,7 +35,7 @@ export async function loadMailTriage() {
   const page = await api<P.MailTriagePage>('/api/mail/triage').catch(() => null);
   if (!page) return;
   mailTriage.value = page.items;
-  changed('list');
+  changed('inbox');
 }
 
 /** Thread views carry their newest decision: the week's mail decisions follow them (new mail, a read, a mark elsewhere). */
@@ -49,7 +52,7 @@ function mergeMailTriage(threads: P.MailThreadView[]) {
   }
   if (!moved) return;
   mailTriage.value = [...by.values()].sort((a, b) => b.ts - a.ts);
-  changed('list');
+  changed('inbox');
 }
 
 interface PendingSend {
@@ -91,6 +94,8 @@ export interface Toast {
   action?: () => void;
   /** What the tap does, shown on the toast ("Undo"). */
   actionLabel?: string;
+  /** The chat it is about (`openChat()` when it was made): it goes when you leave that chat, its Undo with it. */
+  chat?: string;
 }
 export const toasts = signal<Toast[]>([]);
 let toastSeq = 0;
@@ -144,6 +149,8 @@ interface Prefs {
    * networks' GIF videos looping with no player. On unless switched off.
    */
   plainGifs?: boolean;
+  /** What a channel with threads shows on this device: its stream, its thread cards, or its own messages (stream.ts). */
+  channelViews?: Record<string, import('./stream.ts').ChannelView>;
 }
 export type { InboxFilter };
 const PREFS_KEY = 'dither-chat:prefs';
@@ -176,17 +183,29 @@ export function setPrefs(p: Partial<Prefs>) {
 export { href, parseHash, type Route };
 
 export const route = signal<Route>(parseHash());
+/** The chat open now, by the route's `conv`: what a toast about it is tied to (`Toast.chat`). */
+export const openChat = (): string | undefined => {
+  const r = route.value;
+  return 'conv' in r ? r.conv : undefined;
+};
+// Leaving a chat closes the toasts that belong to it: an Undo there must not act from another chat.
+effect(() => {
+  const here = openChat();
+  const list = toasts.peek();
+  if (list.some((t) => t.chat && t.chat !== here)) toasts.value = list.filter((t) => !t.chat || t.chat === here);
+});
 /** An old link (`#/groups/…`) shows its new address, in place. */
 function canonicalHash() {
   const h = href(route.value);
   if (location.hash.startsWith('#/groups') && h !== location.hash) history.replaceState(history.state, '', h);
 }
 canonicalHash();
-// The entry the app opened on. adoptEntry shapes it once the app has its data, as a page's list may need it.
+// The entry the app opened on. adoptOpened shapes it once the app has its data, as a page's list may need it.
 if (history.state === null) history.replaceState({ prev: null, opened: true }, '');
 window.addEventListener('hashchange', (e) => {
-  // An address from outside go() (typed, or a script's) makes an entry with no state yet.
-  if (history.state === null) adoptEntry(new URL(e.oldURL).hash || null);
+  // An address from outside go() (typed, or a script's) makes an entry with no state yet. It gets what go() would have
+  // written: the entry before it remembered, and a page's list under it.
+  if (history.state === null) write(location.hash, new URL(e.oldURL).hash || null, true, null);
   route.value = parseHash();
   canonicalHash();
 });
@@ -232,12 +251,13 @@ export function go(r: Route, replace = false) {
 }
 
 /**
- * An entry made outside go(): the one the app opened on (from a link or a notification), or one an address typed
- * in made. It gets what go() would have written: the entry before it remembered, and a page's list under it.
+ * The entry the app opened on (from a link or a notification), once there is data to say where its page lives: it
+ * gets what go() would have written, a page's list under it. Only that entry: one an address typed in made before
+ * then has no state until its hashchange, a task later, which writes it with the entry before it; written here first,
+ * it would lose that, and Escape and back from it would go to its list instead of where you came from.
  */
-export function adoptEntry(prev: string | null = null) {
-  if (history.state !== null && !history.state.opened) return;
-  write(location.hash, prev, true, null);
+export function adoptOpened() {
+  if (history.state?.opened) write(location.hash, null, true, null);
 }
 
 /** Back where you came from, or to `fallback` when this page was opened directly. */
@@ -256,12 +276,13 @@ export { api, apiHooks } from './api.ts';
 
 // ------------------------------------------------------------------ applying hub data
 
-const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('shown'));
+const putIdentity = (i: P.IdentityView) => void (put(db, i) && changed('identity'));
 /** People a page brought that the client may not know yet (For you's items). */
 export const adoptIdentities = (list: P.IdentityView[]) => list.forEach(putIdentity);
 
 export function applyBootstrap(b: P.Bootstrap) {
   applyBootstrapTo(db, b);
+  presenceRev.value++;
   // A calendar account on the hub (plans.ts, docs/calendar.md): its plans once the socket is up (now, if it is).
   if (calendarFromBootstrap(b) && ws?.readyState === WebSocket.OPEN) void loadPlans();
   noticesBoot.value = b.notices ?? null;
@@ -288,8 +309,8 @@ export function patchMessage(id: string, patch: (m: P.MessageView) => P.MessageV
   }
 }
 
-/** Events that change nothing in `db`: typing, toasts and read progress have signals of their own. */
-const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar']);
+/** Events that change nothing in `db` the lists show: typing, toasts, read progress and status dots have signals of their own. */
+const NOT_DB = new Set<P.ClientEvent['t']>(['typing', 'notify', 'cleared', 'sync', 'readProgress', 'resync', 'sent', 'plans', 'calendar', 'presence']);
 /** Events that change what lists show but no names or settings: `metaRev` stays. */
 const LIST_ONLY = new Set<P.ClientEvent['t']>(['message', 'message.deleted', 'identity', 'attention', 'usage', 'arrange', 'requests', 'accountsManager']);
 /** Events that change names (`metaRev` moves) but not what is where (versions.ts `changed('shown')`): people. */
@@ -297,16 +318,26 @@ const SHOWN_ONLY = new Set<P.ClientEvent['t']>(['person', 'person.removed']);
 
 export function applyEvents(events: P.ClientEvent[]) {
   let threadsDirty = false;
-  const behind = new Set<string>();
+  /** Timelines a newer message may be missing from, and that message's id. */
+  const behind = new Map<string, string>();
   const regrouped = new Set<string>();
   const ids = identityVersion();
   let list = false;
   let meta = false;
   let shown = false;
   let mail = false;
+  let opened = false;
+  let devices = false;
+  /**
+   * The conversations whose last message, counts or inbox score changed, while that is all that changed (versions.ts
+   * `convsChangedSince`); null once anything else did.
+   */
+  let scoped: Set<string> | null = new Set();
   for (const ev of events) {
     // Mail has its own signal: chat's lists do not draw again for it.
     if (ev.t.startsWith('mail.')) mail = true;
+    // The hub's list of devices, sent at every start: Settings shows it, and nothing a place, a count or a name reads.
+    else if (ev.t === 'devices') devices = true;
     else if (!NOT_DB.has(ev.t)) {
       list = true;
       // What only moves a conversation's last message and counts, or the inbox's order, leaves names alone. An
@@ -314,7 +345,16 @@ export function applyEvents(events: P.ClientEvent[]) {
       if (ev.t === 'conversation') meta ||= conversationMetaChanged(db.conversations.get(ev.conversation.id), ev.conversation);
       // An account already here changing its status or name: the set of accounts, which decides what is shown, stays.
       else if (SHOWN_ONLY.has(ev.t) || (ev.t === 'account' && db.accounts.has(ev.account.id))) shown = true;
+      // A folder opened or closed (here or on another device): nothing a message or a row shows.
+      else if (ev.t === 'placePrefs' && onlyOpens(db, ev.prefs)) opened = true;
       else if (!LIST_ONLY.has(ev.t)) meta = true;
+    }
+    // A message's own place is its timeline and the inbox, which no count reads; its conversation comes with it, and who
+    // wrote it, if new, moves `identityVersion` (below). Reactions' usage is only what the reaction picker offers.
+    if (scoped && !NOT_DB.has(ev.t) && ev.t !== 'devices' && !ev.t.startsWith('mail.')) {
+      if (ev.t === 'conversation') scoped.add(ev.conversation.id);
+      else if (ev.t === 'attention' && !ev.replace) for (const id of [...ev.items.map((a) => a.id), ...ev.removed]) scoped.add(id);
+      else if (ev.t !== 'message' && ev.t !== 'usage') scoped = null;
     }
     threadsDirty = applyEventTo(db, ev) || threadsDirty;
     switch (ev.t) {
@@ -327,20 +367,41 @@ export function applyEvents(events: P.ClientEvent[]) {
       }
       case 'conversation': {
         // A newer message this timeline has not seen: once the frame is applied, it may still be missing.
+        const last = ev.conversation.lastMessage;
         const t = timelines.get('c:' + ev.conversation.id);
-        if (t && !t.detached && ev.conversation.lastMessage) behind.add(t.key);
+        if (t && !t.detached && last) behind.set(t.key, last.id);
+        // And the stream of its channel (a thread new since too: it is in `db` now).
+        const ch = streamChannelOf(db, ev.conversation.id);
+        const kt = ch && timelines.get('k:' + ch);
+        // Only a message newer than the stream holds: a thread's older last message is simply further back.
+        if (kt && !kt.detached && last && last.ts >= (kt.messages[kt.messages.length - 1]?.ts ?? 0)) behind.set(kt.key, last.id);
         break;
       }
       case 'readProgress':
         readProgress.value = ev;
         break;
+      case 'presence':
+        presenceRev.value++;
+        break;
       case 'message': {
         const m = ev.message;
         const t = timelines.get('c:' + m.conversationId);
+        const held = !!t && t.messages.some((x) => x.id === m.id);
+        // Moved here from another conversation (MessageFact.moved, a Zulip topic renamed or messages moved to another
+        // topic): whatever timeline still holds it from before lets it go, even where a page loaded since holds it here.
+        const ch = streamChannelOf(db, m.conversationId);
+        for (const k of leaveOtherTimelines(timelines.values(), m, ch)) timelineChanged(k);
         // A detached window only takes updates to what it holds: a new message would leave a silent gap.
-        if (t && (!t.detached || t.messages.some((x) => x.id === m.id))) {
+        if (t && (!t.detached || held)) {
           upsertInto(t.messages, m);
           timelineChanged(t.key);
+        }
+        // Its channel's stream, every thread's messages together (docs/threads.md "The channel stream").
+        const kt = ch && timelines.get('k:' + ch);
+        if (kt && (!kt.detached || kt.messages.some((x) => x.id === m.id))) {
+          upsertInto(kt.messages, m);
+          if (kt.conversationIds && !kt.conversationIds.includes(m.conversationId)) kt.conversationIds = [...kt.conversationIds, m.conversationId];
+          timelineChanged(kt.key);
         }
         const conv = db.conversations.get(m.conversationId);
         if (conv?.shape === 'direct' && conv.peerPersonId) {
@@ -369,6 +430,14 @@ export function applyEvents(events: P.ClientEvent[]) {
         break;
       case 'mail.threads':
         mergeMailTriage(ev.threads);
+        // Mail as chats: a thread's own chat, and the people on it, whose chats show it (mail/chats.ts).
+        mailMoved(ev.threads.flatMap((x) => [`c:${x.id}`, ...x.personIds.map((p) => `p:${p}`)]));
+        break;
+      case 'mail.chats':
+        // Who has an email route moves people's directs and the inbox's rows (model.ts), as a conversation does.
+        list = true;
+        scoped = null;
+        mailMoved(ev.chats.flatMap((c) => [`c:${c.id}`, `p:${c.personId}`]));
         break;
       case 'typing':
         typing.value = applyTyping(typing.value, ev, Date.now(), isSelfIdentity);
@@ -390,6 +459,9 @@ export function applyEvents(events: P.ClientEvent[]) {
         void bootstrap();
         void loadPlans();
         break;
+      case 'stopping':
+        hubStopping(ev.usualMs);
+        break;
       // The calendar's plans and whether it answers (plans.ts): signals of their own, nothing in `db`.
       case 'plans':
       case 'calendar':
@@ -400,23 +472,26 @@ export function applyEvents(events: P.ClientEvent[]) {
     if (eventHooks.size) for (const h of eventHooks) h(ev);
   }
   if (threadsDirty) indexThreads(db);
-  for (const key of behind) {
+  for (const [key, last] of behind) {
     const t = timelines.get(key);
-    const last = db.conversations.get(key.slice(2))?.lastMessage;
-    if (t && last && !t.loading && !t.messages.some((m) => m.id === last.id)) void catchUp(key);
+    if (t && !t.loading && !t.messages.some((m) => m.id === last)) void catchUp(key);
   }
   for (const key of regrouped) if (!timelines.get(key)?.loading) void catchUp(key);
   settle();
   if (meta) changed('meta');
-  else if (shown || identityVersion() !== ids) changed('shown');
-  else if (list) changed('list');
+  else {
+    if (opened) changed('open');
+    if (shown || identityVersion() !== ids) changed('shown');
+    else if (list) changed('list', scoped ?? undefined);
+    else if (devices) changed('devices');
+  }
   if (mail) mailChanged();
 }
 
 function mergeInbox(ms: P.MessageView[]) {
   if (!ms.length) return;
   inbox.value = merged(inbox.value, ms);
-  changed('list');
+  changed('inbox');
 }
 
 export function isSelfIdentity(id: string | null | undefined): boolean {
@@ -457,7 +532,7 @@ export const freshHooks = new Set<() => void>([() => void tidyNotifications(read
 function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
   if (!showsHere(ev)) return;
   const r = route.value;
-  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && r.view === 'mail' && r.thread === ev.mailThreadId) || (!!ev.noticeId && r.view === 'notices');
+  const here = (!!ev.conversationId && 'conv' in r && r.conv === ev.conversationId) || (!!ev.mailThreadId && 'conv' in r && r.conv === ev.mailThreadId) || (!!ev.noticeId && r.view === 'notices');
   const viewing = here && document.visibilityState === 'visible';
   if (viewing) return;
   // A calendar reminder (docs/calendar.md) opens the calendar where it is.
@@ -487,7 +562,8 @@ function onNotify(ev: Extract<P.ClientEvent, { t: 'notify' }>) {
 
 // ------------------------------------------------------------------ timelines
 
-export function timelineKey(kind: 'c' | 'p', id: string) {
+/** `c:` a conversation, `p:` a person's chat, `k:` a channel's stream: its own messages and every thread's. */
+export function timelineKey(kind: 'c' | 'p' | 'k', id: string) {
   return `${kind}:${id}`;
 }
 
@@ -527,7 +603,11 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
     if (t.glance && !o.glance) {
       t.glance = false;
       touchTimeline(key);
-      if (key.startsWith('c:')) void fromNetwork(t, key.slice(2)).then(() => timelineChanged(key));
+      if (key.startsWith('c:')) {
+        const id = key.slice(2);
+        waitOn(key, 'network', { network: db.conversations.get(id)?.network, steps: ['network'] });
+        void fromNetwork(t, id).then(() => (waitDone(key), timelineChanged(key)));
+      }
     }
     return;
   }
@@ -552,21 +632,38 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
   }
   if (older && !t.hasMore) return;
   t.loading = true;
+  t.older = older;
+  const [kind, id] = key.split(':') as ['c' | 'p' | 'k', string];
+  // Opening it, step by step, for the bar over the message box (waits.ts): the hub, then the network's latest where
+  // the hub asks it. A look ahead (a glance) or older messages are not an open.
+  const opening = !older && !o.glance;
+  // The network's step ends on its own, after this open's page is shown.
+  let behind = false;
+  let finished = false;
+  if (opening) {
+    const network = kind === 'c' && !isMailPlace(id) ? db.conversations.get(id)?.network : kind === 'k' && ownMessages(id) ? db.conversations.get(id)?.network : undefined;
+    const linked = ws?.readyState === WebSocket.OPEN;
+    waitOn(key, linked ? 'hub' : 'link', { network, steps: [...(linked ? [] : ['link' as const]), 'hub', ...(network ? ['network' as const] : [])] });
+  }
   timelineChanged(key);
-  const [kind, id] = key.split(':') as ['c' | 'p', string];
-  // A person's timeline spans conversations, where two messages can share a time: its cursor names the message too.
+  // A person's timeline and a channel's stream span conversations, where two messages can share a time: their cursor
+  // names the message too.
   const oldest = older ? t.messages[0] : undefined;
-  const before = oldest ? (kind === 'p' ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
-  const url = kind === 'c' ? `/api/conversations/${id}/messages` : `/api/chats/person:${id}/messages`;
+  // Mail as chats (mail/chats.ts): an email route or a thread pages from the hub's mail, by time and id as a person's.
+  const mail = kind === 'c' && isMailPlace(id);
+  const before = oldest ? (kind !== 'c' || mail ? `${oldest.ts}:${encodeURIComponent(oldest.id)}` : oldest.ts) : undefined;
+  const url = mail ? mailPageUrl(id) : kind === 'c' ? `/api/conversations/${id}/messages` : kind === 'k' ? `/api/conversations/${id}/stream` : `/api/chats/person:${id}/messages`;
   try {
     // After the socket, so nothing can fall between this page and the live events.
     if (!older) {
       await socketOpen();
+      if (opening) waitOn(key, 'hub');
       t.fetchedAt = Date.now();
     }
     // A kept copy needs only what changed since it was kept: messages after its newest, and edits inside it.
     const from = t.from;
-    const caught = !older && !!from && t.messages.length > 0 ? await syncTimelines([t], () => from) : 'refused';
+    // The hub's sync of timelines knows chat only: one with mail is asked for again.
+    const caught = !older && !!from && t.messages.length > 0 && !holdsMail(key) ? await syncTimelines([t], () => from) : 'refused';
     // No network: what is shown stays, and the sync after the next connection brings it up to date, or a try of its
     // own when the socket outlived the blip.
     if (caught === 'failed') return void retryKept(key);
@@ -588,35 +685,58 @@ async function fillTimeline(key: string, older: boolean, o: { glance?: boolean }
         t.messages = t.messages.filter((m) => !stale!.has(m.id) || got.has(m.id) || m.ts < from);
       }
       for (const m of page.messages) upsertInto(t.messages, m);
+      if (page.elsewhere) t.elsewhere = mergeElsewhere(t.elsewhere, page.elsewhere);
       t.hasMore = page.hasMore;
       got = page.messages.length;
       if (page.conversationIds) t.conversationIds = page.conversationIds;
     }
     // The hub's page came: pushes' copies left here while it loaded go, if the hub has caught up (arrived.ts).
     stripArrived(t);
-    if (kind === 'c' && older) {
+    if (mail) {
+      // Mail has no network to ask for more: the hub holds it, or asks its server itself.
+    } else if (kind === 'c' && older) {
       // Stored messages ran out, which is not the start of the conversation: Discord and Matrix can backfill.
       if (!t.hasMore) t.hasMore = await fromNetwork(t, id, t.messages[0]?.ts);
     } else if (kind === 'c') {
       // Large Discord servers push live messages only for channels open in the client, so what is stored may be
       // stale: ask for the latest on open. Show what we have meanwhile, unless that is nothing. A glance asks only
       // when nothing is stored.
+      if (opening) waitOn(key, 'network');
       if (got && t.glance) t.hasMore = true;
       else if (got) {
         t.hasMore = true;
-        void fromNetwork(t, id).then(() => timelineChanged(key));
+        behind = true;
+        void fromNetwork(t, id).then(() => (waitDone(key), timelineChanged(key)));
       } else t.hasMore = await fromNetwork(t, id);
+    } else if (kind === 'k' && ownMessages(id)) {
+      // A Matrix room's stream: the room's own latest from the network, as the room alone asks (above), then the
+      // stream's own page again, so what is held stays one unbroken span of every thread. Its threads' come with the
+      // room's sync; a Zulip channel has none of its own.
+      if (older && !t.hasMore) t.hasMore = await streamFromNetwork(t, id, t.messages[0]);
+      else if (opening) {
+        waitOn(key, 'network');
+        behind = true;
+        void streamFromNetwork(t, id).then(() => (waitDone(key), timelineChanged(key)));
+      }
     }
+    finished = true;
   } catch (e) {
     // The page did not come (the network, most likely): the timeline keeps what it shows and catches up later.
     console.warn('timeline not loaded', key, e);
   } finally {
+    if (opening && !behind) waitDone(key, finished);
     t.loading = false;
     settle();
     timelineChanged(key);
     persistSoon();
   }
 }
+
+/** A channel that takes messages of its own (a Matrix room, a Discord text channel): not a forum of threads. */
+const ownMessages = (id: string) => {
+  const c = db.conversations.get(id);
+  return !!c && c.variant !== 'forum' && c.variant !== 'media';
+};
 
 /** Ask the conversation's network for messages, then show what the hub stored. Returns whether there may be older ones. */
 async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: number): Promise<boolean> {
@@ -628,10 +748,29 @@ async function fromNetwork(t: Timeline, conversationId: string, beforeTs?: numbe
   return !r.done;
 }
 
+/**
+ * A stream's room asked of its network (`before`: the oldest held, for older ones), then the stream's page from there:
+ * the room's page alone could reach further back than the threads' messages held. Whether there may be older ones.
+ */
+async function streamFromNetwork(t: Timeline, channelId: string, before?: P.MessageView): Promise<boolean> {
+  const r = await api<{ count?: number; done?: boolean }>(`/api/conversations/${channelId}/history`, { body: { beforeTs: before?.ts, limit: 50 } }).catch(() => null);
+  if (!r?.count) return false;
+  const cursor = before ? `&before=${before.ts}:${encodeURIComponent(before.id)}` : '';
+  const page = await api<P.MessagePage>(`/api/conversations/${channelId}/stream?limit=60${cursor}`).catch(() => null);
+  page?.identities.forEach(putIdentity);
+  for (const m of page?.messages ?? []) upsertInto(t.messages, m);
+  return !r.done || !!page?.hasMore;
+}
+
 /** Make sure a message is loaded, replacing the window around it if it is not. */
 export async function jumpTo(conversationId: string, messageId: string) {
   const key = timelineKey('c', conversationId);
   if (timelines.get(key)?.messages.some((m) => m.id === messageId)) return;
+  // A mail place has no page around a message (its messages are mail, not the hub's): page back to it instead.
+  if (isMailPlace(conversationId)) {
+    if (!(await jumpInChat(key, messageId))) toast({ kind: 'error', title: 'Message not found', body: 'It may have been moved or deleted.' });
+    return;
+  }
   const page = await api<P.MessageContext>(`/api/messages/${messageId}/context`).catch(() => null);
   if (!page) return toast({ kind: 'error', title: 'Message not found', body: 'It may have been deleted.' });
   page.identities.forEach(putIdentity);
@@ -656,9 +795,10 @@ function timelineIdle(key: string): Promise<void> {
 }
 
 /**
- * Open a person's chat (`p:` timeline) at a message: page back through every route until it is held, so it shows
- * interleaved like any other. The hub has no page around a message across conversations, so a message more than
- * CHAT_JUMP_PAGES pages back is not reached: false, and the page shows its route alone (Timeline.tsx PersonChat).
+ * Open a person's chat (`p:` timeline) or a channel's stream (`k:`) at a message: page back through every route or
+ * thread until it is held, so it shows interleaved like any other. The hub has no page around a message across
+ * conversations, so a message more than CHAT_JUMP_PAGES pages back is not reached: false, and the page shows its
+ * route alone (Timeline.tsx PersonChat), or its thread alone (StreamPane).
  */
 export async function jumpInChat(key: string, messageId: string): Promise<boolean> {
   await loadTimeline(key);
@@ -702,6 +842,44 @@ export function openMessage(conversationId: string, messageId: string) {
 }
 
 /** Load a timeline's newest page again, keeping what it held. */
+/** What they wrote elsewhere, by message: newer copies replace older ones. */
+function mergeElsewhere(had: P.ElsewhereView[] | undefined, got: P.ElsewhereView[]): P.ElsewhereView[] {
+  const by = new Map((had ?? []).map((e) => [e.messageId, e]));
+  for (const e of got) by.set(e.messageId, e);
+  return [...by.values()].sort((a, b) => a.ts - b.ts);
+}
+
+/**
+ * A timeline with mail, brought up to date after mail moved (a message, a read, a send): its newest page again, laid
+ * over what it holds, so nothing it shows goes away meanwhile.
+ */
+async function refreshMail(key: string) {
+  const t = timelines.get(key);
+  if (!t || t.loading || t.detached) return;
+  const [kind, id] = [key.slice(0, 1), key.slice(2)];
+  const url = kind === 'p' ? `/api/chats/person:${id}/messages` : mailPageUrl(id);
+  const page = await api<P.MessagePage>(`${url}?limit=60`).catch(() => null);
+  if (!page || timelines.get(key) !== t) return;
+  page.identities.forEach(putIdentity);
+  for (const m of page.messages) upsertInto(t.messages, m);
+  if (page.elsewhere) t.elsewhere = mergeElsewhere(t.elsewhere, page.elsewhere);
+  timelineChanged(key);
+}
+
+/** Timelines to bring up to date once a burst of mail events is over. */
+const mailStale = new Set<string>();
+let mailStaleTimer: ReturnType<typeof setTimeout> | undefined;
+function mailMoved(keys: string[]) {
+  for (const k of keys) if (timelines.has(k)) mailStale.add(k);
+  if (!mailStale.size || mailStaleTimer) return;
+  mailStaleTimer = setTimeout(() => {
+    mailStaleTimer = undefined;
+    const ks = [...mailStale];
+    mailStale.clear();
+    for (const k of ks) void catchUp(k);
+  }, 150);
+}
+
 function reload(key: string) {
   const t = timelines.get(key);
   if (!t) return Promise.resolve();
@@ -743,7 +921,8 @@ async function catchUp(key: string) {
   if (!t || catching.has(key)) return;
   catching.add(key);
   try {
-    if (!pos || (await syncTimelines([t], () => pos)) === 'refused') await reload(key);
+    if (holdsMail(key)) await refreshMail(key);
+    else if (!pos || (await syncTimelines([t], () => pos)) === 'refused') await reload(key);
   } finally {
     catching.delete(key);
     timelineChanged(key);
@@ -759,7 +938,7 @@ function timelineRequest(t: Timeline, seq: number): P.SyncTimelineRequest {
     newest,
     oldest,
     ...(t.detached ? { newer: false } : {}),
-    ...(t.key.startsWith('p:') ? { conversationIds: t.conversationIds ?? [] } : {}),
+    ...(t.key.startsWith('p:') || t.key.startsWith('k:') ? { conversationIds: t.conversationIds ?? [] } : {}),
   };
 }
 
@@ -774,6 +953,8 @@ function applyTimelines(r: Extract<P.SyncResponse, { sync: unknown }>) {
       applyTimelineDelta(t, tl);
       timelineChanged(t.key);
     }
+    // One that moved here while away goes from the timeline that held it before.
+    if (tl.key.startsWith('c:') || tl.key.startsWith('k:')) for (const m of tl.messages) for (const k of leaveOtherTimelines(timelines.values(), m, streamChannelOf(db, m.conversationId))) timelineChanged(k);
   }
   settle();
 }
@@ -806,8 +987,8 @@ async function loadInbox() {
   const [page] = await Promise.all([api<P.InboxPage>('/api/inbox'), loadMailTriage()]);
   page.identities.forEach(putIdentity);
   inbox.value = page.items.map((i) => i.message);
-  // The badge is counted from the inbox, behind a memo keyed on the data version.
-  changed('list');
+  // The inbox button's count is counted from the inbox (model.ts `board`); the rail's places and the badge are not.
+  changed('inbox');
 }
 
 // ------------------------------------------------------------------ actions
@@ -913,7 +1094,10 @@ async function deliver(tempId: string) {
   const post = () => {
     // A message of ours that comes after this may be this send's (settle).
     setPending(tempId, { postedAt: Date.now() });
-    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body: { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) } });
+    const body = { body: o.body, accountId: o.accountId, replyTo: o.replyTo, attachments: o.attachments, clientId, ...o.media, ...(o.silent ? { silent: true } : {}), ...(o.mentionReplied === false ? { mentionReplied: false } : {}) };
+    // Given up with its socket, when that is found dead: its connection likely died too. The retry after the next
+    // catch-up carries the same clientId, so the hub answers it with the first one's answer rather than sending twice.
+    return api<P.SendResult>(`/api/conversations/${o.conversationId}/send`, { body, signal: link.signal });
   };
   try {
     if (o.files?.length && !o.attachments) await uploadAll();
@@ -1108,11 +1292,16 @@ export function deleteMessage(m: P.MessageView) {
 
 export const readProgress = signal<{ pending: number; failed: number }>({ pending: 0, failed: 0 });
 
-/** Clears here at once; the hub tells the networks at a pace they accept (readqueue.ts). */
-export function markAllRead(convs: P.ConversationView[], where: string) {
+/**
+ * Clears here at once; the hub tells the networks at a pace they accept (readqueue.ts). `ask`: a confirm first, for a
+ * server, a folder or everything; a channel and its threads go without one.
+ */
+export function markAllRead(convs: P.ConversationView[], where: string, ask = true) {
   const ids = convs.filter((c) => c.vantages.some((v) => v.unread || v.mentions)).map((c) => c.id);
   if (!ids.length) return toast({ kind: 'info', title: 'Nothing unread', body: where });
-  if (!confirm(`Mark ${ids.length} conversation${ids.length === 1 ? '' : 's'} read in ${where}? This also goes to the networks, and read state cannot be taken back.`)) return;
+  if (ask && !confirm(`Mark ${ids.length} conversation${ids.length === 1 ? '' : 's'} read in ${where}? This also goes to the networks, and read state cannot be taken back.`)) return;
+  // Their notifications on this device have done their job, as markRead's.
+  void closeNotifications(ids);
   api<{ marked: number; pending: number }>('/api/read-all', { body: { conversations: ids } })
     .then((r) => (readProgress.value = { pending: r.pending, failed: 0 }))
     .catch((e) => toast({ kind: 'error', title: 'Could not mark read', body: e.message }));
@@ -1129,12 +1318,20 @@ export function markRead(conversationId: string) {
     closedAt.set(conversationId, now);
     void closeNotifications([conversationId]);
   }
-  const c = db.conversations.get(conversationId);
+  const c = convById(conversationId);
   if (!c || !c.vantages.some((v) => v.unread || v.mentions)) return;
   clearTimeout(readTimers.get(conversationId));
   readTimers.set(
     conversationId,
-    setTimeout(() => api(`/api/conversations/${conversationId}/read`, { body: {} }).catch(() => {}), 600),
+    setTimeout(() => {
+      // Mail as chats: an email route reads its threads, a thread itself (mail/chats.ts).
+      if (isMailPlace(conversationId)) {
+        const threadIds = isMailThread(conversationId) ? [conversationId] : (db.mail.chats.get(conversationId)?.threadIds ?? []);
+        if (threadIds.length) api('/api/mail/flag', { body: { threadIds, seen: true, clientId: `read-${conversationId}-${Date.now()}` } }).catch(() => {});
+        return;
+      }
+      api(`/api/conversations/${conversationId}/read`, { body: {} }).catch(() => {});
+    }, 600),
   );
 }
 
@@ -1157,7 +1354,7 @@ export function patchPlaces(items: P.PlacePrefPatch[]) {
     if (i.pictures === null) delete next.pictures;
     db.placePrefs.set(k, next);
   }
-  changed('meta');
+  changed(items.every((i) => Object.keys(i).every((k) => k === 'kind' || k === 'id' || k === 'open')) ? 'open' : 'meta');
   return api('/api/place-prefs', { method: 'PATCH', body: { items } }).catch(placeFailed);
 }
 function placeFailed(e: Error) {
@@ -1177,9 +1374,51 @@ function placeFailed(e: Error) {
 export const unreachable = signal(false);
 /** How long a drop goes unmentioned. */
 const NOTICE_AFTER = 4000;
-/** The heartbeat: a ping this often while in sight, and a socket that does not answer within PONG_WAIT is dead. */
+
+/**
+ * The hub said it is stopping (a `stopping` frame, docs/sync.md "Restarts"): since when, how long its restarts usually
+ * take, and the code it ran, to tell an update from the same code again once it is back. While set the app tries every
+ * second and does not call it offline; it gives up on that after RESTART_LONGEST, or four usual restarts if longer.
+ */
+export const restarting = signal<{ at: number; usualMs?: number; build?: string } | null>(null);
+const RESTART_LONGEST = 2 * 60_000;
+let restartTimer: ReturnType<typeof setTimeout> | undefined;
+/** When the next try to reach the hub goes, while it is out of reach and waiting to try; null otherwise. */
+export const nextTry = signal<number | null>(null);
+/** Since when a catch-up with the hub has been under way (the socket's, a sync, a bootstrap over a copy); null when none. */
+export const catchingUp = signal<number | null>(null);
+/**
+ * The last catch-up that finished: when, how long it took, how many new messages from others it brought, and what it
+ * followed: the hub restarting on new code or the same, or this app's new version (ui/InboxStatus.tsx).
+ */
+export const caught = signal<{ at: number; took: number; fresh: number; after?: 'updated' | 'restarted' | 'app' } | null>(null);
+/**
+ * A start with nothing kept on this device, as its bootstrap comes (ui/Loader.tsx): reaching the hub, its bytes coming
+ * (`total` as the hub says it, unpacked), then the page setting it up, which has no bytes to count.
+ */
+export const firstLoad = signal<{ phase: 'reach' | 'download' | 'draw'; got: number; total: number | null }>({ phase: 'reach', got: 0, total: null });
+/** pwa.ts's mark that the reload is a new version the user asked for: said once it is caught up. */
+const APP_UPDATED = 'dither-chat:app-updated';
+/**
+ * The heartbeat: a ping this often while in sight. A socket that does not answer within PONG_WAIT is raced against a
+ * new one (probe); with neither the pong nor the new socket within SPARE_WAIT more, it is dead.
+ */
 const PING_EVERY = 25_000;
 const PONG_WAIT = 3000;
+const SPARE_WAIT = 5000;
+/** A catch-up or bootstrap with nothing coming for this long is given up, as no answer (api.ts hubFetch). */
+const SYNC_QUIET = 20_000;
+/** Conversations' edges as positions beside them, not as edges of their own (syncmodel.ts indexEdges); index.html asks the same. */
+const BOOTSTRAP_PATH = '/api/bootstrap?edges=spaces';
+/**
+ * A catch-up not answering is asked again on another connection after this many times the round trip the socket took
+ * to open, at least HEDGE_MIN, HEDGE_TRIES times in all (api.ts hedged).
+ */
+const HEDGE_ROUNDS = 4;
+const HEDGE_MIN = 1000;
+const HEDGE_TRIES = 8;
+/** How long the socket in use took to open: the link's round trip as it is now, queues included. */
+let openMs = 0;
 
 let ws: WebSocket | null = null;
 let backoff = 500;
@@ -1196,6 +1435,8 @@ let socketGen = 0;
  * Each carries whole objects, so one the answer already covers only sets the same thing again.
  */
 let held: P.ClientEvent[][] | null = null;
+/** Aborts what was asked over the socket in use (its catch-up, bootstrap and sends) once it is found dead or replaced. */
+let link = new AbortController();
 /** The hub process last synced with; a new one may serve a new build (pwa.ts). */
 let hubBoot: string | null = null;
 /** Waited for before the first sync: the snapshot read, so a cold start resumes from it rather than from nothing. */
@@ -1203,13 +1444,26 @@ export const beforeSync = { wait: Promise.resolve() as Promise<unknown> };
 
 /** Since when the hub has not answered; null while it does. A start counts as not answering yet. */
 let downSince: number | null = Date.now();
-/** The same, for the notice's "Since 6:01 PM" (ui/Offline.tsx). */
-export const offlineSince = () => downSince;
+/** This page has reached the hub; before that, what it shows is as old as the snapshot it started from. */
+let everConnected = false;
+/** The time the copy shown was current, for counting what a catch-up brought that is new. */
+let catchFrom = 0;
+/**
+ * Since when what is shown has not been current: the last answer, or, before this page ever reached the hub, when its
+ * snapshot was written (`saved`). For the notice's "Since 6:01 PM" (ui/Offline.tsx) and the inbox's status line.
+ */
+export function offlineFrom(): { at: number; saved: boolean } | null {
+  if (downSince === null) return null;
+  return everConnected || !copyAt ? { at: downSince, saved: false } : { at: copyAt, saved: true };
+}
+export const offlineSince = () => offlineFrom()?.at ?? null;
 
 /** `since`: when the hub was last known to answer. Going down again while down keeps the first time. */
 function setConnected(v: boolean, since = Date.now()) {
   connected.value = v;
   if (v) {
+    catchFrom = everConnected ? (downSince ?? Date.now()) : copyAt;
+    everConnected = true;
     downSince = null;
     clearTimeout(noticeTimer);
     noticeTimer = undefined;
@@ -1257,14 +1511,20 @@ function release() {
 function bootstrap() {
   return serial(async () => {
     held ??= [];
+    // Nothing shown yet: the start screen counts its bytes. Over a copy: a catch-up like any other.
+    const first = !loaded.value;
+    if (!first) catchingUp.value ??= Date.now();
+    let done = false;
     const since = openedAt;
     const gen = socketGen;
-    // When this was asked: pushes kept before then are in the answer (arrived.ts doneArrived).
-    const asked = Date.now();
+    const early = takeEarly(gen);
+    // When this was asked: pushes kept before then are in the answer (arrived.ts doneArrived). One index.html asked for
+    // goes by when its socket began, before it was asked: a push kept in between stays for the next start.
+    const asked = early?.at ?? Date.now();
     try {
       // As text too: the snapshot keeps the hub's answer as it came, without serializing it again.
-      const res = await fetch('/api/bootstrap');
-      const text = await res.text();
+      const onBytes = first ? (got: number, total: number | null) => void (firstLoad.value = { phase: 'download', got, total }) : undefined;
+      const { res, text } = await hubFetch(BOOTSTRAP_PATH, { quiet: SYNC_QUIET, signal: link.signal, early, onBytes });
       if (res.status === 401) {
         let body: { setup?: boolean } | null = null;
         try {
@@ -1273,14 +1533,21 @@ function bootstrap() {
         if (isLoginRefusal(res.status, body)) return void needLogin(!!body?.setup);
       }
       if (!res.ok) throw new Error(text.slice(0, 200) || `${res.status}`);
+      if (first) {
+        // Setting it up holds the page for a while, with no bytes left to count: the start screen says so first.
+        firstLoad.value = { ...firstLoad.value, phase: 'draw' };
+        await painted();
+      }
       const b = JSON.parse(text) as P.Bootstrap;
       // What pushes laid over the snapshot goes in the same task as the hub's state comes (arrived.ts).
       dropArrived();
       applyBootstrap(b);
       synced = !!b.sync && ws?.readyState === WebSocket.OPEN && gen === socketGen;
-      sawHub(b.boot);
+      sawHub(b.boot, b.build);
       freshFromHub();
       doneArrived(asked);
+      if (!first) caughtUp(0);
+      done = true;
       performance.mark('dither:fresh');
       for (const h of freshHooks) h();
       loadInbox().catch(() => {});
@@ -1290,10 +1557,29 @@ function bootstrap() {
       persistSoon(text);
       void flushOutgoing();
     } catch (e: any) {
-      toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
+      // No answer: on the socket it was for, start again with a new one (the next sync asks again); one already
+      // replaced has its own on the way.
+      if (e instanceof TypeError) noAnswer(gen);
+      else toast({ kind: 'error', title: 'Could not load', body: String(e.message) });
     } finally {
+      if (!done && !first) catchingUp.value = null;
       release();
     }
+  });
+}
+
+/** After the next frame is drawn, or a moment where none will be (a page out of sight draws none). */
+const painted = () => new Promise<void>((r) => (requestAnimationFrame(() => setTimeout(r)), setTimeout(r, 100)));
+
+/**
+ * The socket's catch-up (`Resume`), or null: not one (an older hub), or not come within `every` of the socket opening,
+ * the wait after which a catch-up by POST is asked again on another connection (api.ts hedged). A socket that opens
+ * and then says nothing is caught up by POST, as before.
+ */
+function resumeAnswer(sr: Resume, every: number): Promise<P.SyncResponse | null> {
+  return new Promise((done) => {
+    const t = setTimeout(() => done(null), Math.max(0, openedAt + every - Date.now()));
+    void sr.answer.then((r) => (clearTimeout(t), done(r)));
   });
 }
 
@@ -1301,24 +1587,51 @@ function bootstrap() {
 function resync() {
   return serial(async () => {
     held ??= [];
+    catchingUp.value ??= Date.now();
     const gen = socketGen;
     // A cold start resumes from the snapshot, once it is read; IndexedDB can be slow, but not this slow.
     await Promise.race([beforeSync.wait, new Promise((r) => setTimeout(r, 1500))]);
     const pos = db.sync;
-    if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void (release(), bootstrap());
+    // Nothing to catch up from: a bootstrap, which says what it is itself (the start screen, or a catch-up over a copy).
+    if (!loaded.value || !pos || pos.v !== SYNC_VERSION) return void ((catchingUp.value = null), release(), bootstrap());
+    // A snapshot after all (index.html could not tell): the bootstrap it asked for is not wanted.
+    takeEarly(gen)?.abort();
     // Timelines in memory are as current as `db`, or as their kept copy when it has not been caught up yet. One
     // kept under another epoch loads afresh; those loading now catch up on their own.
     const mine = [...timelines.values()].filter((t) => !t.loading && (t.fetchedAt || t.from));
     const tls = mine.filter((t) => !t.from || (t.from.v === pos.v && t.from.epoch === pos.epoch));
-    let r: P.SyncResponse;
-    const asked = Date.now();
+    let r: P.SyncResponse | null = null;
+    let asked = Date.now();
+    let onSocket = false;
+    const every = Math.max(HEDGE_MIN, HEDGE_ROUNDS * openMs);
+    const ask = (body: P.SyncRequest) => hedged((o) => api<P.SyncResponse>('/api/sync', { body, quiet: SYNC_QUIET, ...o }), { every, tries: HEDGE_TRIES, signal: link.signal });
+    const tlAsk = tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq));
     try {
-      r = await api<P.SyncResponse>('/api/sync', { body: { v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tls.map((t) => timelineRequest(t, t.from?.seq ?? pos.seq)) } satisfies P.SyncRequest });
+      // The socket's own catch-up, asked from this copy's position or one before it, came as its first frame (docs/sync.md
+      // "On the socket"): no request, no round trip. Timelines are not in it; they are asked for beside it.
+      const sr = resume?.gen === gen && resume.from.v === pos.v && resume.from.epoch === pos.epoch && resume.from.seq <= pos.seq ? resume : null;
+      let side: Promise<P.SyncResponse> | null = null;
+      if (sr) {
+        if (tlAsk.length) (side = ask({ v: pos.v, epoch: pos.epoch, timelines: tlAsk })).catch(() => {});
+        r = await resumeAnswer(sr, every);
+        // An answer older than this copy, or a refusal of a position older than its own: asked by POST, from its own.
+        if (r && (r.full ? sr.from.seq < pos.seq : r.sync.epoch !== pos.epoch || r.sync.seq < pos.seq)) r = null;
+        if (r) (asked = sr.startedAt), (onSocket = true);
+        else side = null;
+      }
+      r ??= await ask({ v: pos.v, epoch: pos.epoch, since: pos.seq, timelines: tlAsk });
+      if (side && !r.full) {
+        const t = await side;
+        // Refused (another epoch since): those timelines load afresh below.
+        r = t.full ? { ...r, timelines: [] } : { ...r, timelines: t.timelines, identities: [...r.identities, ...t.identities], quoted: [...r.quoted, ...t.quoted] };
+        if (t.full) tls.length = 0;
+      }
     } catch (e) {
+      catchingUp.value = null;
       release();
-      // No answer: the socket is likely gone too, and the next one tries again. An answer that is an error (a hub
-      // without /api/sync) means starting over.
-      if (e instanceof TypeError) probe();
+      // No answer (or given up): the next socket tries again. An answer that is an error (a hub without /api/sync)
+      // means starting over.
+      if (e instanceof TypeError) noAnswer(gen);
       else void bootstrap();
       return;
     }
@@ -1332,15 +1645,23 @@ function resync() {
     applyTimelines(r);
     for (const t of tls) t.from = undefined;
     for (const t of mine) if (!tls.includes(t)) void reload(t.key);
+    const was = { self: db.selfPersonId, provider: db.categoryProvider, manager: JSON.stringify(db.accountsManager ?? null), usage: JSON.stringify(db.reactionUsage), ids: identityVersion() };
     applySyncTo(db, { ...r, events: [] });
-    changed('meta');
+    // Only what the sync's own fields changed (its identities through putIdentity, its events below): most change
+    // nothing, and a 'meta' for every sync walked every server and worked out every level again (docs/perf.md).
+    if (db.selfPersonId !== was.self || db.categoryProvider !== was.provider) changed('meta');
+    if (JSON.stringify(db.reactionUsage) !== was.usage) changed('shown');
+    if (JSON.stringify(db.accountsManager ?? null) !== was.manager) changed('list');
+    if (identityVersion() !== was.ids) changed('identity');
     applyEvents(r.events);
     if (r.inbox) mergeInbox(r.inbox);
     synced = ws?.readyState === WebSocket.OPEN && gen === socketGen;
-    sawHub(r.boot);
+    sawHub(r.boot, r.build);
     freshFromHub();
     doneArrived(asked);
-    performance.mark('dither:fresh');
+    caughtUp(r.events.reduce((n, e) => n + (e.t === 'message' && e.message.ts > catchFrom && !e.message.editedTs && !isSelfIdentity(e.message.authorId) ? 1 : 0), 0));
+    // Which way the catch-up came, for verify-sync.ts.
+    performance.mark('dither:fresh', { detail: { socket: onSocket } });
     for (const h of freshHooks) h();
     release();
     persistSoon();
@@ -1348,11 +1669,57 @@ function resync() {
   });
 }
 
-function sawHub(boot: string | undefined) {
+/**
+ * A catch-up for socket `gen` got no answer. Still the socket in use: it answers pings but its catch-up did not come
+ * (a connection that died under the request), so it goes, and a new one after the backoff asks again. Without that the
+ * app would stay uncaught-up on a socket that looks fine.
+ */
+function noAnswer(gen: number) {
+  if (gen === socketGen && ws) dropped();
+}
+
+function sawHub(boot: string | undefined, build?: string) {
+  if (build) hubBuild = build;
   if (!boot) return;
   // A new hub process may have brought a new build: pwa.ts checks.
   if (hubBoot && boot !== hubBoot) window.dispatchEvent(new Event('dither:reconnected'));
   hubBoot = boot;
+}
+
+/** The hub's code as last synced (restarts.ts codeBuild): a restart onto other code is an update. */
+let hubBuild: string | null = null;
+
+/** A catch-up finished, with `fresh` new messages from others: what the inbox's status line says for a moment. */
+function caughtUp(fresh: number) {
+  const now = Date.now();
+  const r = restarting.value;
+  let after: 'updated' | 'restarted' | 'app' | undefined;
+  if (r) {
+    after = r.build && hubBuild && r.build !== hubBuild ? 'updated' : 'restarted';
+    clearTimeout(restartTimer);
+    restarting.value = null;
+  } else if (appUpdated()) after = 'app';
+  caught.value = { at: now, took: now - (catchingUp.value ?? now), fresh, after };
+  catchingUp.value = null;
+}
+
+/** pwa.ts marked this reload as the new version the user tapped for: once. */
+function appUpdated(): boolean {
+  try {
+    if (!sessionStorage.getItem(APP_UPDATED)) return false;
+    sessionStorage.removeItem(APP_UPDATED);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The hub said it is stopping: a restart to wait for, not a link lost (docs/sync.md "Restarts"). */
+function hubStopping(usualMs?: number) {
+  restarting.value = { at: Date.now(), usualMs, build: hubBuild ?? undefined };
+  clearTimeout(restartTimer);
+  // Not back after a long while: no longer a restart to wait for, but the hub out of reach as at any other time.
+  restartTimer = setTimeout(() => (restarting.value = null), Math.max(RESTART_LONGEST, 4 * (usualMs ?? 0)));
 }
 
 let openedAt = 0;
@@ -1370,35 +1737,157 @@ export function afterSync(): Promise<void> {
   return Promise.race([settle, socketOpen().then(() => chain).then(() => {})]);
 }
 
+/** Called each time the live socket opens: what the hub held about this page went with the old one. */
+export const socketOpenHooks = new Set<() => void>();
+
+/** Says something to the hub over the live socket (`P.ClientWatching`); false when it is not open. */
+export function sayLive(msg: string): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(msg);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const liveUrl = (from?: P.SyncPosition | null) =>
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live${from ? `?v=${from.v}&epoch=${encodeURIComponent(from.epoch)}&since=${from.seq}` : ''}`;
+
+
+/**
+ * What a socket asked from a position brings as its first frame: the catch-up from `from`, which `answer` settles
+ * with; null when it does not come (an older hub, the socket gone). `startedAt`: the socket was asked for then, so
+ * the answer covers what was kept before it (arrived.ts).
+ */
+interface Resume {
+  sock: WebSocket;
+  gen: number;
+  from: P.SyncPosition;
+  startedAt: number;
+  answer: Promise<P.SyncResponse | null>;
+  settle: (r: P.SyncResponse | null) => void;
+  /** Its first frame has come. */
+  seen: boolean;
+}
+let resume: Resume | null = null;
+
+/** The catch-up frame: text, or gzip'd when long. */
+async function readResume(data: unknown): Promise<P.SyncResponse | null> {
+  const text =
+    typeof data === 'string'
+      ? data
+      : await new Response((data instanceof Blob ? data : new Blob([data as ArrayBuffer])).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return (JSON.parse(text) as P.LiveResume).resume ?? null;
+}
+
+/**
+ * What index.html started before this script came (its first inline script): the live socket, the frames it got
+ * meanwhile, and on a device that keeps no snapshot, the bootstrap, asked for once that socket was open.
+ */
+interface Early {
+  ws: WebSocket | null;
+  /** The position it asked to be caught up from, kept by snapshot.ts where index.html can read it. */
+  from?: P.SyncPosition | null;
+  at: number;
+  openedAt: number;
+  frames: unknown[];
+  boot: Promise<Response> | null;
+  abort: (() => void) | null;
+  /** Set here once the app has asked for its own (or decided it wants none): index.html asks for nothing after. */
+  taken: boolean;
+}
+let early: Early | null = (globalThis as { __ditherEarly?: Early }).__ditherEarly ?? null;
+/** The early socket's generation, while its bootstrap is not taken: it is the bootstrap of that socket only. */
+let earlyOf: { e: Early; gen: number } | null = null;
+
+/** The bootstrap index.html asked for, if it belongs to socket `gen`; asked for once, so taken once. */
+function takeEarly(gen: number): { res: Promise<Response>; abort: () => void; at: number } | undefined {
+  const o = earlyOf;
+  if (!o) return undefined;
+  earlyOf = null;
+  o.e.taken = true;
+  if (!o.e.boot) return undefined;
+  const abort = o.e.abort ?? (() => {});
+  if (o.gen !== gen) return void abort();
+  return { res: o.e.boot, abort, at: o.e.at };
+}
+
 export function connect() {
   clearTimeout(retry);
+  nextTry.value = null;
+  const e = early;
+  early = null;
   // Signed out: nothing to connect to until the sign-in screen has reloaded the page (login.ts).
-  if (login.value) return;
+  if (login.value) {
+    if (e) (e.taken = true), e.abort?.(), e.ws?.close();
+    return;
+  }
   if (!connected.value) setConnected(false);
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/live`;
-  const sock = new WebSocket(url);
-  socketStartedAt = Date.now();
+  if (e?.ws && e.ws.readyState <= WebSocket.OPEN) {
+    socketStartedAt = e.at;
+    use(e.ws, e.at, e, e.from ?? null);
+    // No sync is asked for before the snapshot is read, so the socket's own catch-up finds this here.
+    earlyOf = { e, gen: socketGen };
+  } else {
+    if (e) (e.taken = true), e.abort?.();
+    socketStartedAt = Date.now();
+    // Asked from this copy's position, once there is one: a hub that can answers LIVE_RESUME and sends the catch-up as
+    // its first frame (docs/sync.md "On the socket"). Only where a long one can be read (gzip'd: DecompressionStream).
+    const from = loaded.value && db.sync?.v === SYNC_VERSION && typeof DecompressionStream === 'function' ? db.sync : null;
+    use(from ? new WebSocket(liveUrl(from), [LIVE_PROTOCOL, LIVE_RESUME]) : new WebSocket(liveUrl()), socketStartedAt, undefined, from);
+  }
+  // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
+  fetch('/api/health', { cache: 'no-store' }).catch(() => {});
+}
+
+/**
+ * `sock` is the live socket from now: a new one, a spare that won its race (probe), already open, or the one index.html
+ * opened (`e`), with the frames that came before this script did.
+ */
+function use(sock: WebSocket, startedAt: number, e?: Early, from: P.SyncPosition | null = null) {
   ws = sock;
   synced = false;
   socketGen++;
-  // The socket gets its own connection; this one opens the HTTP connection the sync will use, at the same time.
-  fetch('/api/health', { cache: 'no-store' }).catch(() => {});
-  sock.onopen = () => {
+  link.abort();
+  link = new AbortController();
+  resume?.settle(null);
+  resume = null;
+  if (from) {
+    let settle!: (r: P.SyncResponse | null) => void;
+    const answer = new Promise<P.SyncResponse | null>((r) => (settle = r));
+    resume = { sock, gen: socketGen, from, startedAt, answer, settle, seen: false };
+  }
+  // A bootstrap of a socket no longer in use: its frames will not come to this page.
+  if (earlyOf) takeEarly(-1);
+  const onopen = () => {
     if (ws !== sock) return;
+    // An older hub: no catch-up will come on it.
+    if (resume?.sock === sock && sock.protocol !== LIVE_RESUME) resume.settle(null);
     setConnected(true);
     backoff = 500;
     openedAt = lastPong = Date.now();
+    openMs = (e?.openedAt || openedAt) - startedAt;
     markOpen?.();
     opened = markOpen = null;
     held ??= [];
     void resync();
     void loadPlans();
+    for (const h of socketOpenHooks) h();
   };
   sock.onmessage = (e) => {
     if (ws !== sock) return;
+    // The catch-up it asked for, before any live frame (docs/sync.md "On the socket"); resync takes it.
+    const r = resume?.sock === sock && !resume.seen && sock.protocol === LIVE_RESUME ? resume : null;
+    if (r && (typeof e.data !== 'string' || e.data.startsWith('{"resume"'))) {
+      r.seen = true;
+      return void readResume(e.data).then(r.settle, () => r.settle(null));
+    }
     if (e.data === 'pong') {
       lastPong = Date.now();
       clearTimeout(pongTimer);
+      // Late, but here before a new socket was: a busy link, not a dead socket.
+      endRace();
       return;
     }
     try {
@@ -1416,6 +1905,10 @@ export function connect() {
     if (sock.readyState === WebSocket.CLOSED && openedAt < socketStartedAt) void checkSignedIn();
     dropped();
   };
+  sock.onopen = onopen;
+  if (sock.readyState === WebSocket.OPEN) onopen();
+  // Held behind the catch-up onopen began, as any frame that comes while it is on its way.
+  for (const data of e?.frames.splice(0) ?? []) sock.onmessage?.call(sock, new MessageEvent('message', { data }));
 }
 
 let socketStartedAt = 0;
@@ -1431,19 +1924,29 @@ async function checkSignedIn() {
 
 /** The socket is gone, or as good as: forget it now rather than wait for its close to time out. */
 function dropped(since = Date.now()) {
-  const old = ws;
+  retire(ws);
   ws = null;
   synced = false;
-  clearTimeout(pongTimer);
-  if (old) {
-    old.onopen = old.onmessage = old.onclose = null;
-    try {
-      old.close();
-    } catch {}
-  }
+  link.abort();
+  resume?.settle(null);
+  endRace();
   setConnected(false, since);
+  catchingUp.value = null;
   clearTimeout(retry);
-  retry = setTimeout(connect, (backoff = Math.min(backoff * 2, 15_000)));
+  // A hub restarting is back in seconds: every second, rather than backing off past the moment it answers.
+  const wait = restarting.value ? 1000 : (backoff = Math.min(backoff * 2, 15_000));
+  retry = setTimeout(connect, wait);
+  nextTry.value = Date.now() + wait;
+}
+
+/** A socket no longer the app's: closed without a word to its handlers. */
+function retire(old: WebSocket | null) {
+  clearTimeout(pongTimer);
+  if (!old) return;
+  old.onopen = old.onmessage = old.onclose = null;
+  try {
+    old.close();
+  } catch {}
 }
 
 /** Back on the network or back in front of the user while disconnected: try now rather than at the end of the backoff. */
@@ -1473,12 +1976,15 @@ export function tryNow(): Promise<boolean> {
 }
 
 /**
- * Is the socket alive? A phone that slept or switched networks can hold one that looks open and is not: without an
- * answer within PONG_WAIT it is dropped and a new one opens at once.
+ * Is the socket alive? A phone that slept or switched networks can hold one that looks open and is not. Without an
+ * answer within PONG_WAIT, a new socket races the pong: on a dead socket the new one opens first and takes its place,
+ * with nothing shown; on a link busy with a download the pong was queued first and comes first, and the socket stays.
+ * A fixed wait cannot tell the two apart: behind a router's queue of 4 s at 1.5 Mbit/s a pong takes 4 s and more
+ * (scripts/verify-link.ts). Neither within SPARE_WAIT: the socket is dropped, and the notice shows.
  */
 function probe() {
   if (!ws || ws.readyState === WebSocket.CLOSED) return reconnectNow();
-  if (ws.readyState !== WebSocket.OPEN) return;
+  if (ws.readyState !== WebSocket.OPEN || race) return;
   const sock = ws;
   const sent = Date.now();
   try {
@@ -1488,11 +1994,46 @@ function probe() {
   }
   clearTimeout(pongTimer);
   pongTimer = setTimeout(() => {
-    if (ws === sock && lastPong < sent) {
-      dropped(sent);
-      reconnectNow();
-    }
+    if (ws === sock && lastPong < sent && !race) startRace(sock, sent);
   }, PONG_WAIT);
+}
+
+/** A new socket racing the pong of `old`'s ping at `sent` (probe). */
+let race: { spare: WebSocket; deadline: ReturnType<typeof setTimeout> } | null = null;
+
+function startRace(old: WebSocket, sent: number) {
+  const spare = new WebSocket(liveUrl());
+  const startedAt = Date.now();
+  const lost = () => {
+    if (race?.spare !== spare) return;
+    endRace();
+    if (ws !== old) return;
+    dropped(sent);
+    reconnectNow();
+  };
+  race = { spare, deadline: setTimeout(lost, SPARE_WAIT) };
+  spare.onopen = () => {
+    if (race?.spare !== spare) return;
+    if (ws !== old) return endRace();
+    clearTimeout(race.deadline);
+    race = null;
+    // The old one is dead: this one takes its place, and catches up with a delta like any new socket.
+    retire(old);
+    use(spare, startedAt);
+  };
+  // Refused or unreachable: the hub is out of reach.
+  spare.onclose = lost;
+}
+
+function endRace() {
+  if (!race) return;
+  const { spare, deadline } = race;
+  race = null;
+  clearTimeout(deadline);
+  spare.onopen = spare.onclose = null;
+  try {
+    spare.close();
+  } catch {}
 }
 
 if (typeof window !== 'undefined') {
@@ -1522,3 +2063,11 @@ export function loadTranslation(fresh = false): Promise<void> {
 export async function setTranslation(patch: Partial<P.TranslateSettings>): Promise<void> {
   translation.value = await api<{ settings: P.TranslateSettings; networks: P.Network[] }>('/api/translate/settings', { method: 'PUT', body: patch });
 }
+
+// The maps above that live as long as the page, for verify-memory.ts (docs/perf.md "Memory"): read under ?perf=1 only.
+sized('readTimers', () => readTimers.size);
+sized('readClosedAt', () => closedAt.size);
+sized('glancing', () => glancing.size);
+sized('outgoing', () => outgoing.size);
+sized('sendUploads', () => sendUploads.size);
+sized('editDrafts', () => editDrafts.size);

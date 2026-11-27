@@ -11,17 +11,18 @@
  * (chatroutes.ts pickHolds), unless a draft waits in the picked route's box.
  */
 import type * as P from '@dither-chat/protocol';
-import { effect, signal } from '@preact/signals';
+import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, pickHolds, tagTells, tagText, tells, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
+import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, tagTells, tagText, tells, yourAccount, yourName, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, pref, route, setPrefs, timelineKey, timelines } from '../state.ts';
+import { api, db, go, isSelfIdentity, metaRev, pref, setPrefs, timelineKey, timelines } from '../state.ts';
 import { Avatar, Count, FromChips, Menu, NetBadge, NetGlyph } from './bits.tsx';
 import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
+import { cameFrom, live, picked } from '../pairpick.ts';
 
 // ------------------------------------------------------------------ pairs
 
@@ -32,6 +33,8 @@ interface Pair {
   mine: P.IdentityView | null;
   /** Theirs in the conversation. */
   theirs: P.IdentityView | null;
+  /** A person's email route goes from a mail account, which is not among the chat accounts (mail/chats.ts). */
+  mail: P.MailAccountView | null;
 }
 
 function pairOf(conv: P.ConversationView): Pair {
@@ -39,7 +42,8 @@ function pairOf(conv: P.ConversationView): Pair {
   const mine = acc?.selfIdentityId ? (db.identities.get(acc.selfIdentityId) ?? null) : null;
   const peer = conv.participantIds.find((p) => !isSelfIdentity(p));
   const theirs = peer ? (db.identities.get(peer) ?? null) : null;
-  return { conv, acc, mine, theirs };
+  const mail = acc ? null : (conv.vantages.map((v) => db.mail.accounts.get(v.accountId)).find((a) => !!a) ?? null);
+  return { conv, acc, mine, theirs, mail };
 }
 
 /** A handle that is a phone number (Signal, WhatsApp): never shown beside a name. */
@@ -51,12 +55,17 @@ const theirName = (p: Pair) => {
   if (h && PHONE.test(h) && p.theirs?.displayName) return p.theirs.displayName;
   return h ?? p.theirs?.displayName ?? netName(p.conv.network);
 };
-const myName = (p: Pair) => p.acc?.label || identityName(p.mine?.id) || 'you';
+const yours = (p: Pair) => ({ chat: p.acc, mail: p.mail, identity: p.mine ? identityName(p.mine.id) : null });
+const myName = (p: Pair) => yourName(yours(p));
+/** Your account on this route: a chat account, else a mail account. */
+const myId = (p: Pair) => yourAccount(yours(p));
+/** Your account's colour on this route. */
+const myColor = (p: Pair) => p.acc?.color ?? p.mail?.color ?? hueOf(p.conv.id);
 
 /** A route as chatroutes.ts sees it. */
 function routeKey(c: P.ConversationView): RouteKey {
   const p = pairOf(c);
-  return { id: c.id, network: c.network, theirs: p.theirs?.id ?? null, mine: p.acc?.id ?? null };
+  return { id: c.id, network: c.network, theirs: p.theirs?.id ?? null, mine: myId(p) };
 }
 
 /** What tells this route from the chat's others (chatroutes.ts). */
@@ -112,32 +121,6 @@ export function headNames(convIds: string[]): Map<string, { name: string; ident?
   return out;
 }
 
-/**
- * The route picked on this page, per person, this session, the address it was picked at and when: a pick holds while
- * the page stays at that address, and the address wins once it changes (opening another of their DMs sends through
- * it). It gives way to a message on another route after it (`live`): a tab left open for hours does not keep sending
- * through the route picked at its start.
- */
-const picked = signal<Record<string, { to: string; at: string; ts: number }>>({});
-
-/** Whether a draft waits in a conversation's message box (Timeline keeps it in localStorage). */
-function draftIn(conversationId: string): boolean {
-  try {
-    return !!localStorage.getItem(`dither-chat:draft:${conversationId}`);
-  } catch {
-    return false;
-  }
-}
-
-/** A pick of `to` at `ts` still holds among these routes: no message on another since, or a draft waits in its box. */
-const live = (to: string, ts: number, directs: P.ConversationView[]) => directs.some((d) => d.id === to) && (pickHolds(to, ts, directs) || draftIn(to));
-
-/** The route picked this session, if it is still one of theirs and still holds: where the inbox's row for them opens. */
-export function pickedRoute(personId: string, directs: P.ConversationView[]): string | null {
-  const p = picked.value[personId];
-  return p && live(p.to, p.ts, directs) ? p.to : null;
-}
-
 /** What the hub says of each person's chat (GET /api/chats/person:<id>): the route chosen last time, if any. */
 const chats = signal<Record<string, P.ChatView>>({});
 
@@ -160,14 +143,6 @@ async function chooseRoute(personId: string, conversationId: string, accountId: 
   const c = await api<P.ChatView>(`/api/chats/person:${personId}`, { method: 'PATCH', body: { route: { conversationId, accountId } } }).catch(() => null);
   if (c) chats.value = { ...chats.value, [personId]: c };
 }
-
-/** The last conversation open before this page: where you came from, to guess which of your accounts to send as. */
-const cameFrom = signal<string | null>(null);
-if (typeof window !== 'undefined')
-  effect(() => {
-    const r = route.value as { view: string; conv?: string };
-    if (r.view !== 'people' && r.conv) cameFrom.value = r.conv;
-  });
 
 /** Where a message to them goes now (the module's comment says in what order). `at`: the DM the page was opened as. */
 export function focusedPair(personId: string, directs: P.ConversationView[], at?: string): P.ConversationView {
@@ -229,7 +204,7 @@ function MyPicture({ p, size }: { p: Pair; size: number }) {
   if (p.mine?.avatar) return <Avatar id={p.acc?.id ?? p.conv.id} name={name} url={p.mine.avatar} size={size} network={p.conv.network} />;
   return (
     <span class="avatar" style={{ width: `${size}px`, height: `${size}px` }}>
-      <span class="avatar-fallback" style={{ borderRadius: `${size / 2}px`, background: p.acc?.color ?? hueOf(p.conv.id), color: '#14161d', fontSize: `${Math.max(9, Math.round(size * 0.38))}px` }}>
+      <span class="avatar-fallback" style={{ borderRadius: `${size / 2}px`, background: myColor(p), color: '#14161d', fontSize: `${Math.max(9, Math.round(size * 0.38))}px` }}>
         {initials(name.replace(/^[@+]/, ''))}
       </span>
       <NetBadge network={p.conv.network} size={Math.max(11, Math.round(size * 0.5))} class="avatar-net" />
@@ -311,6 +286,7 @@ export function SendAsLead({ c, accounts, value, onPick }: { c: P.ConversationVi
  * box (ui/Typing.tsx): "To Kit on Signal".
  */
 export function PairLead({ person, directs, focus, onFocus }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; onFocus: (convId: string) => void }) {
+  metaRev.value; // names on both sides
   const keys = directs.map(routeKey);
   const pairs = directs.map(pairOf);
   const cur = pairOf(focus);
@@ -320,7 +296,7 @@ export function PairLead({ person, directs, focus, onFocus }: { person: P.Person
   for (const p of pairs) if (!theirs.some((x) => x.theirs?.id === p.theirs?.id)) theirs.push(p);
   const pickTheirs = (identityId: string) => {
     const withThem = pairs.filter((p) => p.theirs?.id === identityId);
-    const next = withThem.find((p) => p.acc?.id === cur.acc?.id) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
+    const next = withThem.find((p) => myId(p) === myId(cur)) ?? withThem.sort((a, b) => (b.conv.lastMessageAt ?? 0) - (a.conv.lastMessageAt ?? 0))[0];
     if (next) onFocus(next.conv.id);
   };
   const mine = pairs.filter((p) => p.theirs?.id === cur.theirs?.id && p.conv.network === focus.network);
@@ -434,6 +410,7 @@ interface ListRow {
  * route messages go to says "sending". `view`: 'all' or the route's conversation. `focus`: where messages go now.
  */
 export function PairDropdown({ person, directs, focus, view: v, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view: string; onPick: (view: string) => void }) {
+  metaRev.value; // names: counts and times come with a new `directs`
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   // The header clips what overflows it, so the card is placed on the page, under the line.
@@ -523,7 +500,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
     if (t.mine)
       sub.push(
         <span class="pair-row-via">
-          via <span class="acc-dot" style={{ background: p.acc?.color ?? hueOf(id) }} />
+          via <span class="acc-dot" style={{ background: p.acc?.color ?? p.mail?.color ?? hueOf(id) }} />
           {myName(p)}
         </span>,
       );
@@ -572,7 +549,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
         data-track="chats list"
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === 'all' ? `${others.length} more ${others.length === 1 ? 'chat' : 'chats'} with them` : 'Showing only this chat'}: press and drag to pick, or click`}
+        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === 'all' ? (others.length === 0 ? 'No other chats with them' : `${others.length} more ${others.length === 1 ? 'chat' : 'chats'} with them`) : 'Showing only this chat'}: press and drag to pick, or click`}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           press.current = { x: e.clientX, y: e.clientY, moved: false };
@@ -611,7 +588,8 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
         }}
       >
         <SendLine c={focus} accounts={routeAccounts(focus)} to={to} />
-        {v === 'all' && (
+        {/* One route (someone reached only by email, mail/chats.ts): nothing more to pick. */}
+        {v === 'all' && others.length > 0 && (
           <span class="pair-more">
             <span class="pair-more-nets">
               {otherNets.map((n) => (

@@ -20,7 +20,7 @@
  * decayed), then when they last spoke here.
  */
 import type * as P from '@dither-chat/protocol';
-import { identityRef, MENTION_SCOPES, personRef } from '@dither-chat/protocol';
+import { identityRef, MENTION_SCOPES, mentionsPing, personRef, sendsMentions } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { sumTallies, type Tally } from './attention.ts';
 import { storeResolve } from './mentionrefs.ts';
@@ -32,6 +32,8 @@ const NETWORK_WAIT = 1500;
 const PEOPLE_MAX = 20;
 /** The stored messages read for who wrote here lately, newest first. */
 const RECENT_MESSAGES = 3000;
+/** Fewer people than this in the network's answer to letters typed is all who match there (Discord's member search stops at 10). */
+const NET_FULL = 10;
 /** Everyone you know with nothing typed: who wrote anywhere in this many of the newest messages, and your friends. */
 const RECENT_ANYWHERE = 2000;
 /** People read for a name typed, before they are ranked. */
@@ -143,11 +145,15 @@ interface Candidate {
   lastSpoke: number;
 }
 
-/** What a body says for @everyone on this network, if it has one: Discord's two, Matrix's @room. */
+/**
+ * What a body says for @everyone on this network, if it has one: Discord's two, Matrix's @room, and on Zulip @everyone
+ * and @here, which its extractor sends as Zulip's @**all** and @**topic** (everyone in the channel, everyone in the topic).
+ */
 function everyoneRows(network: P.Network): P.MentionRow[] {
   const row = (kind: 'everyone' | 'here', word: string): P.MentionRow => ({ kind, insert: `@${word} `, pings: true, section: 'here', name: word, network });
   if (network === 'discord') return [row('everyone', 'everyone'), row('here', 'here')];
   if (network === 'matrix') return [row('everyone', 'room')];
+  if (network === 'zulip') return [row('everyone', 'everyone'), row('here', 'here')];
   return [];
 }
 
@@ -260,7 +266,7 @@ export async function mentionables(d: MentionDeps, conversationId: string, param
       kind: 'identity',
       // Where references are kept, one the hub stores is named by reference, so the account says who it is.
       insert: refs && i ? `${identityRef(i.id)} ` : `<@${nativeId}> `,
-      pings: !refs,
+      pings: !refs && mentionsPing(network),
       section: 'here',
       name,
       network,
@@ -307,7 +313,13 @@ export async function mentionables(d: MentionDeps, conversationId: string, param
   if (scope !== 'here') {
     // Who is shown here already, by person.
     const shown = new Set(rows.map((r) => (r.identityId ? people.get(r.identityId)?.identity?.personId : undefined)).filter((x): x is string => !!x));
-    const sections = personSections(s, { conversationId, network, q, scope, same, refs, self, shown, loadTallies, talkOf });
+    // Whether everyone here who matches is known: then an account on this network that is not among them is not in this
+    // chat, and the network would not notify it. The network's answer to letters typed, short of its search's limit,
+    // or the stored members of a direct chat or a group it does not answer for. Else (nothing typed, a channel the
+    // network did not answer for) nobody is known to be away.
+    const all = !partial && ((!!answer && !!q && fromNet.length < NET_FULL) || (!answer && listed && (conv.shape === 'direct' || conv.shape === 'group')));
+    const away = (identityId: string) => all && !people.has(identityId);
+    const sections = personSections(s, { conversationId, network, q, scope, same, refs, self, shown, away, loadTallies, talkOf });
     rows.push(...sections);
   }
   return { rows, ...(partial ? { partial: true } : {}), scope, ...(same ? { sameNetwork: true } : {}) };
@@ -315,8 +327,9 @@ export async function mentionables(d: MentionDeps, conversationId: string, param
 
 /**
  * Sections 'friends' and (for scope 'everyone') 'everyone': persons, best first, each with their accounts. A person
- * with an account on this network inserts its mention (pings); one without inserts a reference the hub lowers to plain
- * @Name on send. Where references are kept, rows insert references and ping nobody.
+ * with an account on this network inserts its mention, which pings unless that account is known not to be in this chat
+ * (`away`); one without inserts a reference the hub lowers to plain @Name on send. Where references are kept, rows
+ * insert references and ping nobody.
  */
 function personSections(
   s: Store,
@@ -329,6 +342,8 @@ function personSections(
     refs: boolean;
     self: Set<string>;
     shown: Set<string>;
+    /** An account on this network known not to be in this chat. */
+    away: (identityId: string) => boolean;
     loadTallies: (keys: string[]) => void;
     talkOf: (key: string) => number;
   },
@@ -411,13 +426,13 @@ function personSections(
       // Their account on this network to mention: the one the hub would lower a reference to.
       const best = m.here.length && !o.refs ? resolve('person', m.pid) : null;
       const native = best && 'nativeId' in best ? best.nativeId : null;
-      const sub = m.list.map((r) => accountRow(r, views.get(r.id), p.name, m.pid, section, o.network, o.refs));
+      const sub = m.list.map((r) => accountRow(r, views.get(r.id), p.name, m.pid, section, o.network, o.refs, o.away(r.id)));
       const lead = (native ? sub.find((x) => x.insert === `<@${native}> `) : undefined) ?? sub[0];
-      const avatar = p.avatar_url ? s.mediaUrl(p.avatar_url, null) : lead.avatar;
+      const avatar = p.avatar_url ? s.personPicture(m.pid, p.avatar_url) : lead.avatar;
       rows.push({
         kind: 'person',
         insert: native ? `<@${native}> ` : `${personRef(m.pid)} `,
-        pings: !!native,
+        pings: !!native && mentionsPing(o.network) && !o.away(hubId('idn', o.network, native)),
         section,
         name: p.name,
         personId: m.pid,
@@ -432,12 +447,12 @@ function personSections(
 }
 
 /** One of a person's accounts as a row: its mention on this network (pings), else a reference (does not). */
-function accountRow(r: Row, v: P.IdentityView | undefined, personName: string, personId: string, section: P.MentionRow['section'], network: P.Network, refs: boolean): P.MentionRow {
-  const on = r.network === network && !refs;
+function accountRow(r: Row, v: P.IdentityView | undefined, personName: string, personId: string, section: P.MentionRow['section'], network: P.Network, refs: boolean, away = false): P.MentionRow {
+  const on = r.network === network && !refs && sendsMentions(network);
   return {
     kind: 'identity',
     insert: on ? `<@${r.native_id}> ` : `${identityRef(r.id)} `,
-    pings: on,
+    pings: on && mentionsPing(network) && !away,
     section,
     name: r.nickname || r.display_name || r.handle || personName,
     network: r.network,

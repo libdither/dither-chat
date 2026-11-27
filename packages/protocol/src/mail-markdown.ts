@@ -9,9 +9,10 @@
  *   text (fenced code with ``` still works);
  * - HTML you type is text, shown as typed, never markup;
  * - links only to http(s) and mailto (anything else is its text); an image is a link to it, never fetched by the mail;
- * - a quote (`>`) is a `blockquote type=cite` with the bar mail apps draw, as the reply's own quote is.
+ * - a quote (`>`) is a `blockquote type=cite` with the bar mail apps draw, as the reply's own quote is;
+ * - a table (GitHub's `| a | b |`) has its lines drawn inline, since a mail app has no style sheet for it.
  *
- * Every element is one that sanitize.ts calls plain (no colours, fonts or backgrounds), so a mail written here reads in
+ * Every element is one that sanitize.ts calls plain (no colours, fonts or backgrounds; a table's grey lines), so a mail written here reads in
  * the app's theme, and in every mail app as its own text.
  */
 import { Marked, type Tokens } from 'marked';
@@ -27,6 +28,10 @@ function safeHref(href: string): string | null {
   const h = href.trim();
   return /^(https?:\/\/|mailto:)/i.test(h) ? h : null;
 }
+
+/** A table's lines, drawn by every mail app (sanitize.ts calls a table with only these plain). */
+export const TABLE_STYLE = 'border-collapse:collapse;margin:0 0 1em';
+export const CELL_STYLE = 'border:1px solid #bbb;padding:4px 8px';
 
 /** A paragraph: a blank line's space under it, as the text has. */
 const PARA = '<p style="margin:0 0 1em">';
@@ -57,6 +62,14 @@ const md = new Marked({
     },
     paragraph({ tokens }: Tokens.Paragraph) {
       return `${PARA}${this.parser.parseInline(tokens)}</p>\n`;
+    },
+    table({ header, rows }: Tokens.Table) {
+      const cell = (c: Tokens.TableCell) => {
+        const tag = c.header ? 'th' : 'td';
+        return `<${tag} style="${CELL_STYLE}${c.align ? `;text-align:${c.align}` : c.header ? ';text-align:left' : ''}">${this.parser.parseInline(c.tokens)}</${tag}>`;
+      };
+      const body = rows.length ? `<tbody>${rows.map((r) => `<tr>${r.map(cell).join('')}</tr>`).join('\n')}</tbody>` : '';
+      return `<table style="${TABLE_STYLE}"><thead><tr>${header.map(cell).join('')}</tr></thead>${body}</table>\n`;
     },
     // A task list's box is text: mail has no form fields.
     checkbox: ({ checked }: Tokens.Checkbox) => (checked ? '☑ ' : '☐ '),

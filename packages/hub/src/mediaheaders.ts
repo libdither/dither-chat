@@ -13,6 +13,7 @@
  */
 import { showsInline } from '@dither-chat/protocol';
 import { genericType } from './fileinfo.ts';
+import { isJxl } from './jxlformat.ts';
 
 /** Every response: a document opened in a tab gets an opaque origin and no script, and loads only the file itself. */
 export const SANDBOX_CSP = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
@@ -61,10 +62,27 @@ function urlName(raw: string): string {
 /** `attachment; filename="..."; filename*=UTF-8''...` (RFC 6266 / 5987). `key`: the cache key, for a name when the URL has none. */
 export function attachmentDisposition(raw: string, key: string, mime: string): string {
   const essence = safeMime(mime).split(';')[0].trim().toLowerCase();
-  const name = safeFilename(urlName(raw)) || `attachment-${key.slice(0, 12)}.${EXT[essence] ?? 'bin'}`;
+  return disposition(safeFilename(urlName(raw)) || `attachment-${key.slice(0, 12)}.${EXT[essence] ?? 'bin'}`);
+}
+
+function disposition(name: string): string {
   const ascii = name.replace(/[^\x20-\x7e]/g, '_');
   const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+const IMAGE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/jxl': 'jxl', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/heic': 'heic' };
+
+/**
+ * `attachment` with a name for a download in a chosen form (server.ts mediaAs): `name` (the one the app shows), else
+ * the URL's, with its extension made the form's, so a picture saved as `photo.jpg` is a JPEG.
+ */
+export function downloadDisposition(raw: string, key: string, mime: string, name: string | null): string {
+  const essence = safeMime(mime).split(';')[0].trim().toLowerCase();
+  const ext = IMAGE_EXT[essence] ?? EXT[essence];
+  let n = safeFilename(name ?? '') || safeFilename(urlName(raw)) || `attachment-${key.slice(0, 12)}`;
+  if (ext && !n.toLowerCase().endsWith('.' + ext)) n = n.replace(/\.(jpe?g|png|jxl|gif|webp|avif|heic)$/i, '') + '.' + ext;
+  return disposition(n);
 }
 
 /**
@@ -99,6 +117,7 @@ export function sniffMime(head: Uint8Array): string | null {
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg';
   if (ascii(0, 4) === 'GIF8') return 'image/gif';
   if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+  if (isJxl(head)) return 'image/jxl';
   if (ascii(0, 5) === '%PDF-') return 'application/pdf';
   if (ascii(4, 8) === 'ftyp') {
     const brand = ascii(8, 12);

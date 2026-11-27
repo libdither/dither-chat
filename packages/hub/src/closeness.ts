@@ -6,16 +6,20 @@
  *  - every message in your direct chat with them, theirs and yours (1 each);
  *  - their messages in a group chat you are in, less the bigger the group (2 / people in it, groups up to 50);
  *  - a reply between you and them in a server's channel, either way (1.5), and their mentions of you there (1).
- * And the time you spent in your direct chat with them (1 a minute). Plus, per identity, how many friends a fetched
- * profile says you share (mutualFriends). Bots are left out: a bot's direct chat can send thousands of messages a month.
+ * And the time you spent in your direct chat with them (1 a minute), and in a voice channel with them (0.5 a minute,
+ * split over the others in it, three hours at most a time; voicetime.ts, adversarial voice log only). Plus, per identity, how many friends a
+ * fetched profile says you share (mutualFriends). Bots are left out: a bot's direct chat can send thousands of messages
+ * a month.
  *
  * The same for each place the graph shows (a server, counting its channels and threads, or a group chat): your own
  * messages there (1 each) and the time you spent in it (1 a minute). Time comes from the hub's record of visits
  * (`visit`), so it only goes back as far as that does.
  *
  * And ties between two people, neither of them you (the graph's circles): replies between them, reactions to each
- * other's messages, and turns one right after the other in a small group chat, by month; and the friends a fetched
- * profile says they have in common with you, who are their friends too.
+ * other's messages, and turns one right after the other in a small group chat or a thread few people wrote in (a
+ * Zulip topic, a Discord thread), by month; time in a voice channel together, by month, kept apart (`voiceTies`) so
+ * the graph can weigh it; and the friends a fetched profile says they have in common with you, who are their friends
+ * too. Each pair's replies, reactions, turns and minutes in voice in all are kept too, for a profile's Close to.
  *
  * Worked out on a thread of its own (closeness-worker.ts) on a read-only connection, kept for a while, and asked for
  * by the page apart from the graph, so the graph opens at once.
@@ -24,6 +28,7 @@ import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
 import { communities } from './graph.ts';
 import type { Store } from './store.ts';
+import { together, voiceLogged, voiceStretches } from './voicetime.ts';
 
 type Row = Record<string, any>;
 
@@ -39,6 +44,10 @@ interface ClosenessRun {
   mutual: Record<string, number>;
   /** Ties between two identities, neither you: "a b" (a < b) → flat [month, weight × 10] pairs, months ascending. */
   ties: Record<string, number[]>;
+  /** Time in voice together, keyed and laid out as `ties` (adversarial voice log only). */
+  voiceTies: Record<string, number[]>;
+  /** Per pair as `ties`, in all: [replies, reactions, turns, minutes in voice together]. */
+  tieCounts: Record<string, number[]>;
   /** Pairs of identities a profile says are friends: flat [a, b]. */
   friendPairs: string[];
   ms: number;
@@ -49,8 +58,15 @@ const ME = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL U
 const GROUP_MAX = 50;
 /** Ties: what each counts for, and how close in time and how small a group turns must be. */
 const TIE = { reply: 1, reaction: 0.3, turn: 0.5 };
+/** Time in a voice channel together, a minute: between two others, and with you (split over the others in it). */
+const VOICE_TIE = 0.1;
+const VOICE_YOU = 0.5;
+/** One stretch together counts for at most this much shared time: two people idling in a channel all day are not closer than after one long talk. */
+const VOICE_STRETCH_MAX_MS = 3 * 3600_000;
 const TURN_MS = 5 * 60_000;
 const TURN_GROUP_MAX = 60;
+/** A thread lists nobody, so its size is who wrote in it: up to this many is a conversation, as a small group is. */
+const TURN_THREAD_MAX = 20;
 
 export function closeness(db: Database): ClosenessRun {
   const t0 = performance.now();
@@ -149,12 +165,18 @@ export function closeness(db: Database): ClosenessRun {
   // Ties between two people, neither of them you, nor a bot.
   const self = new Set((db.query(`SELECT id FROM identity WHERE id IN ${ME}`).all() as Row[]).map((r) => r.id as string));
   const tieAcc = new Map<string, Map<number, number>>();
-  const tie = (a: string | null, b: string | null, mo: number, w: number) => {
+  const voiceAcc = new Map<string, Map<number, number>>();
+  const counts = new Map<string, number[]>();
+  /** `kind`: 0 reply, 1 reaction, 2 turn (n of them), 3 voice (n minutes). */
+  const tie = (a: string | null, b: string | null, mo: number, w: number, kind: number, n = 1, into = tieAcc) => {
     if (!a || !b || a === b || self.has(a) || self.has(b) || bots.has(a) || bots.has(b)) return;
     const key = a < b ? `${a} ${b}` : `${b} ${a}`;
-    let m = tieAcc.get(key);
-    if (!m) tieAcc.set(key, (m = new Map()));
+    let m = into.get(key);
+    if (!m) into.set(key, (m = new Map()));
     m.set(mo, (m.get(mo) ?? 0) + w);
+    let c = counts.get(key);
+    if (!c) counts.set(key, (c = [0, 0, 0, 0]));
+    c[kind] += n;
   };
   // Row by row, the month worked out here: three times quicker than grouping by month in SQL on a big history.
   const monthOf = (ts: number) => {
@@ -164,13 +186,21 @@ export function closeness(db: Database): ClosenessRun {
   for (const [a, b, ts] of db
     .query(`SELECT m.author_id, r.author_id, m.ts FROM message m JOIN message r ON r.id = m.reply_to_id WHERE m.author_id IS NOT NULL AND r.author_id IS NOT NULL AND m.author_id <> r.author_id`)
     .values() as [string, string, number][])
-    tie(a, b, monthOf(ts), TIE.reply);
+    tie(a, b, monthOf(ts), TIE.reply, 0);
   for (const [a, b, ts] of db
     .query(`SELECT x.identity_id, m.author_id, m.ts FROM reaction x JOIN message m ON m.id = x.message_id WHERE m.author_id IS NOT NULL AND x.identity_id <> m.author_id`)
     .values() as [string, string, number][])
-    tie(a, b, monthOf(ts), TIE.reaction);
-  // Turns: a message right after someone else's, within five minutes, in a group chat small enough to be a conversation.
+    tie(a, b, monthOf(ts), TIE.reaction, 1);
+  // Turns: a message right after someone else's, within five minutes, in a group chat small enough to be a conversation,
+  // or a thread few people wrote in.
   const small = [...size].filter(([, n]) => n <= TURN_GROUP_MAX).map(([id]) => id);
+  for (const r of db
+    .query(
+      `SELECT m.conversation_id AS id FROM message m JOIN conversation c ON c.id = m.conversation_id AND c.shape = 'thread'
+       WHERE m.author_id IS NOT NULL GROUP BY m.conversation_id HAVING count(DISTINCT m.author_id) BETWEEN 2 AND ${TURN_THREAD_MAX}`,
+    )
+    .all() as Row[])
+    small.push(r.id);
   if (small.length) {
     const turns = db.query(
       `SELECT author_id AS a, prev AS b, ${MONTH} AS mo, count(*) AS n FROM (
@@ -178,8 +208,16 @@ export function closeness(db: Database): ClosenessRun {
          WHERE m.conversation_id = ? AND m.author_id IS NOT NULL WINDOW w AS (ORDER BY m.ts)
        ) m WHERE prev IS NOT NULL AND prev <> author_id AND ts - prev_ts < ${TURN_MS} GROUP BY a, b, mo`,
     );
-    for (const id of small) for (const r of turns.all(id) as Row[]) tie(r.a, r.b, r.mo, r.n * TIE.turn);
+    for (const id of small) for (const r of turns.all(id) as Row[]) tie(r.a, r.b, r.mo, r.n * TIE.turn, 2, r.n);
   }
+  // Voice: time in a channel together, between two others, or with you (toward their closeness to you).
+  if (voiceLogged(db))
+    together(voiceStretches(db), (a, b, from, ms, all) => {
+      const mo = monthOf(from);
+      const shared = Math.min(all, VOICE_STRETCH_MAX_MS);
+      if (self.has(a) !== self.has(b)) add(self.has(a) ? b : a, mo, (shared / 60_000) * VOICE_YOU);
+      else tie(a, b, mo, (shared / 60_000) * VOICE_TIE, 3, Math.round(ms / 60_000), voiceAcc);
+    });
   // Friends: a profile's friends in common with you are its person's friends too.
   const friendPairs: string[] = [];
   const identOf = db.query('SELECT id FROM identity WHERE network = ? AND native_id = ?');
@@ -208,13 +246,16 @@ export function closeness(db: Database): ClosenessRun {
   const byIdentity = flatten(acc);
   const byPlace = flatten(places);
   const ties = flatten(tieAcc);
+  const voiceTies = flatten(voiceAcc);
+  const tieCounts: Record<string, number[]> = {};
+  for (const [k, c] of counts) tieCounts[k] = c;
   // Friends in common, as profiles said.
   const mutual: Record<string, number> = {};
   for (const r of db.query(`SELECT target_id, json_array_length(data, '$.mutualFriends') AS n FROM about WHERE json_valid(data) AND json_type(data, '$.mutualFriends') = 'array'`).all() as Row[])
     if (r.n > 0) mutual[r.target_id] = r.n;
   const now = new Date();
   const thisMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
-  return { from: Number.isFinite(from) ? from : thisMonth, to: Math.max(Number.isFinite(to) ? to : thisMonth, thisMonth), byIdentity, byPlace, mutual, ties, friendPairs, ms: Math.round(performance.now() - t0) };
+  return { from: Number.isFinite(from) ? from : thisMonth, to: Math.max(Number.isFinite(to) ? to : thisMonth, thisMonth), byIdentity, byPlace, mutual, ties, voiceTies, tieCounts, friendPairs, ms: Math.round(performance.now() - t0) };
 }
 
 /** Each person's months, summed over their identities: what GET /api/graph/activity answers, keyed as the graph is. */
@@ -240,12 +281,17 @@ export function activityView(store: Store, run: ClosenessRun): P.GraphActivity {
 /** Pairs under this much in all (weight × 10) are left out: a reply or two between strangers in a busy server. */
 const TIE_MIN = 20;
 
-/** Ties keyed as the graph is: each identity as its person, pairs inside one person dropped, small ones left out. */
-function tiesView(store: Store, run: ClosenessRun): P.GraphTies {
+/** Each identity's graph key: its person, else itself. */
+function keysOf(store: Store): Map<string, string> {
   const keyOf = new Map<string, string>();
   for (const r of store.db.query('SELECT id, person_id FROM identity').all() as Row[]) keyOf.set(r.id, r.person_id ?? r.id);
+  return keyOf;
+}
+
+/** Identity pairs' monthly runs summed by the graph's keys: pairs inside one person dropped. */
+function byKeys(keyOf: Map<string, string>, of: Record<string, number[]>): Map<string, Map<number, number>> {
   const pair = new Map<string, Map<number, number>>();
-  for (const [k, flat] of Object.entries(run.ties)) {
+  for (const [k, flat] of Object.entries(of)) {
     const [x, y] = k.split(' ');
     const a = keyOf.get(x) ?? x;
     const b = keyOf.get(y) ?? y;
@@ -255,19 +301,30 @@ function tiesView(store: Store, run: ClosenessRun): P.GraphTies {
     if (!m) pair.set(pk, (m = new Map()));
     for (let i = 0; i < flat.length; i += 2) m.set(flat[i], (m.get(flat[i]) ?? 0) + flat[i + 1]);
   }
+  return pair;
+}
+
+/** Ties keyed as the graph is: each identity as its person, pairs inside one person dropped, small ones left out. */
+function tiesView(store: Store, run: ClosenessRun): P.GraphTies {
+  const keyOf = keysOf(store);
   const ids: string[] = [];
   const at = new Map<string, number>();
   const ix = (id: string) => at.get(id) ?? (at.set(id, ids.length), ids.push(id), ids.length - 1);
-  const links: number[] = [];
-  for (const [pk, m] of pair) {
-    let total = 0;
-    for (const w of m.values()) total += w;
-    if (total < TIE_MIN) continue;
-    const [a, b] = pk.split(' ');
-    const months = [...m.keys()].sort((p, q) => p - q);
-    links.push(ix(a), ix(b), months.length);
-    for (const mo of months) links.push(mo, m.get(mo)!);
-  }
+  const runs = (pair: Map<string, Map<number, number>>) => {
+    const out: number[] = [];
+    for (const [pk, m] of pair) {
+      let total = 0;
+      for (const w of m.values()) total += w;
+      if (total < TIE_MIN) continue;
+      const [a, b] = pk.split(' ');
+      const months = [...m.keys()].sort((p, q) => p - q);
+      out.push(ix(a), ix(b), months.length);
+      for (const mo of months) out.push(mo, m.get(mo)!);
+    }
+    return out;
+  };
+  const links = runs(byKeys(keyOf, run.ties));
+  const voice = runs(byKeys(keyOf, run.voiceTies));
   const friends: number[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < run.friendPairs.length; i += 2) {
@@ -278,7 +335,102 @@ function tiesView(store: Store, run: ClosenessRun): P.GraphTies {
     seen.add(pk);
     friends.push(ix(a), ix(b));
   }
-  return { ids, links, friends };
+  return { ids, links, friends, ...(voice.length ? { voice } : {}) };
+}
+
+/** What a friendship counts for in a tie, and what is added to each side's total, as the graph's ties.ts. */
+const FRIEND = 6;
+const SHRINK = 6;
+const DEFAULT_FADE = 18;
+
+interface PairSum {
+  a: string;
+  b: string;
+  /** Faded talk and voice (voice times its weight), the friendship, and what was counted. */
+  w: number;
+  counts: number[];
+  friends: boolean;
+}
+
+/** Every pair's tie by the graph's keys, summed and faded to now, with each key's total: worked out once a run. */
+const pairSums = new WeakMap<ClosenessRun, { key: string; at: number; pairs: Map<string, PairSum>; total: Map<string, number>; of: Map<string, string[]> }>();
+
+function sums(store: Store, run: ClosenessRun, fade: number, voiceW: number, at: number) {
+  const key = `${fade} ${voiceW} ${at}`;
+  const kept = pairSums.get(run);
+  if (kept && kept.key === key) return kept;
+  const keyOf = keysOf(store);
+  const pairs = new Map<string, PairSum>();
+  const get = (pk: string) => {
+    let p = pairs.get(pk);
+    if (!p) {
+      const [a, b] = pk.split(' ');
+      pairs.set(pk, (p = { a, b, w: 0, counts: [0, 0, 0, 0], friends: false }));
+    }
+    return p;
+  };
+  const faded = (m: Map<number, number>) => {
+    let t = 0;
+    for (const [mo, w] of m) if (mo <= at) t += (w / 10) * Math.exp(-(at - mo) / fade);
+    return t;
+  };
+  for (const [pk, m] of byKeys(keyOf, run.ties)) get(pk).w += faded(m);
+  for (const [pk, m] of byKeys(keyOf, run.voiceTies)) get(pk).w += voiceW * faded(m);
+  for (const [k, c] of Object.entries(run.tieCounts)) {
+    const [x, y] = k.split(' ');
+    const a = keyOf.get(x) ?? x;
+    const b = keyOf.get(y) ?? y;
+    if (a === b) continue;
+    const p = get(a < b ? `${a} ${b}` : `${b} ${a}`);
+    for (let i = 0; i < 4; i++) p.counts[i] += c[i] ?? 0;
+  }
+  for (let i = 0; i < run.friendPairs.length; i += 2) {
+    const a = keyOf.get(run.friendPairs[i]) ?? run.friendPairs[i];
+    const b = keyOf.get(run.friendPairs[i + 1]) ?? run.friendPairs[i + 1];
+    if (a === b) continue;
+    const p = get(a < b ? `${a} ${b}` : `${b} ${a}`);
+    if (!p.friends) p.w += FRIEND;
+    p.friends = true;
+  }
+  const total = new Map<string, number>();
+  const of = new Map<string, string[]>();
+  for (const [pk, p] of pairs) {
+    for (const k of [p.a, p.b]) {
+      total.set(k, (total.get(k) ?? 0) + p.w);
+      let l = of.get(k);
+      if (!l) of.set(k, (l = []));
+      l.push(pk);
+    }
+  }
+  const out = { key, at, pairs, total, of };
+  pairSums.set(run, out);
+  return out;
+}
+
+/**
+ * Who someone is closest to, among people other than you (GET /api/persons/:id/close): each tie's talk and voice,
+ * faded to now as the graph fades talk (your tuning's fade and voice weight), and friendship, divided by how much both
+ * have of it all (association strength, as the graph's ties.ts; the small places they share, which the graph adds, are
+ * left out). Strongest first, up to `limit`, with what each counted.
+ */
+export function closeTo(store: Store, run: ClosenessRun, key: string, tuning: P.GraphTuning | null, limit = 12, now = new Date()): P.CloseView[] {
+  const at = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  const s = sums(store, run, tuning?.fade ?? DEFAULT_FADE, tuning?.voice ?? 1, at);
+  const mine = s.total.get(key) ?? 0;
+  const out: (P.CloseView & { pk: string })[] = [];
+  for (const pk of s.of.get(key) ?? []) {
+    const p = s.pairs.get(pk)!;
+    if (!(p.w > 0)) continue;
+    const other = p.a === key ? p.b : p.a;
+    const strength = p.w / Math.sqrt((mine + SHRINK) * ((s.total.get(other) ?? 0) + SHRINK));
+    out.push({ pk, key: other, identityId: other, strength, replies: p.counts[0], reactions: p.counts[1], turns: p.counts[2], voiceMinutes: p.counts[3], friends: p.friends });
+  }
+  out.sort((x, y) => y.strength - x.strength || x.key.localeCompare(y.key));
+  // A person's key names no identity: the one they are shown by, else any of theirs.
+  const shown = out.slice(0, limit);
+  const one = store.db.query(`SELECT coalesce(p.face_id, (SELECT i.id FROM identity i WHERE i.person_id = p.id ORDER BY i.id LIMIT 1)) AS id FROM person p WHERE p.id = ?`);
+  for (const c of shown) c.identityId = ((one.get(c.key) as Row | null)?.id as string | undefined) ?? c.key;
+  return shown.map(({ pk: _pk, ...c }) => ({ ...c, strength: Math.round(c.strength * 1000) / 1000 }));
 }
 
 const KEEP_MS = 30 * 60_000;
