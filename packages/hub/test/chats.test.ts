@@ -328,6 +328,42 @@ describe('faces: one account shows them, its name and its picture', () => {
     expect(store.personView(store.one('SELECT * FROM person WHERE id = ?', kit)!).nameFrom).toBeUndefined();
   });
 
+  test('your nickname for the person: no account’s, over every name of theirs, and a pick from their names takes its place', async () => {
+    const before = kitRow();
+    const view = () => store.personView(store.one('SELECT * FROM person WHERE id = ?', kit)!);
+    expect((await call('PATCH', `/api/persons/${kit}`, { nickname: 7 })).status).toBe(400);
+    // It replaces a name chosen from an account, and no account gets it.
+    await call('PATCH', `/api/persons/${kit}`, { nameFrom: { identityId: work, field: 'handle' } });
+    expect((await call('PATCH', `/api/persons/${kit}`, { nickname: '  Kit the Tester ' })).status).toBe(200);
+    expect(kitRow()).toMatchObject({ name: 'Kit the Tester', face_id: exe, avatar_url: before.avatar_url });
+    expect(view()).toMatchObject({ name: 'Kit the Tester', nickname: 'Kit the Tester' });
+    expect(view().nameFrom).toBeUndefined();
+    expect(store.one('SELECT COUNT(*) AS n FROM identity WHERE person_id = ? AND nickname IS NOT NULL', kit)).toEqual({ n: 0 });
+    // It stays over their accounts' names as they change, and when the hub chooses their face again.
+    await call('PATCH', `/api/persons/${kit}`, { face: null });
+    expect(kitRow().name).toBe('Kit the Tester');
+    // A name picked from theirs takes its place.
+    await call('PATCH', `/api/persons/${kit}`, { nameFrom: { identityId: work, field: 'handle' } });
+    expect(view()).toMatchObject({ name: 'kit.work', nameFrom: { identityId: work, field: 'handle' } });
+    expect(view().nickname).toBeUndefined();
+    // Set again, then taken away (null or ''): the face's name again.
+    await call('PATCH', `/api/persons/${kit}`, { nickname: 'Kit the Tester' });
+    expect((await call('PATCH', `/api/persons/${kit}`, { nickname: '' })).status).toBe(200);
+    expect(kitRow()).toEqual(before);
+    expect(view().nickname).toBeUndefined();
+  });
+
+  test('a merge keeps the kept one’s nickname for the person, else takes the other’s', () => {
+    store.ingest(main, { t: 'identity', identity: { nativeId: 'k-nick', handle: 'kit.nick', displayName: 'Kit Nick' } });
+    const other = store.ensurePerson(idn('discord', 'k-nick'));
+    store.setPersonNickname(other, 'Kitten');
+    store.mergePersons(kit, other);
+    expect(kitRow().name).toBe('Kitten');
+    store.setPersonNickname(kit, null);
+    store.splitIdentity(idn('discord', 'k-nick'));
+    expect(kitRow().name).toBe('Kit');
+  });
+
   test('splitting off their face: another of theirs shows them, with its own picture', () => {
     store.ingest(main, { t: 'identity', identity: { nativeId: 'k-solo', handle: 'kit.solo', displayName: 'Kit Solo', avatarUrl: 'https://cdn.example/solo.png' } });
     const solo = idn('discord', 'k-solo');

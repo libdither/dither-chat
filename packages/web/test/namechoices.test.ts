@@ -40,7 +40,7 @@ test('names: the picker has the main account’s name once, with the accounts th
   const rs = nameRows(es, person({ faceId: 'kd' }), 'Kit', true);
   expect(read(rs)).toEqual([
     ['Kit', "Main account's", 'discord signal', true],
-    ['Work Kit', 'Your nickname', 'discord', false],
+    ['Work Kit', 'Account nickname', 'discord', false],
     ['Kit (work)', '', 'discord', false],
     ['kit.exe', 'Handle', 'discord', false],
     ['kit.work', 'Handle', 'discord', false],
@@ -95,4 +95,27 @@ test('names: the main account’s come first, whichever account it is', () => {
 test('names: a chosen name the account no longer has ticks the main account’s, which shows meanwhile', () => {
   const rs = nameRows(nameEntries([kd, kw, ks], 'kd'), person({ faceId: 'kd', nameFrom: { identityId: 'kd', field: 'nickname' } }), 'Kit', true);
   expect(rs.filter((r) => r.on)).toEqual([rs[0]]);
+});
+
+test('names: your nickname for the person comes first and ticked; the main account’s row puts theirs back', () => {
+  const rs = nameRows(nameEntries([kd, kw, ks], 'kd'), person({ faceId: 'kd', name: 'Kit the Tester', nickname: 'Kit the Tester', nameFrom: { identityId: 'kw', field: 'display' } }), 'Kit', true);
+  expect(read(rs).slice(0, 2)).toEqual([
+    ['Kit the Tester', 'Your nickname', '', true],
+    ['Kit', "Main account's", 'discord signal', false],
+  ]);
+  expect(rs.filter((r) => r.on).length).toBe(1);
+  expect(rs[0].nick).toBe(true);
+  expect(rs[1].from).toBeNull();
+  // And the line under it shows every name of theirs, the main account's too.
+  expect(alsoNames(nameEntries([kd, kw, ks], 'kd'), 'Kit the Tester').map((e) => e.text)).toEqual(['Kit', 'Work Kit', 'Kit (work)']);
+});
+
+test('names: ones that differ only in case are two names', () => {
+  const lower = ident('kl', 'telegram', 'kit', { handle: 'kitl' });
+  const es = nameEntries([kd, lower], 'kd');
+  expect(es.filter((e) => e.text.toLowerCase() === 'kit').map((e) => [e.text, e.refs.length])).toEqual([
+    ['Kit', 1],
+    ['kit', 1],
+  ]);
+  expect(alsoNames(es, 'Kit').map((e) => e.text)).toEqual(['kit']);
 });

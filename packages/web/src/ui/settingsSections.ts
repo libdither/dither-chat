@@ -10,6 +10,7 @@ export const SECTIONS: [title: string, icon: string, id: string][] = [
   ['Privacy', 'lock', 'set-privacy'],
   ['Message history', 'clock', 'set-history'],
   ['Indexing', 'archive', 'set-indexing'],
+  ['Catching up', 'refresh', 'set-catchup'],
   ['Adversarial features', 'eyeOff', 'set-adversarial'],
   ['Usage', 'activity', 'set-usage'],
   ['Appearance', 'eye', 'set-appearance'],

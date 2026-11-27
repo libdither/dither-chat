@@ -8,8 +8,9 @@
  * breaks, a pause per page that grows with what is on it, a daily cap), on top of the adapter's own pacing (the
  * Discord extractor spaces requests out and backs off on a 429). Progress is in job_task, so a restart carries on.
  *
- * Pages are kept as history_span: stretches known whole. A conversation's walk skips any span it meets, so a job
- * that repeats fetches only what came since, and a channel already walked to its start costs one page.
+ * Pages are read through historypage.ts, as the catch-up and the gap fill read them, and kept as history_span:
+ * stretches known whole, recorded once a page's messages are in. A conversation's walk skips any span it meets, so a
+ * job that repeats fetches only what came since, and a channel already walked to its start costs one page.
  *
  * Threads: Discord's channel lists only the threads someone opened lately, so each channel's are listed first, active
  * then archived (DiscordChatExporter's route for user accounts), and every thread found gets a history task of its own.
@@ -26,11 +27,11 @@ import { type Clock, realClock, sleep, unref } from './clock.ts';
 import type { Store } from './store.ts';
 import { jobFailed } from './errors.ts';
 import { READING, ReadingPace } from './readingpace.ts';
+import { LAND_AGAIN_MS, LAND_RETRIES, NOT_LANDED, type Pager, readPage, skipWhole } from './historypage.ts';
 
 type Row = Record<string, any>;
 
-/** Messages a page: what Discord's client loads when you scroll up. */
-export const PAGE = 50;
+export { PAGE } from './historypage.ts';
 /** The pace's name for this reader (readingpace.ts: one reader per account). */
 const READER = 'jobs';
 /** A wait for the pace is slept in steps this long at most, so a pause, a stop or an account going offline tells soon. */
@@ -55,9 +56,6 @@ const RECENT_PAGE = 1000;
 const WALK_DEPTH = 4;
 /** How many times a channel's thread list waits for Discord to index it before going on without. */
 const THREADS_WAITS = 10;
-/** A page's messages may land just after its answer (remote accounts): looked for this often, this many times. */
-const LAND_MS = 500;
-const LAND_TRIES = 6;
 /**
  * Channels whose own history holds nothing: their posts are threads. Nor a feed, the logged posts or a followed post's
  * replies (docs/feed.md): the hub made those conversations, the network has no history of them.
@@ -67,10 +65,7 @@ const NO_MESSAGES = new Set(['forum', 'media', 'feed', 'posts', 'follow']);
 const NO_THREADS = new Set(['voice', 'stage', 'feed', 'posts', 'follow']);
 const PRIORITY: Record<P.JobPriority, number> = { low: 0, normal: 1, high: 2 };
 
-type Command = (accountId: string, cmd: any, timeoutMs?: number) => Promise<any>;
-
-interface JobsOptions {
-  command: Command;
+interface JobsOptions extends Pager {
   /** The account's adapter is connected. */
   online: (accountId: string) => boolean;
   log?: (msg: string) => void;
@@ -313,8 +308,9 @@ export class Jobs {
         try {
           if (t.kind === 'history') {
             const r = await this.page(t);
-            if (r.deferMs) pause = Math.min(Math.max(r.deferMs, 1000), DEFER_MAX_MS);
-            else pause = this.pace.read(accountId, READER, r.count, r.done);
+            // A page read counts against the pace even when it is to be asked again (its messages had not come).
+            const read = !r.deferMs || r.count ? this.pace.read(accountId, READER, r.count, r.done) : 0;
+            pause = r.deferMs ? Math.max(Math.min(Math.max(r.deferMs, 1000), DEFER_MAX_MS), read) : read;
           } else {
             const done = t.kind === 'threads' ? await this.threads(t) : await this.walk(t);
             pause = this.pace.read(accountId, READER, 0, done);
@@ -351,75 +347,41 @@ export class Jobs {
 
   // ------------------------------------------------------------------ history
 
-  /** The span the ts falls in, from its top (exclusive of from_ts, inclusive of to_ts). */
-  private spanAt(cid: string, ts: number): Row | null {
-    return this.store.one<Row>('SELECT * FROM history_span WHERE conversation_id = ? AND from_ts < ? AND to_ts >= ? ORDER BY from_ts LIMIT 1', cid, ts, ts);
-  }
-
-  /** [from, to] is known whole: merged with any span it touches. */
-  addSpan(cid: string, from: number, to: number) {
-    this.store.db.transaction(() => {
-      const touching = this.store.raw<Row>('SELECT * FROM history_span WHERE conversation_id = ? AND from_ts <= ? AND to_ts >= ?', cid, to, from);
-      let lo = from;
-      let hi = to;
-      for (const s of touching) {
-        lo = Math.min(lo, s.from_ts);
-        hi = Math.max(hi, s.to_ts);
-      }
-      this.store.db.query('DELETE FROM history_span WHERE conversation_id = ? AND from_ts <= ? AND to_ts >= ?').run(cid, to, from);
-      this.store.db.query('INSERT INTO history_span (conversation_id, from_ts, to_ts) VALUES (?, ?, ?)').run(cid, lo, hi);
-    })();
-  }
-
-  /** One page back, skipping what spans say the hub has whole: the messages it held and whether the conversation is done. */
+  /**
+   * One page back, over what is known whole (historypage.ts): the messages it held and whether the conversation is
+   * done. A page whose messages did not come with its answer is asked again a few times, then the task fails.
+   */
   private async page(t: Row): Promise<{ count: number; done: boolean; deferMs?: number }> {
     const cid = t.target_id as string;
     const native = this.store.nativeOf('conversation', cid)?.nativeId;
     if (!native) throw new Error('the conversation is gone');
-    // The adapter's own cursor for where the last page ended (`walk`: {next, at}), good while the cursor is still there.
-    let mark: { next?: string; at?: number } = {};
+    // The adapter's own cursor for where the last page ended (`walk`: {next, at}), good while the cursor is still
+    // there; `tries`: times this page was asked again for not landing.
+    let mark: { next?: string; at?: number; tries?: number } = {};
     try {
       mark = JSON.parse(t.walk || '{}') ?? {};
     } catch {
       /* none */
     }
-    const save = (cursor: number | null, patch: { pages?: number; fetched?: number; done?: boolean; next?: string } = {}) =>
+    const save = (cursor: number | null, patch: { pages?: number; fetched?: number; done?: boolean; walk?: object | null } = {}) =>
       this.store.db
         .query('UPDATE job_task SET cursor = ?, walk = ?, pages = pages + ?, fetched = fetched + ?, done = ?, updated_at = ? WHERE job_id = ? AND kind = ? AND target_id = ?')
-        .run(cursor, patch.next && cursor !== null ? JSON.stringify({ next: patch.next, at: cursor }) : null, patch.pages ?? 0, patch.fetched ?? 0, patch.done ? 1 : 0, this.clock.now(), t.job_id, 'history', cid);
-    let cursor: number = t.cursor ?? this.clock.now() + 1;
+        .run(cursor, patch.walk ? JSON.stringify(patch.walk) : null, patch.pages ?? 0, patch.fetched ?? 0, patch.done ? 1 : 0, this.clock.now(), t.job_id, 'history', cid);
     // Over what is known whole already; a span reaching the start ends the walk.
-    for (let s = this.spanAt(cid, cursor); s; s = this.spanAt(cid, cursor)) {
-      if (s.from_ts === 0) return (save(cursor, { done: true }), { count: 0, done: true });
-      cursor = s.from_ts;
+    const cursor = skipWhole(this.store, cid, t.cursor ?? this.clock.now() + 1);
+    if (cursor === 0) return (save(0, { done: true }), { count: 0, done: true });
+    const p = await readPage(this.store, this.o, { accountId: t.account_id, cid, native, beforeTs: cursor, cursor: mark.next && mark.at === cursor ? mark.next : undefined });
+    if (p.kind === 'defer') return { count: 0, done: false, deferMs: p.deferMs };
+    if (p.kind === 'unlanded') {
+      const tries = mark.at === cursor ? (mark.tries ?? 0) : 0;
+      if (tries >= LAND_RETRIES) throw new Error(NOT_LANDED);
+      save(cursor, { walk: { ...(mark.at === cursor && mark.next ? { next: mark.next } : {}), at: cursor, tries: tries + 1 } });
+      return { count: p.count, done: false, deferMs: LAND_AGAIN_MS };
     }
-    const below = this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ? AND ts < ?');
-    const before = (below.get(cid, cursor) as Row).n as number;
-    const cmd = { t: 'history' as const, conversation: native, beforeTs: cursor, limit: PAGE, pace: 'read' as const, ...(mark.next && mark.at === cursor ? { cursor: mark.next } : {}) };
-    const r = (await this.o.command(t.account_id, cmd, 180_000)) as P.HistoryResult | null;
-    if (r?.deferMs && !r.count) return { count: 0, done: false, deferMs: r.deferMs };
-    const count = r?.count ?? 0;
-    let oldest: number | null = typeof r?.oldest === 'number' ? r.oldest : null;
-    if (count && oldest === null) {
-      // An adapter that does not say where its page ended: the page is the `count` newest messages below the cursor,
-      // which the hub now holds (and maybe kept deleted ones among them, which only makes this a little late).
-      const nth = () => (this.store.one<Row>('SELECT ts FROM message WHERE conversation_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1 OFFSET ?', cid, cursor, count - 1)?.ts as number | undefined) ?? null;
-      oldest = nth();
-      for (let i = 0; i < LAND_TRIES && oldest === null; i++) {
-        await sleep(this.clock, LAND_MS);
-        oldest = nth();
-      }
-    }
-    const fetched = Math.max(0, ((below.get(cid, cursor) as Row).n as number) - before);
-    if (!r || r.done || !count || oldest === null || oldest >= cursor) {
-      // The start of the conversation: everything below the cursor is whole.
-      this.addSpan(cid, 0, cursor);
-      save(cursor, { pages: 1, fetched, done: true });
-      return { count, done: true };
-    }
-    this.addSpan(cid, oldest, cursor);
-    save(oldest, { pages: 1, fetched, next: typeof r.next === 'string' ? r.next : undefined });
-    return { count, done: false };
+    if (p.kind === 'failed') throw new Error(p.error);
+    if (p.end) return (save(cursor, { pages: 1, fetched: p.fresh.length, done: true }), { count: p.count, done: true });
+    save(p.oldest, { pages: 1, fetched: p.fresh.length, walk: p.next ? { next: p.next, at: p.oldest } : null });
+    return { count: p.count, done: false };
   }
 
   // ------------------------------------------------------------------ members

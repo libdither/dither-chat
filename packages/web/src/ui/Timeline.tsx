@@ -200,6 +200,8 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
   // One route: the pencil by the name is for the nickname of their account in it. Several: the name is made of
   // their accounts' names, each with its own nickname on their profile, so it has none.
   const peer = isDirect && !chat ? db.identities.get(peerIdentity(c) ?? '') : null;
+  // The pencil by its name gives the person a nickname, no account's (docs/chats.md, Names).
+  const peerPerson = peer && c.peerPersonId ? db.persons.get(c.peerPersonId) : undefined;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   const also = all ? chat!.directs.filter((d) => d.id !== c.id) : undefined;
   const profile = person && isDirect ? person.id : undefined;
@@ -251,7 +253,7 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
               {chat.person.name}
             </button>
           ) : nicknamable(peer) && !peer.isBot ? (
-            <NicknamedName i={peer} label={convTitle(c)} title={peer.nickname ? `${whoTitle} (your nickname for ${ownName(peer)})` : whoTitle} onOpen={openWho} />
+            <NicknamedName i={peer} person={peerPerson} label={convTitle(c)} title={(peerPerson?.nickname ?? peer.nickname) ? `${whoTitle} (your nickname for ${ownName(peer)})` : whoTitle} onOpen={openWho} />
           ) : (
             <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
               {convTitle(c)}

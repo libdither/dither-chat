@@ -761,11 +761,21 @@ const shutdown = async () => {
   // Adapter events still queued or held (a backlog after a gap, a locked database): the manager handed them over and
   // keeps no copy, so they are applied now, and what does not make it by stopBy is carried over to the next start.
   // From here to exit nothing awaits, so no event can come in between.
-  sup.settle(stopBy);
+  const settled = sup.settle(stopBy);
+  // What the catch-up must know at the next start: when the hub last heard each account, and events it lost now.
+  let caughtUp = true;
+  try {
+    server.catchup.stopping(settled.lost);
+  } catch (e) {
+    console.error('catch-up: saving at the stop failed', e);
+    caughtUp = false;
+  }
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   // Presence held for coalescing goes too (presence.ts).
   server.flush(true);
-  store.journal.close();
+  // Closing the journal marks the stop clean. Events lost at it that the catch-up could not note are reported only
+  // after an unclean one, from the marker its ticks saved while they waited: then it stays open.
+  if (caughtUp || !settled.lost) store.journal.close();
   // Commits reach the disk at checkpoints (synchronous = NORMAL, store.ts): a clean stop leaves none behind.
   try {
     store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');

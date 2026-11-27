@@ -25,6 +25,7 @@ import { cleanFileName, Uploads } from './uploads.ts';
 import { ImportRunner } from './imports/engine.ts';
 import { GapFill } from './imports/gapfill.ts';
 import { Jobs } from './jobs.ts';
+import { CatchUp } from './catchup.ts';
 import { type PaceConfig, READING, ReadingPace } from './readingpace.ts';
 import { realClock } from './clock.ts';
 import { NetSearch } from './netsearch.ts';
@@ -237,7 +238,7 @@ interface ServerOpts {
 /** A category's threshold from a request: a probability, or null for the provider's default. */
 const threshold = (t: unknown): number | null => (typeof t === 'number' && t > 0 && t <= 1 ? t : null);
 /** A person has no nickname of their own since 2026-11-11: each account of theirs has (docs/chats.md, Names). */
-const NICKNAME_MOVED = 'A nickname belongs to one account of theirs now, not to the person: PATCH /api/identities/:id with { nickname }';
+const NICKNAME_MOVED = 'A nickname is { nickname }: PATCH /api/persons/:id for the person, /api/identities/:id for one account of theirs';
 const v4 = (ip: string) => ip.replace(/^::ffff:/, '');
 function isLoopback(ip: string) {
   return ip === '::1' || v4(ip).startsWith('127.');
@@ -356,6 +357,8 @@ export class HubServer {
   readonly gapfill: GapFill;
   /** Index jobs: servers, folders and conversations fetched whole (jobs.ts, docs/indexing.md). */
   readonly jobs: Jobs;
+  /** Missing messages found and fetched (catchup.ts, docs/catch-up.md). */
+  readonly catchup: CatchUp;
   /** The networks' own search (netsearch.ts). */
   readonly netsearch: NetSearch;
   private archiver?: MediaArchiver;
@@ -443,8 +446,14 @@ export class HubServer {
     this.importer = new ImportRunner(store, this.imports, opts.dataDir, (msg) => console.warn(msg), () => this.resync());
     // One pace for both, so the gap fill and a job never read through one account at once.
     const pace = new ReadingPace(store, opts.pace ?? READING, realClock);
-    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace);
-    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
+    // Every history reader waits until an account's page is applied before it counts or records it (historypage.ts).
+    const settled = (acc: string) => this.sup.settled(acc);
+    this.gapfill = new GapFill(store, (acc, cmd) => this.sup.command(acc, cmd, 180_000), (msg) => console.warn(msg), realClock, pace, settled);
+    this.jobs = new Jobs(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), settled, online: (a) => sup.online(a), log: (msg) => console.warn(msg), pace });
+    // The same pace again: catching up reads through the account the jobs and the gap fill read through.
+    this.catchup = new CatchUp(store, { command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 180_000), settled, online: (a) => sup.online(a), backlog: () => sup.backlog, log: (msg) => console.warn(msg), pace });
+    // Told what comes, waits and is lost from here on (supervisor.ts).
+    sup.watch = this.catchup;
     this.netsearch = new NetSearch(store, {
       command: (acc, cmd, t) => this.sup.command(acc, cmd, t ?? 60_000),
       online: (a) => sup.online(a),
@@ -663,6 +672,7 @@ export class HubServer {
     this.imports.resume();
     this.gapfill.resume();
     this.jobs.start();
+    this.catchup.start({ unclean: this.store.journal.started === 'unclean' });
     void this.archiver?.start();
     this.mediaInfo.start();
     this.packer?.start();
@@ -684,6 +694,7 @@ export class HubServer {
     this.importer.stop();
     this.gapfill.stopAll();
     this.jobs.stop();
+    this.catchup.stop();
     this.archiver?.stop();
     this.mediaInfo.stop();
     this.packer?.stop();
@@ -2144,6 +2155,25 @@ export class HubServer {
       else if (method === 'PATCH') v = this.jobs.update(id, await body<{ priority?: P.JobPriority; repeatHours?: number | null }>());
       return v ? ok(v) : bad('no such job', 404);
     }
+    // Catching up (catchup.ts, docs/catch-up.md).
+    if (path === '/api/catch-up' && method === 'GET') return ok({ holes: this.catchup.list() } satisfies P.CatchUpView);
+    if (path === '/api/catch-up/report' && method === 'POST') {
+      try {
+        return ok(this.catchup.reportFrom(await body<P.CatchUpReport>()));
+      } catch (e: any) {
+        return bad(String(e?.message ?? e));
+      }
+    }
+    if ((m = path.match(/^\/api\/catch-up\/([\w-]+)(?:\/(stop|all))?$/))) {
+      const id = m[1];
+      if (method === 'DELETE' && !m[2]) return this.catchup.remove(id) ? ok({ ok: true }) : bad('no such hole', 404);
+      let v: P.CatchUpHoleView | null = null;
+      if (method === 'GET' && !m[2]) v = this.catchup.get(id);
+      else if (method === 'POST' && m[2] === 'stop') v = this.catchup.stopHole(id);
+      else if (method === 'POST' && m[2] === 'all') v = this.catchup.allChats(id);
+      else return bad('not here', 405);
+      return v ? ok(v) : bad('no such hole', 404);
+    }
     // History sources (docs/import.md): uploaded in pieces at their offset, so a dropped connection resumes.
     if ((m = path.match(/^\/api\/history-gaps\/([\w-]+)(\/stop)?$/))) {
       if (!s.account(m[1])) return bad('no such account', 404);
@@ -2413,8 +2443,10 @@ export class HubServer {
       return ok();
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)$/)) && method === 'PATCH') {
-      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown; nameFrom?: unknown }>();
+      const b = await body<{ name?: unknown; note?: unknown; face?: unknown; picture?: unknown; nameFrom?: unknown; nickname?: unknown }>();
       if (b.name !== undefined) return bad(NICKNAME_MOVED);
+      // `nickname`: your name for them, no account's (docs/chats.md, Names); null or '' takes it away.
+      if (b.nickname !== undefined && b.nickname !== null && typeof b.nickname !== 'string') return bad('Say nickname: a name, or null to take it away');
       // Shown by one of their accounts (its name and picture), or null to let the hub choose (docs/chats.md, Names);
       // `picture`: another of theirs whose picture shows instead, or null for the face's (docs/profile.md).
       const idOrNull = (v: unknown) => v === undefined || v === null || typeof v === 'string';
@@ -2423,7 +2455,7 @@ export class HubServer {
       const nf = b.nameFrom as P.NameFrom | null | undefined;
       if (nf !== undefined && nf !== null && !(typeof nf === 'object' && typeof nf.identityId === 'string' && ['nickname', 'display', 'handle'].includes(nf.field as string)))
         return bad('nameFrom is { identityId, field: nickname | display | handle } or null');
-      if (b.face !== undefined || b.picture !== undefined || nf !== undefined) {
+      if (b.face !== undefined || b.picture !== undefined || nf !== undefined || b.nickname !== undefined) {
         if (!s.one('SELECT 1 FROM person WHERE id = ? AND is_self = 0', m[1])) return bad('no such person', 404);
         // All checked before any is saved, so a refused request changes nothing.
         for (const id of [b.face, b.picture, nf?.identityId]) if (typeof id === 'string' && !s.one('SELECT 1 FROM identity WHERE id = ? AND person_id = ?', id, m[1])) return bad('that account is not theirs');
@@ -2434,6 +2466,7 @@ export class HubServer {
         if (b.face !== undefined) s.setPersonFace(m[1], b.face as string | null);
         if (b.picture !== undefined) s.setPersonPicture(m[1], b.picture as string | null);
         if (nf !== undefined) s.setPersonName(m[1], nf);
+        if (b.nickname !== undefined) s.setPersonNickname(m[1], b.nickname as string | null);
       }
       s.updatePerson(m[1], { ...(typeof b.note === 'string' ? { note: b.note } : {}) });
       // Kept on their networks too, where an account keeps notes (capability 'contactNotes').
