@@ -115,9 +115,18 @@ function seed(f: FakeMailBackend) {
   f.put(ACC, { mailboxId: 'Sent', messageId: '<gb@x>', inReplyTo: '<ga@x>', references: ['<ga@x>'], from: [ME], to: [ALICE], cc: [JO], subject: 'Re: Movers', receivedAt: NOW - 9 * H });
   // Old group mail: not awaiting, a link.
   f.put(ACC, { messageId: '<old@x>', from: [ALICE], to: [ME], cc: [JO], subject: 'Old plans', receivedAt: NOW - 30 * DAY });
-  f.put(ACC, { messageId: '<t1@x>', from: [THEO], to: [ME], subject: 'Hello from Theo', receivedAt: T0 + 50 * H });
+  // Theo writes with formatting (a bold word, a link with its own words) above a quote; the newsletter is a designed page.
+  f.put(ACC, {
+    messageId: '<t1@x>',
+    from: [THEO],
+    to: [ME],
+    subject: 'Hello from Theo',
+    receivedAt: T0 + 50 * H,
+    text: 'Hello you, see the plan: https://plans.example/a\n\nOn Mon, Robin wrote:\n> old words',
+    html: '<p>Hello <b>you</b>, see <a href="https://plans.example/a">the plan</a>.</p><div class="gmail_quote"><div class="gmail_attr">On Mon, Robin wrote:</div><blockquote class="gmail_quote">old words</blockquote></div>',
+  });
   f.put(ACC, { mailboxId: 'Sent', messageId: '<t2@x>', inReplyTo: '<t1@x>', references: ['<t1@x>'], from: [ME], to: [THEO], subject: 'Re: Hello from Theo', receivedAt: T0 + 51 * H });
-  f.put(ACC, { messageId: '<n1@x>', from: [NEWS], to: [ME], subject: 'Issue 600', receivedAt: T0 + 60 * H, bulk: { listId: '<rust.example>', unsubscribe: null, precedence: 'list', autoSubmitted: null } });
+  f.put(ACC, { messageId: '<n1@x>', from: [NEWS], to: [ME], subject: 'Issue 600', receivedAt: T0 + 60 * H, text: 'Issue 600', html: '<table width="600"><tr><td><h1>Issue 600</h1></td></tr></table>', bulk: { listId: '<rust.example>', unsubscribe: null, precedence: 'list', autoSubmitted: null } });
 }
 
 beforeAll(async () => {
@@ -243,6 +252,27 @@ describe('a person’s chat', () => {
     // Every author and address is in the page.
     const have = new Set(r.json.identities.map((i) => i.id));
     for (const m of r.json.messages.filter((m) => m.mail)) for (const a of [m.mail!.from, ...m.mail!.to, ...m.mail!.cc]) expect(have.has(a.identityId!)).toBe(true);
+  });
+
+  test("a formatted mail's words carry their tree (blocks) to the quote; the body stays its text; a designed one has none", async () => {
+    // The body is here once asked for (a chat draws a mail's words from the body it holds); its view has the tree too.
+    const b = await call<P.MailBodyView>('GET', `/api/mail/messages/${messageOf('<t1@x>')}/body`);
+    await call('GET', `/api/mail/messages/${messageOf('<n1@x>')}/body`);
+    const theo = personOf(THEO.email)!;
+    const r = await call<P.MessagePage>('GET', `/api/chats/${encodeURIComponent(`person:${theo}`)}/messages?limit=200`);
+    const t1 = r.json.messages.find((m) => m.id === messageOf('<t1@x>'))!;
+    expect(t1.mail!.bodyState).toBe('cached');
+    expect(t1.body).toBe('Hello you, see the plan: https://plans.example/a');
+    expect(t1.mail!.blocks).toEqual([{ t: 'p', c: ['Hello ', { t: 'b', c: ['you'] }, ', see ', { t: 'a', href: 'https://plans.example/a', c: ['the plan'] }, '.'] }]);
+    expect(t1.mail).toMatchObject({ quoted: true, rich: true });
+    // Your plain answer has no tree: its text says it all.
+    const t2 = r.json.messages.find((m) => m.id === messageOf('<t2@x>'))!;
+    expect(t2.mail!.blocks).toBeUndefined();
+    // The newsletter is a layout table: no tree, and rich, so the chat shows it as sent.
+    const n = await call<P.MessagePage>('GET', `/api/mail/chats/${threadOf('<n1@x>')}/messages?limit=10`);
+    expect(n.json.messages[0].mail).toMatchObject({ rich: true });
+    expect(n.json.messages[0].mail!.blocks).toBeUndefined();
+    expect(b.json.blocks).toEqual(t1.mail!.blocks);
   });
 
   test('one mail to two of your accounts: shown once, both accounts in seenVia', async () => {

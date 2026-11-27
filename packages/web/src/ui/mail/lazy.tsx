@@ -54,8 +54,8 @@ export const mailMessageExtras = (msg: P.MessageView): MenuEntry[] => screens?.m
 /** A thread's Archive and Star from a chat (ChatMail.tsx threadFiling): none until mail's chunk is here. */
 export const mailThreadFiling = (threadId: string, long: boolean): MenuEntry[] => screens?.threadFiling(threadId, long) ?? [];
 
-/** A mail message in a chat, opened up (ChatMail.tsx): its quote, the mail as sent, or its files. */
-export function ChatMailBodyLazy(p: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files'; words?: (text: string, quoted: boolean) => preact.JSX.Element }) {
+/** A mail message in a chat, opened up (ChatMail.tsx): its quote, the mail as sent (`cap`: framed in place, its height capped), or its files. */
+export function ChatMailBodyLazy(p: { m: P.MessageView; show: 'words' | 'quote' | 'sent' | 'files'; words?: (text: string, quoted: boolean, blocks?: P.MailBlock[]) => preact.JSX.Element; cap?: boolean }) {
   const { m, failed } = useScreens();
   if (m) return <m.ChatMailBody {...p} />;
   return failed || p.show === 'files' ? null : <Loading inline label="Loading the mail…" />;
