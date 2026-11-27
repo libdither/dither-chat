@@ -377,6 +377,8 @@ than 12 hours (a leave missed while the account was away). The card says their m
 and since the log first has them; **Usually in voice with**: who was in the same channel at the same time for 5 minutes
 or more at once, most minutes first, over the past 90 days (up to 8); and their latest 20 stretches, each with its
 channel, its server, how long, and "in it now". A channel opens its page. Hidden when they have no stretch.
+While they are in voice (or a call) now, their rows on People and in the inbox carry a small speaker saying where
+(docs/calls.md "In a call now").
 
 ### People in common
 

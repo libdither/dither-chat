@@ -369,6 +369,23 @@ own picture when nobody else is in it), with the call's phase as a dot in the co
   call and moving while anyone talks. A conversation with a call going on that you aren't in (the hub's calls,
   `callIn`) gets them in grey.
 
+### In a call now
+
+Who is in a call or a voice channel right now shows on their rows: a small green speaker (the `voice` icon,
+`VoiceNowMark` in ui/CallBar.tsx) beside a person's name on People, on their DM or chat row in the inbox, and on a
+voice or stage channel's own row in the inbox when someone is in it. Its tooltip says where: "In voice in #hangout ·
+Dither", "In a call with you" (a one-to-one call going on), "In a call in Weekend plans" (a group's), or on a
+channel's row "In voice: Lev, Mara"; one line a place when someone is in two. A place the row's own call mark already
+shows (the call in that DM) is left out, as is the call you're in on its channel's row. You are never marked.
+
+It is one lookup, `voiceNow` (voicenow.ts, built by voiceplaces.ts), from the voice channels' people (`voice`,
+ringing.ts), the hub's calls that are going on and not ringing (`liveCalls`) and the call this device is in
+(`activeCall`), with names and people from `db` behind `metaRev`. It is made as text first, so a mute, a camera or a
+speaking light changes nothing and no row hears of it; a join or a leave redraws only the icons. The voice channels'
+people come only with the adversarial `voice` setting on ("Voice channels" above): with it off, the icon shows for
+calls alone. The demo has Lev, Mara and Alice in the hangout now; `scripts/shots-in-call.ts` screenshots Alice's
+rows and checks that the icon follows a `voice` frame without a reload.
+
 ## In a call: what each of Discord's call features takes here
 
 Plan and state for the rows of docs/research/discord-gaps.md "Voice, video, calls, streaming" beyond ringing and
