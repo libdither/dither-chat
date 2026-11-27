@@ -278,10 +278,11 @@ What it adds to a conversation's page:
   more of your accounts sit has the same line for the one choice it has: "To #general · via main" (`SendAsLead`), the
   account a token that switches or opens a menu; until 2026-11-16 that was a chip at the box's start. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
   edge once typed in; then, on a computer, it was a row of its own over the box, under the typing line's.
-- **The header's buttons** are a conversation's, bare icons with their names in their titles: call, search,
-  notifications (a bell; a dot and the rule's own icon where a rule other than Automatic holds), details, and for a
-  group or channel its about page. A DM's profile is its picture and name and the details panel's Profile. A phone
-  keeps call and search and puts the rest under ⋯: profile or about, details, and the notification rules. Until
+- **The header's buttons** are a conversation's, bare icons with their names in their titles, in the order every
+  place's head has them ([places.md](places.md#the-head)): call, for a group or channel its about page, search,
+  notifications (a bell; a dot and the rule's own icon where a rule other than Automatic holds), details. A DM's
+  profile is its picture and name and the details panel's Profile. A phone keeps call and search and puts the rest
+  under ⋯: profile or about, details, and the notification rules. Until
   2026-11-20 they were outlined buttons, notifications and call with their names, and a DM had a profile button. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with
   them), and a notification rule is set on each. With one route picked, search is `in:<conversation>`. A call goes

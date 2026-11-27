@@ -565,6 +565,20 @@
   "a mail list / mail-row.row": [
    "M$1"
   ],
+  "a mail thread / Profile of Sam Rivera": [
+   "M$1"
+  ],
+  "a mail thread / Profile of Zyan": [
+   "M$1"
+  ],
+  "a mail thread / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a mail thread / hub: a visit counted": [
+   "M$1"
+  ],
   "a mail thread that branches / Profile of Jo Park": [
    "M$1"
   ],
@@ -580,6 +594,23 @@
    "Owed"
   ],
   "a mail thread that branches / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail thread, details open / Profile of Sam Rivera": [
+   "M$1"
+  ],
+  "a mail thread, details open / Profile of Zyan": [
+   "M$1"
+  ],
+  "a mail thread, details open / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a mail thread, details open / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail thread, details open / mail details: person": [
    "M$1"
   ],
   "a person / # people": [

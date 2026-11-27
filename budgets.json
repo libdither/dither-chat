@@ -292,6 +292,8 @@
     "css/screens.css.bytes": { "measured": 613, "budget": 626, "reason": "A designed mail shown as sent in place in a chat (docs/mail.md \"A mail as a chat message\"): its height capped at about 60% of the pane, with a fade and Show all; Mail's chunk's own stylesheet" },
     "css/screens.css.gzip": { "measured": 326, "budget": 333, "reason": "A designed mail shown as sent in place in a chat (docs/mail.md \"A mail as a chat message\"): its height capped at about 60% of the pane, with a fade and Show all; Mail's chunk's own stylesheet" },
     "js/src/ui/ZoneMap.tsx.bytes": { "measured": 30192, "budget": 30796, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
-    "js/src/ui/ZoneMap.tsx.gzip": { "measured": 10885, "budget": 11103, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" }
+    "js/src/ui/ZoneMap.tsx.gzip": { "measured": 10885, "budget": 11103, "reason": "Set time zone on someone's card opens a world map to pick their zone on (docs/profile.md \"Their time\"): a globe button naming the zone, and the map, its cities, night shading and search in a chunk of its own (ZoneMap), loaded only when it opens" },
+    "js/src/ui/MailDetails.tsx.bytes": { "measured": 3433, "budget": 3500, "reason": "A mail thread's details panel (ui/MailDetails.tsx, docs/places.md \"The head\"), a chunk of its own" },
+    "js/src/ui/MailDetails.tsx.gzip": { "measured": 1463, "budget": 1500, "reason": "A mail thread's details panel (ui/MailDetails.tsx, docs/places.md \"The head\"), a chunk of its own" }
   }
 }

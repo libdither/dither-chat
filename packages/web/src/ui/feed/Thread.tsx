@@ -26,14 +26,15 @@ import { Fragment, h } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
+import { api, db, loadTimeline, openProfile, rev, route, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
 import type { PlaceTab } from '../bits.tsx';
 import { PostActions, type AnswerCtx } from './Actions.tsx';
 import { ChatReplies, Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
 import { PostComposer } from './Composer.tsx';
-import { FollowButton } from './Follow.tsx';
+import { FollowButton, followOf, setFollow } from './Follow.tsx';
+import type { MenuEntry } from '../ContextMenu.tsx';
 import { loadSources, sources } from './feedstate.ts';
 import { Counts, Folded, Pics, Place, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { flip, snap } from './Seg.tsx';
@@ -613,29 +614,7 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   const ctx = { kit, network, op: author, folded, fold, loading, done, failed, ready, load: openUnder, auto, root: scroller, below, fresh, chat: show === 'chat' };
   return (
     <section class="pane feed-pane thread-pane" aria-label="Post" onClickCapture={onLink} ref={pane}>
-      <header class="conv-head">
-        {back && (
-          <button class={`icon-btn back ${parent ? 'to-thread' : ''}`} data-track="pager: back button" onClick={back} aria-label={parent ? `Back to ${parent.label}` : 'Back'}>
-            <kit.Icon name="back" />
-          </button>
-        )}
-        <span class="conv-head-icon">
-          <kit.Icon name="quote" size={18} />
-        </span>
-        <div class="conv-head-text">
-          <h2>{!shownFocal ? 'Post' : kit.isSelf(author) ? 'Your post' : `${kit.name(author)}'s post`}</h2>
-          <div class="conv-head-sub">
-            <span class="muted-label">{t?.stored ? `As the hub logged it · ${net}` : `On ${net}`}</span>
-          </div>
-        </div>
-        <kit.HeadOrb />
-        <FollowButton t={t} kit={kit} />
-        {shownFocal && (shownFocal.repostOf ?? shownFocal).url && (
-          <a class="icon-btn" href={(shownFocal.repostOf ?? shownFocal).url} target="_blank" rel="noreferrer" title={`Open on ${net}`} aria-label={`Open on ${net}`}>
-            <kit.Icon name="external" size={16} />
-          </a>
-        )}
-      </header>
+      <PostHead t={t} kit={kit} network={network} author={author} shown={!!shownFocal} url={(shownFocal?.repostOf ?? shownFocal)?.url ?? null} back={back} parent={parent?.label ?? null} />
       {parent && (
         <button class="thread-crumb" onClick={back} data-track="thread: back to the thread it came from">
           <kit.Icon name="back" size={14} /> Back to <b>{parent.label}</b>
@@ -714,6 +693,43 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
         />
       )}
     </section>
+  );
+}
+
+/**
+ * A post's head (PlaceHead.tsx, through `kit`): the author's picture with the network's badge, whose post and on which
+ * network, Follow replies, the bell of a followed post's own conversation, Details, and ⋯ with the post on its network,
+ * its link and following it. Reads `rev` itself: a follow's conversation comes and its rule changes while the thread
+ * stays as it is.
+ */
+function PostHead({ t, kit, network, author, shown, url, back, parent }: { t: P.PostThreadView | null; kit: Kit; network: P.Network; author: string | null; shown: boolean; url: string | null; back?: () => void; parent: string | null }) {
+  rev.value;
+  const net = NETWORK_META[network].name;
+  const follow = followOf(t);
+  const followed = follow ? (db.conversations.get(follow.conversationId) ?? null) : null;
+  const more = (): MenuEntry[] => [
+    ...(url ? [{ label: `Open on ${net}`, icon: 'external', track: 'post: open on the network', run: () => void window.open(url, '_blank', 'noopener') }] : []),
+    ...(url ? [{ label: 'Copy link to the post', icon: 'link', track: 'post: copy link', run: () => void kit.copy(url, 'Link copied') }] : []),
+    ...(t?.focal && follow ? [follow.stopped === null ? { label: 'Stop following', icon: 'bellOff', track: 'post: stop following', run: () => void setFollow(t, true, kit) } : { label: 'Follow again', icon: 'bell', track: 'post: follow again', run: () => void setFollow(t, false, kit) }] : []),
+  ];
+  return (
+    <kit.PlaceHead
+      class="post-head"
+      back={back}
+      backLabel={parent ? `Back to ${parent}` : 'Back'}
+      backClass={parent ? 'to-thread' : ''}
+      tile={author ? <kit.Avatar id={author} name={kit.name(author)} url={kit.avatarUrl(author)} size={34} network={network} /> : <kit.Icon name="quote" size={18} />}
+      onTile={author ? () => openProfile(author) : undefined}
+      tileTitle={author ? `${kit.name(author)}'s profile` : undefined}
+      name={!shown ? 'Post' : kit.isSelf(author) ? 'Your post' : `${kit.name(author)}'s post`}
+      sub={<span class="muted-label">{t?.stored ? `As the hub logged it · ${net}` : `On ${net}`}</span>}
+      extras={<FollowButton t={t} kit={kit} />}
+      bell={followed ? { c: followed } : undefined}
+      // The Feed page has no panel beside its list and thread (App.tsx).
+      details={route.value.view !== 'feed'}
+      more={more}
+      menu={() => ({ items: more(), label: 'Post', track: 'post head menu' })}
+    />
   );
 }
 
