@@ -3689,7 +3689,16 @@ export class Store {
          ORDER BY COALESCE(m.last, 0) DESC LIMIT 100`,
       )
       .all(...ids, ...ids) as Row[];
-    const recent = this.messageViews(this.db.query(`SELECT * FROM message WHERE author_id IN (${ph}) AND deleted = 0 ORDER BY ts DESC LIMIT 15`).all(...ids) as Row[]);
+    // Their newest in direct chats and their newest anywhere else, 15 each: someone you DM a lot would otherwise
+    // never show what they said in groups and servers.
+    const newest = (direct: boolean) =>
+      this.db
+        .query(
+          `SELECT m.* FROM message m JOIN conversation c ON c.id = m.conversation_id
+           WHERE m.author_id IN (${ph}) AND m.deleted = 0 AND c.shape ${direct ? '=' : '!='} 'direct' ORDER BY m.ts DESC LIMIT 15`,
+        )
+        .all(...ids) as Row[];
+    const recent = this.messageViews([...newest(true), ...newest(false)].sort((a, b) => b.ts - a.ts));
     const span = this.db.query(`SELECT COUNT(*) AS n, MIN(ts) AS first FROM message WHERE author_id IN (${ph}) AND deleted = 0`).get(...ids) as Row;
     return {
       personId: person?.id ?? ((this.db.query('SELECT person_id FROM identity WHERE id = ?').get(ids[0] ?? '') as Row | null)?.person_id ?? null),

@@ -333,7 +333,8 @@ someone you know notifies once; and a profile has the buttons for how you stand 
 - **Profile buttons.** From what each network says about how you stand with them (`relationship`): a stranger gets
   **Add friend** (Discord), **Follow** (X, Instagram) or **Add contact** (Telegram), through `POST /api/add` with a
   reading made from their identity, as the account that asked about them where it can; someone who asked you gets
-  **Accept** and **Decline** for that open request. A request you sent and someone you follow are not buttons: the
+  **Accept** and **Decline** for that open request. The same buttons sit on a line under that account in the profile's
+  Accounts card ("Not friends on Discord", "Wants to be friends on Discord"). A request you sent and someone you follow are not buttons: the
   hero's tags and Connections say them (docs/profile.md "Connections"; before 2026-11-13 they were disabled buttons,
   **Request sent** and **Following**). Nothing shows where no connected account has the capability (`connect`,
   `requests`) or the network has no such way: no X adapter has `connect` today, so X has no Follow (the demo X account

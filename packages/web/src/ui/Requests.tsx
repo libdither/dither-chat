@@ -331,13 +331,28 @@ export function RequestBar({ r }: { r: P.RequestView }) {
 }
 
 const CONNECT_ICON = { friend: 'userPlus', follow: 'plus', contact: 'userPlus' } as const;
+/** How you stand with a stranger on one network, said on the line under their account that has the button. */
+const NOT_YET = { friend: (net: string) => `Not friends on ${net}`, follow: (net: string) => `You don't follow them on ${net}`, contact: (net: string) => `Not in your ${net} contacts` } as const;
+
+/** One button ConnectActions offers, drawn in the hero or on an account's line. */
+interface ConnectButton {
+  key: string;
+  icon: string;
+  label: string;
+  kind: string;
+  primary?: boolean;
+  title: string;
+  onClick: () => void;
+}
 
 /**
  * A profile's buttons for how you stand with them on each network (requests.ts `relation`): Add friend, Follow or Add
- * contact for a stranger; Accept and Decline for someone who asked; "Request sent" and "Following" to say so.
- * Nothing where no account can. `onChanged`: the network's new word on how you stand, for the page to show.
+ * contact for a stranger; Accept and Decline for someone who asked. Nothing where no account can. `onChanged`: the
+ * network's new word on how you stand, for the page to show. `row`: as a line under one account of theirs in the
+ * Accounts card ("Not friends on Discord", Add friend), where Remove friend and the like sit once there is something
+ * to end, instead of the hero's buttons.
  */
-export function ConnectActions({ identities, abouts, onChanged }: { identities: P.IdentityView[]; abouts: Record<string, P.PersonAboutView | undefined>; onChanged: (about: P.PersonAboutView) => void }) {
+export function ConnectActions({ identities, abouts, onChanged, row }: { identities: P.IdentityView[]; abouts: Record<string, P.PersonAboutView | undefined>; onChanged: (about: P.PersonAboutView) => void; row?: boolean }) {
   rev.value; // requests (`db.requests`) move only `rev`, and accounts
   const [busy, setBusy] = useState<string | null>(null);
   const [check, setCheck] = useState<{ network: P.Network; res: P.AddResultView } | null>(null);
@@ -346,7 +361,8 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
   const [live, setLive] = useState(false);
   const accounts = [...db.accounts.values()];
   const several = new Set(identities.map((i) => i.network)).size > 1;
-  const on = (n: P.Network) => (several ? ` on ${netName(n)}` : '');
+  // The hero names the network when there are several; a line under an account says it already.
+  const on = (n: P.Network) => (several && !row ? ` on ${netName(n)}` : '');
   const done = (about: P.PersonAboutView, res: P.AddResultView, ask?: Omit<NonNullable<typeof confirming>, 'about' | 'words'>) => {
     if (res.check) return setCheck({ network: about.network, res });
     if (res.confirm && ask) return setConfirming({ ...ask, about, words: res.confirm });
@@ -363,39 +379,40 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
       setBusy(null);
     }
   };
-  const buttons = identities.flatMap((i) => {
+  // Per account of theirs: what you stand at in words (for a line), which of yours would do it, and its buttons.
+  const offers = identities.flatMap((i) => {
     const about = abouts[i.id];
     const rel = about ? relation(about, i, accounts, db.requests) : null;
     if (!about || !rel) return [];
+    const net = netName(i.network);
     if (rel.kind === 'connect') {
       const key = `${i.id}:${rel.action}`;
       const word = ACTION_LABEL[rel.action];
-      return [
-        <Action
-          icon={CONNECT_ICON[rel.action]}
-          label={`${busy === key ? `${word}…` : word}${on(i.network)}`}
-          kind={rel.action}
-          disabled={!!busy}
-          title={`${word} on ${netName(i.network)}, as ${db.accounts.get(rel.accountId)?.label ?? 'your account'}`}
-          onClick={() => {
-            const send = (confirm: boolean) => api<P.AddResultView>('/api/add', { body: { accountId: rel.accountId, ref: rel.ref, action: rel.action, ...(confirm ? { confirm: true } : {}) } });
-            run(key, async () => done(about, await send(false), { key, verb: 'add', again: () => send(true) }));
-          }}
-        />,
-      ];
+      const button: ConnectButton = {
+        key,
+        icon: CONNECT_ICON[rel.action],
+        label: `${busy === key ? `${word}…` : word}${on(i.network)}`,
+        kind: rel.action,
+        title: `${word} on ${net}, as ${db.accounts.get(rel.accountId)?.label ?? 'your account'}`,
+        onClick: () => {
+          const send = (confirm: boolean) => api<P.AddResultView>('/api/add', { body: { accountId: rel.accountId, ref: rel.ref, action: rel.action, ...(confirm ? { confirm: true } : {}) } });
+          run(key, async () => done(about, await send(false), { key, verb: 'add', again: () => send(true) }));
+        },
+      };
+      return [{ identity: i, said: NOT_YET[rel.action](net), accountId: rel.accountId, buttons: [button] }];
     }
     const r = rel.request;
-    return r.answers
+    const buttons = r.answers
       .filter((a) => a !== 'block')
-      .map((a) => (
-        <Action
-          icon={a === 'accept' ? 'check' : 'x'}
-          label={`${busy === `${r.id}:${a}` ? `${ANSWER_LABEL[a]}…` : ANSWER_LABEL[a]}${on(i.network)}`}
-          kind={a}
-          primary={a === 'accept'}
-          disabled={!!busy}
-          title={`${ANSWER_LABEL[a]} their ${r.kind} request on ${netName(r.network)}`}
-          onClick={() => {
+      .map(
+        (a): ConnectButton => ({
+          key: `${r.id}:${a}`,
+          icon: a === 'accept' ? 'check' : 'x',
+          label: `${busy === `${r.id}:${a}` ? `${ANSWER_LABEL[a]}…` : ANSWER_LABEL[a]}${on(i.network)}`,
+          kind: a,
+          primary: a === 'accept',
+          title: `${ANSWER_LABEL[a]} their ${r.kind} request on ${netName(r.network)}`,
+          onClick: () => {
             const key = `${r.id}:${a}`;
             const fallback: P.PersonRelationship = a === 'accept' ? (r.kind === 'follow' ? 'stranger' : 'friend') : 'stranger';
             const ask = { key, verb: 'accept' as const, again: () => answerRequest(r, a, true), fallback };
@@ -405,10 +422,41 @@ export function ConnectActions({ identities, abouts, onChanged }: { identities: 
               const res = await answerRequest(r, a);
               done(about, res.relationship || res.check || res.confirm ? res : { ...res, relationship: fallback }, ask);
             });
-          }}
-        />
-      ));
+          },
+        }),
+      );
+    return [{ identity: i, said: r.kind === 'follow' ? `Wants to follow you on ${net}` : `Wants to be friends on ${net}`, accountId: r.accountId, buttons }];
   });
+  const buttons = row ? (
+    offers.length > 0 && (
+      <div class="pf-links-list pf-offers">
+        {offers.map((o) => {
+          const account = db.accounts.get(o.accountId);
+          return (
+            <div class="pf-link-row" data-kind="offer" data-network={o.identity.network} data-account={o.accountId}>
+              <NetBadge network={o.identity.network} size={22} />
+              <span class="pf-link-what">
+                <b>{o.said}</b>
+                {account && (
+                  <small>
+                    <span class="acc-dot" style={{ background: account.color }} />
+                    {account.label}
+                  </small>
+                )}
+              </span>
+              {o.buttons.map((b) => (
+                <button class={`btn small ${b.primary || b.kind === 'friend' || b.kind === 'follow' || b.kind === 'contact' ? 'primary' : 'ghost'}`} data-connect={b.kind} title={b.title} disabled={!!busy} onClick={b.onClick}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    )
+  ) : (
+    offers.flatMap((o) => o.buttons).map((b) => <Action icon={b.icon} label={b.label} kind={b.kind} primary={b.primary} disabled={!!busy} title={b.title} onClick={b.onClick} />)
+  );
   const account = check ? accounts.find((a) => a.id === check.res.accountId) : undefined;
   const c = confirming;
   return (

@@ -160,7 +160,7 @@ function HandleChip({ i }: { i: P.IdentityView }) {
  * has as buttons under it: make it the main account, use its picture, your nickname for it, copy, open on the
  * network, split. Its bio is in About, with the others'.
  */
-function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+function AccountRow({ i, same, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; same?: boolean; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
   metaRev.value; // its name, which a nickname changes
   const [naming, setNaming] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -177,6 +177,9 @@ function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: 
         <div class="pf-acct-top">
           {naming ? (
             <NicknameInput i={i} onDone={() => setNaming(false)} class="pair-nick-input pf-acct-nick-input" />
+          ) : same ? (
+            // Named as the person: the hero says the name, so its handle leads, on the line with its buttons.
+            <HandleChip i={i} />
           ) : (
             <b class="pf-acct-name" title={i.nickname ? `${name}: your nickname (only you see it)` : name}>
               {name}
@@ -201,14 +204,25 @@ function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: 
             {editing ? 'Done' : 'Edit'}
           </button>
         </div>
-        {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
-        <span class="pf-acct-handle">
-          <HandleChip i={i} />
-          <small>
+        {same ? (
+          // The network, and their own name where the handle is not it (with no handle, the chip shows that name).
+          <small class="pf-acct-sub">
             {net}
             {since ? ` · since ${since}` : ''}
+            {i.nickname && i.handle && ownName(i) !== i.handle ? ` · their name: ${ownName(i)}` : ''}
           </small>
-        </span>
+        ) : (
+          <>
+            {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
+            <span class="pf-acct-handle">
+              <HandleChip i={i} />
+              <small>
+                {net}
+                {since ? ` · since ${since}` : ''}
+              </small>
+            </span>
+          </>
+        )}
         {editing && (
           <div class="pf-acct-edit" role="group" aria-label={`${name} on ${net}`}>
             {entries.map((e) => (
@@ -442,20 +456,26 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
-/** A row of Between you: a message of theirs or a mail thread with them. */
+/** A row of Between you: a message of theirs in a direct chat or anywhere else, or a mail thread with them. */
 interface BetweenRow {
   key: string;
   ts: number;
-  kind: 'chat' | 'mail';
+  kind: BetweenKind;
   el: ComponentChildren;
 }
+type BetweenKind = 'direct' | 'group' | 'mail';
+const BETWEEN_CHIPS: [BetweenKind, string][] = [
+  ['direct', 'Direct'],
+  ['group', 'In groups'],
+  ['mail', 'Mail'],
+];
 
 /**
  * Between you (docs/profile.md): their recent messages and your mail with them, newest first, in one list, with
- * Messages and Mail chips when there are both, the first few shown.
+ * Direct, In groups and Mail chips when there are two of them, the first few shown.
  */
 function Between({ rows, shown = 6, foot }: { rows: BetweenRow[]; shown?: number; foot?: ComponentChildren }) {
-  const [only, setOnly] = useState<'chat' | 'mail' | null>(null);
+  const [only, setOnly] = useState<BetweenKind | null>(null);
   const [all, setAll] = useState(false);
   const kinds = new Set(rows.map((r) => r.kind));
   const list = rows.filter((r) => !only || r.kind === only).sort((a, b) => b.ts - a.ts);
@@ -463,13 +483,7 @@ function Between({ rows, shown = 6, foot }: { rows: BetweenRow[]; shown?: number
     <div class="pf-between">
       {kinds.size > 1 && (
         <div class="pf-friend-nets" role="radiogroup" aria-label="Show">
-          {(
-            [
-              [null, 'All', rows.length],
-              ['chat', 'Messages', rows.filter((r) => r.kind === 'chat').length],
-              ['mail', 'Mail', rows.filter((r) => r.kind === 'mail').length],
-            ] as const
-          ).map(([k, label, n]) => (
+          {[[null, 'All', rows.length] as const, ...BETWEEN_CHIPS.filter(([k]) => kinds.has(k)).map(([k, label]) => [k, label, rows.filter((r) => r.kind === k).length] as const)].map(([k, label, n]) => (
             <button class={`chip-btn ${only === k ? 'on' : ''}`} role="radio" aria-checked={only === k} data-track={`between (${label.toLowerCase()})`} onClick={() => setOnly(k)}>
               <b>{label}</b> {n}
             </button>
@@ -540,6 +554,11 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
   useEffect(() => setChanged({}), [personId, identityId]);
   const change = (accountId: string | null, identityId: string, rel: P.PersonRelationship) => accountId && setChanged((x) => ({ ...x, [`${accountId}|${identityId}`]: rel }));
+  // Add friend, Accept and the like, from the hero or an account's line: the network's new word, kept and shown.
+  const connected = (a: P.PersonAboutView) => {
+    if (a.relationship) change(a.accountId, a.identityId, a.relationship);
+    learn(a);
+  };
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
   // Same person? suggestions with them in: by their person, or the identity when no person holds it.
@@ -932,14 +951,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <Action icon="merge" label="Merge" title="Merge another identity in" onClick={() => setMerging(!merging)} />}
           {!isSelf && (
-            <ConnectActions
-              identities={ids}
-              abouts={abouts}
-              onChanged={(a) => {
-                if (a.relationship) change(a.accountId, a.identityId, a.relationship);
-                learn(a);
-              }}
-            />
+            <ConnectActions identities={ids} abouts={abouts} onChanged={connected} />
           )}
           {ids.length > 0 && <Action icon="copy" label="Copy" menu={() => ({ label: 'Copy', items: copyEntries(ids) })} />}
           {blocks.length > 0 && <Action icon="x" label="Block" menu={() => ({ label: 'Block', items: blocks })} />}
@@ -1183,8 +1195,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           const mine = conns.filter((c) => c.identityId === i.id);
           return (
             <div class="pf-acct-item" data-same={identityName(i.id) === name || undefined}>
-              <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />
+              <AccountRow key={i.id} i={i} same={identityName(i.id) === name} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />
               {mine.length > 0 && <ProfileConnections identities={ids} list={mine} onEnded={ended} />}
+              {!isSelf && <ConnectActions row identities={[i]} abouts={abouts} onChanged={connected} />}
             </div>
           );
         })}
@@ -1210,7 +1223,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     return {
       key: m.id,
       ts: m.ts,
-      kind: 'chat',
+      kind: c?.shape === 'direct' ? 'direct' : 'group',
       el: (
         <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
           {c && !isQuietConv(c) ? <PlaceIcon c={c} size={24} /> : <NetBadge network={m.network} size={24} />}
