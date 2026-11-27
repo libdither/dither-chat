@@ -94,12 +94,31 @@ async function tap(pt: Pt) {
   await Bun.sleep(450);
 }
 const shot = async (name: string) => shots && (await p.shot(join(shots, `${name}.png`)));
+/**
+ * The clip's own network alone, where the chat is with someone you reach on several (docs/places.md "A person's
+ * networks"). With every network together, what else they sent is still coming after the chat shows (a mail under the
+ * clip, fetched and then sized), and moves the clip between finding it and pressing it. On its own network nothing
+ * under it loads late.
+ */
+const peer = boot.conversations.find((c: any) => c.id === hit.conversationId)?.peerPersonId;
+const several = !!peer && (new Set(boot.conversations.filter((c: any) => c.shape === 'direct' && c.peerPersonId === peer).map((c: any) => c.network)).size > 1 || (boot.mail?.chats ?? []).some((c: any) => c.personId === peer));
+const TAB = `document.querySelector('.view-switch [data-tab="net:${hit.network}"]')`;
+async function ownNetwork(press: (pt: Pt) => Promise<unknown>) {
+  if (!several) return;
+  await p.until(`!!${TAB}`, 10_000);
+  if (!(await p.eval<boolean>(`${TAB}.getAttribute('aria-selected') === 'true'`))) {
+    // A phone's row of tabs scrolls sideways: the tab is brought into it first.
+    await press(await p.eval<Pt>(`(() => { const t = ${TAB}; t.scrollIntoView({ block: 'nearest', inline: 'center' }); const r = t.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`));
+  }
+  await p.until(`${TAB}?.getAttribute('aria-selected') === 'true' && !!${PLAYER} && ${video}.readyState >= 1`, 10_000);
+}
 
 try {
   // ---------------------------------------------------------------- desktop
   await p.size(1280, 800);
   await p.goto(route);
   await p.until(`!!${PLAYER} && ${video}.readyState >= 1`, 20_000);
+  await ownNetwork(click);
   const look = await p.eval(`(() => { const b = ${PLAYER}; const r = b.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), native: ${video}.controls, dl: b.querySelector('a.vp-corner[download]')?.title, top: !!b.querySelector('.vp-top') }; })()`);
   check(look.w === 400 && look.h === 225 && !look.native, 'a 480×270 clip is drawn 400×225 with the app\'s controls, not the browser\'s', look);
   check(look.dl?.startsWith('Download bouldering.webm') && !look.top, 'Download sits in the corner, naming the file, with no strip along the top', look);
@@ -176,6 +195,7 @@ try {
   await p.size(390, 844, true);
   await p.goto(route);
   await p.until(`!!${PLAYER} && ${video}.readyState >= 1`, 20_000);
+  await ownNetwork(tap);
   const ph = await p.eval(`(() => { const r = ${PLAYER}.getBoundingClientRect(); return { w: Math.round(r.width), touch: ${PLAYER}.classList.contains('vp-touch') }; })()`);
   check(ph.touch && ph.w >= 300, 'on a phone it takes the message\'s width, with the touch controls', ph);
   await p.eval(`${video}.currentTime = 0`);
