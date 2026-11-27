@@ -1504,7 +1504,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   if (mailPlaces.length) items.push(<MailSends key="sends" places={mailPlaces} held={msgs} />);
 
   return (
-    <div class="timeline-scroll" ref={scroller} onScroll={onScroll}>
+    // data-drawing: slices still to draw, for a check that waits for the chat to be whole (verify-their-time.ts).
+    <div class="timeline-scroll" ref={scroller} onScroll={onScroll} data-drawing={more ? '' : undefined}>
       <div class="timeline-inner" ref={inner} onClick={stream ? (e) => pickFrom(e, byId, stream) : undefined}>
         {t && !t.hasMore && msgs.length > 0 && start === 0 && <div class="timeline-start">This is the start of what dither-chat has stored here.</div>}
         {t?.detached && (

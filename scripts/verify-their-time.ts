@@ -51,6 +51,10 @@ const labels = () =>
   }))`);
 /** Point at an element (by selector) the way a mouse does, so the page sees pointerenter. */
 async function point(sel: string) {
+  // Once the chat has drawn all its slices and laid out the frame after: a scroll in the frame its content grows in is
+  // taken for the browser's own anchoring and undone (Timeline.tsx onScroll), so the pointer would land beside it.
+  await p.until(`!!document.querySelector('.timeline-scroll:not([data-drawing])')`, 15_000);
+  await p.eval(`new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))`);
   const r = await p.eval<{ x: number; y: number } | null>(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
   if (!r) throw new Error(`nothing at ${sel}`);
   await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
