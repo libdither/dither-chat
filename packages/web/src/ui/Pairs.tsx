@@ -11,18 +11,23 @@
  * (chatroutes.ts pickHolds), unless a draft waits in the picked route's box.
  */
 import type * as P from '@dither-chat/protocol';
+import { MATCH_STRONG, POST_NETWORKS } from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { badgeDiffers, cameFromThem, headIdents, lastRouteTells, leadTells, tagTells, tagText, tells, yourAccount, yourName, type HeadName, type RouteKey, type Side } from '../chatroutes.ts';
+import { personTabs, pickAt, postNetworks, POSTS_TAB, routeForTab, tabNetwork, tabOf, viewIn } from '../chattabs.ts';
 import { ago, hueOf, initials } from '../format.ts';
 import { convLabel, identityName, netColor, netName, visibleAccount } from '../model.ts';
 import { phone } from '../phone.ts';
-import { api, db, go, isSelfIdentity, metaRev, pref, setPrefs, timelineKey, timelines } from '../state.ts';
-import { Avatar, Count, FromChips, Menu, NetBadge, NetGlyph } from './bits.tsx';
+import { api, db, go, isSelfIdentity, metaRev, pref, setPrefs, timelineKey, timelines, toast } from '../state.ts';
+import { Avatar, Count, FromChips, Menu, NetBadge, NetGlyph, PlaceTabs } from './bits.tsx';
 import { TimerLabel } from './Disappearing.tsx';
 import { Icon } from './icons.tsx';
 import { cameFrom, live, picked } from '../pairpick.ts';
+import { TAB_KEYS } from '../tabkeys.ts';
+import { convById } from '../mail/chats.ts';
+import './Pairs.css';
 
 // ------------------------------------------------------------------ pairs
 
@@ -192,10 +197,12 @@ export function focusPair(personId: string, from: string | null, to: string, at?
     } catch {}
   }
   picked.value = { ...picked.value, [personId]: { to, at: at ?? '', ts: Date.now() } };
-  const conv = db.conversations.get(to);
-  const acc = conv && pairOf(conv).acc;
+  // An email route is no conversation row (mail/chats.ts): it is among their directs, sent from a mail account.
+  const conv = convById(to);
+  const p = conv && pairOf(conv);
+  const acc = p ? (p.acc?.id ?? p.mail?.id ?? null) : null;
   const cur = chats.value[personId]?.route;
-  if (acc && !(cur?.why === 'chosen' && cur.conversationId === to && cur.accountId === acc.id)) void chooseRoute(personId, to, acc.id);
+  if (acc && !(cur?.why === 'chosen' && cur.conversationId === to && cur.accountId === acc)) void chooseRoute(personId, to, acc);
 }
 
 /** Your account: its picture, else its colour and initials (your accounts' pictures often look alike), and its network. */
@@ -356,13 +363,75 @@ function LastRoute({ directs, focus, onFocus }: { directs: P.ConversationView[];
 
 // ------------------------------------------------------------------ the page's parts
 
-/** What the page shows, per person this session: every route (the default) or one route's, picked from the list. */
-const viewing = signal<Record<string, string>>({});
-export const viewOf = (personId: string, directs: P.ConversationView[]) => {
-  const v = viewing.value[personId];
-  return v && directs.some((d) => d.id === v) ? v : 'all';
+/**
+ * What the page shows, per person this session: every route ('all', the default), one network's (`net:<network>`,
+ * its tab), or one route's, picked from the list (its id). Never in the address (docs/places.md), but kept with the
+ * address it was picked at: opening another of their chats is not hidden by a tab left on elsewhere (chattabs.ts
+ * pickAt).
+ */
+const viewing = signal<Record<string, { v: string; at: string }>>({});
+/**
+ * The networks of posts they post on that your accounts read (chattabs.ts postNetworks): with any, their row ends in
+ * Posts. From what the app holds already, their identities and your accounts: nothing asked, no bytes added at start.
+ */
+export const postNetsOf = (person: P.PersonView): P.Network[] =>
+  postNetworks(
+    person.identityIds.flatMap((id) => db.identities.get(id)?.network ?? []),
+    [...db.accounts.values()].map((a) => a.network),
+    POST_NETWORKS,
+  );
+const extraOf = (person: P.PersonView) => (postNetsOf(person).length ? [POSTS_TAB] : []);
+/** `at`: the chat of theirs the address names, and `addr` that address's conversation, when the page was opened as one. */
+export function viewOf(person: P.PersonView, directs: P.ConversationView[], at?: P.ConversationView, addr?: string) {
+  const extra = extraOf(person);
+  return viewIn(pickAt(viewing.value[person.id], addr ?? '', at, extra), directs, extra);
+}
+export const setView = (personId: string, v: string, addr?: string) => void (viewing.value = { ...viewing.value, [personId]: { v, at: addr ?? '' } });
+
+const unreadOf = (d: P.ConversationView) => d.vantages.reduce((n, x) => n + x.unread, 0);
+
+/**
+ * The switch row of a person's page (docs/places.md "A person's networks"): All, then each network they are reached
+ * on (chattabs.ts personTabs), its glyph, name and unread. A route shown alone from the list chooses its network's
+ * tab. Picking a network shows its routes together and sends through it; All shows everything and leaves the send
+ * route as it is. Ctrl+Shift+] and [ move along it from anywhere on the page (tabkeys.ts).
+ */
+export function PersonTabs({ person, directs, view, onTab }: { person: P.PersonView; directs: P.ConversationView[]; view: string; onTab: (id: string) => void }) {
+  // Their public posts, last: with the network's glyph when they post on one only.
+  const posts = postNetsOf(person);
+  const extra = posts.length ? [{ id: POSTS_TAB, network: posts.length === 1 ? posts[0]! : null, unread: 0 }] : [];
+  const tabs = personTabs(directs.map((d) => ({ network: d.network, unread: unreadOf(d) })), netName, extra);
+  return (
+    <PlaceTabs
+      class="person-tabs"
+      label={`Chats with ${person.name}`}
+      track="person tab"
+      value={tabOf(view, directs, extra.map((t) => t.id))}
+      onPick={onTab}
+      tabs={tabs.map((t) => {
+        if (t.id === POSTS_TAB) {
+          // In the text's colour: a network of posts may be black or white (X), so it takes the tab's text colour, which never hides it.
+          return { id: t.id, label: 'Posts', icon: t.network ? <NetGlyph network={t.network} size={12} /> : undefined, title: `What they posted in public${t.network ? ` on ${netName(t.network)}` : ''}, as the hub logged it (${TAB_KEYS} move between tabs)` };
+        }
+        const label = t.network ? netName(t.network) : 'All';
+        const what = t.network ? `Only ${label}` : 'Every chat with them together';
+        return {
+          id: t.id,
+          label,
+          count: t.unread,
+          icon: t.network ? <NetGlyph network={t.network} size={12} color={netColor(t.network)} /> : undefined,
+          title: `${what}${t.unread ? `, ${t.unread} unread` : ''} (${TAB_KEYS} move between tabs)`,
+        };
+      })}
+    />
+  );
+}
+
+/** The route a network's tab sends through (chattabs.ts routeForTab). */
+export const tabRoute = (tab: string, focus: P.ConversationView, directs: P.ConversationView[]) => {
+  const net = tabNetwork(tab);
+  return net === null ? null : routeForTab(net, focus, directs);
 };
-export const setView = (personId: string, v: string) => void (viewing.value = { ...viewing.value, [personId]: v });
 
 
 /**
@@ -400,14 +469,15 @@ interface ListRow {
 
 /**
  * Under the name of a person's chat: the line any conversation has there (where your message goes, `SendLine`), and
- * one control more, a pill of the other routes' networks and their number (`+7 ▾`), or `only this ✕` while the page
- * shows one route. The whole line opens the list: press and drag down to a row and let go, or click and click a row,
- * or the arrow keys and Enter. Picking a route shows its history alone and sends through it; it never navigates.
+ * `only this ✕` while the page shows one route. The networks are the switch row's under the head (`PersonTabs`); the
+ * whole line opens the list of routes: press and drag down to a row and let go, or click and click a row, or the
+ * arrow keys and Enter. Picking a route shows its history alone and sends through it; it never navigates.
  *
  * The list is a card: the person, how many accounts, chats and networks, and All; then the routes, under their
  * network's name where a network has two or more, the rest after them, each by their account's own picture and name,
  * its handle, your account where yours differ there (chatroutes.ts tells), unread, and when it was last active. The
- * route messages go to says "sending". `view`: 'all' or the route's conversation. `focus`: where messages go now.
+ * route messages go to says "sending". `focus`: where messages go now. `view`: what the page shows (PersonChat's):
+ * all, a network's tab, their posts, or one route, which is then `focus`.
  */
 export function PairDropdown({ person, directs, focus, view: v, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view: string; onPick: (view: string) => void }) {
   metaRev.value; // names: counts and times come with a new `directs`
@@ -474,7 +544,6 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
   const fp = pairOf(focus);
   const to = tells(routeKey(focus), keys).theirs ? theirName(fp) : undefined;
   const others = directs.filter((d) => d.id !== focus.id);
-  const otherNets = [...new Set(others.map((d) => d.network))].slice(0, 3);
   const nets = new Set(directs.map((d) => d.network));
   const summary = [counted(new Set(directs.map((d) => pairOf(d).theirs?.id ?? d.id)).size, 'account'), counted(directs.length, 'chat'), counted(nets.size, 'network')].filter(Boolean).join(' · ');
   const rows: ListRow[] = directs.map((d) => ({ p: pairOf(d), unread: d.vantages.reduce((n, x) => n + x.unread, 0), last: d.lastMessageAt ?? 0 })).sort((a, b) => b.last - a.last);
@@ -549,7 +618,7 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
         data-track="chats list"
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === 'all' ? (others.length === 0 ? 'No other chats with them' : `${others.length} more ${others.length === 1 ? 'chat' : 'chats'} with them`) : 'Showing only this chat'}: press and drag to pick, or click`}
+        title={`${routeTitle(focus).replace(/^Send/, 'Sending')}. ${v === focus.id ? 'Showing only this chat' : others.length === 0 ? 'No other chats with them' : `${others.length + 1} chats with them`}: press and drag to pick one, or click`}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           press.current = { x: e.clientX, y: e.clientY, moved: false };
@@ -589,21 +658,13 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
       >
         <SendLine c={focus} accounts={routeAccounts(focus)} to={to} />
         {/* One route (someone reached only by email, mail/chats.ts): nothing more to pick. */}
-        {v === 'all' && others.length > 0 && (
-          <span class="pair-more">
-            <span class="pair-more-nets">
-              {otherNets.map((n) => (
-                <NetGlyph network={n} size={11} color={netColor(n)} />
-              ))}
-            </span>
-            +{others.length}
-            <span class="pair-dd-caret" aria-hidden="true">
-              ▾
-            </span>
+        {others.length > 0 && (
+          <span class="pair-dd-caret" aria-hidden="true">
+            ▾
           </span>
         )}
       </button>
-      {v !== 'all' && (
+      {v === focus.id && (
         <button class="pair-more pair-only" data-track="chats list (back to all)" title="Showing only this chat: show all chats together" aria-label="Showing only this chat. Show all chats together" onClick={() => onPick('all')}>
           only this
           <span class="pair-only-x" aria-hidden="true">
@@ -650,6 +711,79 @@ export function PairDropdown({ person, directs, focus, view: v, onPick }: { pers
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * "Is this the same person?" where it matters: one slim line under the head of a person's page when the Same person?
+ * suggester (docs/same-person.md) is confident someone else is them, "Also Mom on Signal · Same person? Join · Not
+ * them". The suggestions are the ones SameBox shows on a profile (GET /api/matches?side=); only those at
+ * MATCH_STRONG or over come here, the first of them. Join merges them (POST /api/matches/merge), Not them says so
+ * (POST /api/matches/decide). Never joined without you.
+ */
+// redraws: it reads nothing shared while it draws; what it shows is its own state, asked for again per person.
+export function SameLine({ person }: { person: P.PersonView }) {
+  const [s, setS] = useState<P.MatchSuggestion | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let on = true;
+    setS(null);
+    api<P.MatchesView>(`/api/matches?side=${encodeURIComponent(person.id)}`)
+      .then((v) => on && setS(v.suggestions.find((x) => x.p >= MATCH_STRONG && (x.a.id === person.id || x.b.id === person.id)) ?? null))
+      .catch(() => {});
+    return () => void (on = false);
+  }, [person.id]);
+  if (!s) return null;
+  const other = s.a.id === person.id ? s.b : s.a;
+  const nets = [...new Set(other.identities.map((i) => i.network))];
+  const join = async () => {
+    setBusy(true);
+    try {
+      const r = await api<{ person: string }>('/api/matches/merge', { body: { sides: [s.a.id, s.b.id] } });
+      toast({ kind: 'info', title: 'Joined', body: `${s.a.name} and ${s.b.name} are one person now.` }, 4000);
+      setS(null);
+      go({ view: 'people', person: r.person });
+    } catch (e) {
+      toast({ kind: 'error', title: 'Could not join them', body: (e as Error).message });
+    }
+    setBusy(false);
+  };
+  const no = async () => {
+    setBusy(true);
+    await api('/api/matches/decide', { body: { key: s.key, decision: 'no' } }).catch(() => {});
+    setBusy(false);
+    setS(null);
+  };
+  const why = s.evidence.filter((e) => e.weight > 0).slice(0, 3).map((e) => e.text).join('; ');
+  return (
+    <div class="same-line" role="note" title={`${Math.round(s.p * 100)}% likely the same person${why ? `: ${why}` : ''}`}>
+      <span class="same-line-who">
+        Also{' '}
+        <button class="link-btn" data-track="same line (other)" onClick={() => go(other.id.startsWith('per_') ? { view: 'profile', person: other.id } : { view: 'profile', identity: other.id })}>
+          {other.name}
+        </button>
+        {nets.length > 0 && (
+          <>
+            {' on '}
+            {nets.map((n, i) => (
+              <>
+                {i > 0 && ', '}
+                <NetGlyph network={n} size={11} color={netColor(n)} /> {netName(n)}
+              </>
+            ))}
+          </>
+        )}
+      </span>
+      <span class="send-sep">·</span>
+      <span class="same-line-q">Same person?</span>
+      <button class="link-btn" data-track="same line (join)" disabled={busy} onClick={() => void join()}>
+        Join
+      </button>
+      <span class="send-sep">·</span>
+      <button class="link-btn" data-track="same line (not them)" disabled={busy} onClick={() => void no()}>
+        Not them
+      </button>
     </div>
   );
 }

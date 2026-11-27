@@ -49,6 +49,7 @@
         "src/ui/mail/editor/code.ts",
         "src/ui/mail/editor/MailEditor.tsx",
         "src/ui/mail/screens.ts",
+        "src/ui/MailDetails.tsx",
         "src/ui/MediaParts.tsx",
         "src/ui/MentionPicker.tsx",
         "src/ui/MessageHistory.tsx",

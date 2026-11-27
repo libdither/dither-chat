@@ -2,7 +2,8 @@
  * Following a post (docs/feed.md "Following a post"), in a real browser against a demo hub of its own on a fresh data
  * dir: Follow replies on a thread from the Feed page makes the post a chat in the inbox, with a toast whose View opens
  * it; a reply someone writes later (the demo's newReply action) is found by the hub's next check and arrives unread,
- * the row saying what it says; opening the chat shows the post's thread with that reply marked New, and reads the chat;
+ * the row saying what it says; opening the chat shows the post's thread with that reply marked New (as a chat, one New
+ * line over it), and reads the chat;
  * Stop Following from the row's menu stops the checks, the chat staying with a note; a phone keeps the bell, as an
  * icon.
  *
@@ -186,12 +187,49 @@ try {
   await page.until(`document.querySelector('.thread-pane .follow-btn')?.getAttribute('aria-pressed') === 'true' && !document.querySelector('.thread-pane .follow-note')`, 10000);
   check('the bell follows it again: the note goes', (await json(`/api/posts/x/${post}/follow`)).stopped === null);
 
+  // As a chat (the switch row's Chat): one New line where what came since begins, no tag on each.
+  await tap('.thread-pane [data-tab="chat"]');
+  await page.until(`!!document.querySelector('.thread-pane .ct-chat')`, 5000);
+  const line = await page.eval<any>(`(() => { const sep = document.querySelector('.thread-pane .ct-chat .new-sep'); const next = sep?.nextElementSibling; return { seps: document.querySelectorAll('.thread-pane .ct-chat .new-sep').length, tags: document.querySelectorAll('.thread-pane .ct-chat .post-tag.new').length, next: next?.textContent ?? '', last: [...document.querySelectorAll('.thread-pane .ct-chat-row')].pop()?.textContent ?? '' }; })()`);
+  check('as a chat: one New line, over the reply found since, which is the newest; no tag on each', line.seps === 1 && line.tags === 0 && line.next.includes(said) && line.last.includes(said), line);
+  if (shots) {
+    await page.eval(`document.querySelector('.thread-pane .ct-chat .new-sep').scrollIntoView({ block: 'center' })`);
+    await clearToasts().then(() => page.shot(join(shots, 'follow-chat-new-line.png')));
+  }
+  await tap('.thread-pane [data-tab="thread"]');
+  await page.until(`!!document.querySelector('.thread-pane .post-tag.new')`, 5000);
+  // ---------------------------------------------------------------- its head (PlaceHead.tsx): the rule, Details
+  const rule = async () => ((await json('/api/bootstrap')).rules as any[]).find((r) => r.scope === 'conversation' && r.target === cid)?.level ?? null;
+  await tap('.thread-pane .conv-head .hdr-btn.level');
+  await page.until(`!!document.querySelector('.level-menu [data-rule="digest"]')`, 5000);
+  await tap('.level-menu [data-rule="digest"]');
+  await until(async () => (await rule()) === 'digest', 10_000, 'the rule set');
+  await page.until(`document.querySelector('.thread-pane .conv-head .hdr-btn.level')?.getAttribute('aria-label') === 'Notifications: List only'`, 5000);
+  check('the head’s bell sets the followed post’s own rule, as a chat’s does', true);
+  if (!(await page.eval<boolean>(`!!document.querySelector('.post-details')`))) await tap('.thread-pane .conv-head .hdr-btn[data-track="details"]');
+  await page.until(`/Next check/.test(document.querySelector('.post-details')?.textContent ?? '')`, 10000);
+  check('Details opens the post’s panel: its author, its counts and the follow’s next check', await page.eval<boolean>(`!!document.querySelector('.post-details .member') && !!document.querySelector('.post-details .post-counts')`));
+  await tap('.post-details [data-track="post details: who liked"]');
+  await page.until(`!!document.querySelector('.post-details .post-reactors')`, 10000);
+  check('…and opens who liked it', true);
+  if (shots) await clearToasts().then(() => page.shot(join(shots, 'follow-details.png')));
+  await tap('.post-details .icon-btn[aria-label="Close details"]');
+  await page.until(`!document.querySelector('.post-details')`, 5000);
+
   // ---------------------------------------------------------------- a phone
   await page.size(412, 900);
   await page.until(`!!document.querySelector('.thread-pane .follow-btn')`, 10000);
   const ph = await bell();
   check('a phone keeps the bell, as an icon', ph?.pressed === 'true' && ph.shown === false && (await page.eval<number>(`document.querySelector('.thread-pane .follow-btn').getBoundingClientRect().width`)) < 60, ph);
   if (shots) await clearToasts().then(() => page.shot(join(shots, 'follow-phone.png')));
+  // A phone's head keeps Follow replies; the bell for the rule and Details are under ⋯.
+  check('…the rule’s bell is not in the head', await page.eval<boolean>(`getComputedStyle(document.querySelector('.thread-pane .conv-head .hdr-btn.level')).display === 'none'`));
+  await tap('.thread-pane .conv-head .hdr-btn[aria-label="More"]');
+  await page.until(`!!document.querySelector('.cm-sheet .level-menu')`, 5000);
+  const sheet = await text('.cm-sheet');
+  check('…⋯ holds Stop following, Details and the rules', /Stop following/.test(sheet) && /Details/.test(sheet) && /List only/.test(sheet), sheet);
+  await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
+  await page.until(`!document.querySelector('.cm-sheet')`, 5000);
   await tap('.thread-pane .follow-btn');
   await until(async () => (await json(`/api/posts/x/${post}/follow`)).stopped !== null, 10_000, 'stopped from the phone');
   check('…and stops from it', true);

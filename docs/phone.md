@@ -124,10 +124,10 @@ no rail, hover actions hidden, a long-press sheet with reactions, reply, copy, e
 | Arrange: drag to reorder, folders, pin, hide, move up/down, rename, delete folder, add a group to the sidebar | Drag; right-click menu | Hold and drag; popup menu sized for a mouse | Hold and drag; the menu is a bottom sheet |
 | All communities: seven orderings, network filter, hidden places, manual order by drag | Rail grid button | Spaces tab | Rail grid button; chip rows scroll sideways |
 | Categories: edit the questions, per-place yes/no/auto | Dialogs | Centered dialogs | Bottom sheets |
-| Per-place notification rule, whole server | Header menu | Small dropdown | Bottom sheet |
+| Per-place notification rule (a chat, a mail thread, a followed post), whole server | Header menu | Small dropdown | Bottom sheet |
 | Per-place overrides list, clear one | Settings | More tab | You tab |
 | Conversation header: where it is, via which account, search in it, profile, details; a direct conversation says where your message goes (the network, your account), and someone reached by several routes adds a pill (`+7 ▾`, `only this ✕`) that opens the list of their chats (docs/chats.md) | Header | Wrapped to four lines | One line that fades; "via" is in the details panel; Profile in the details panel; the list of chats stays, unfaded |
-| Details panel: source, accounts, native id, open in the network's app, notification rule, members, threads | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
+| Details panel: source, accounts, native id, open in the network's app, notification rule, members, threads; a mail thread's (its people, files, account, filing) and a post's (author, counts, who liked, the follow) | Toggle in the header | Full-screen overlay | Swipe left, or the header button; a panel with the page peeking |
 | Person details: identities, split, merge, always alert, chats | Details panel | Full-screen overlay | Panel |
 | Profile and the merge flow | Avatar, member or mention | Reachable | Reachable; swipe back |
 | New message (start a DM), send-as account, join, add, scan, add people to a group | Plus in the Inbox and People headers, Ctrl+K's "New…"; the palette's New page ([palette.md](palette.md)) | Centered dialog | Plus in the headers; the palette as a bottom sheet, each page a step the back button undoes; the keyboard only on New itself |

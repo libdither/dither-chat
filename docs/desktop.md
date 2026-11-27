@@ -74,6 +74,11 @@ Two ways to go to the app's places with the keyboard
   (which has no way to write a G then a letter).
 - Ctrl+K (docs/palette.md) still jumps to anything else.
 - N, with a chat open, goes to the next unread topic or thread, as Zulip's N does ([threads.md](threads.md#next-unread-and-reading-a-channel-at-once)).
+- **Ctrl+Shift+] and Ctrl+Shift+[** move to the next and the previous tab of the open page's switch row (a person's
+  networks, a channel's Stream and Topics; [places.md](places.md#the-switch-row)), wrapping round, also from the
+  message box, which keeps its focus and what is typed in it (`tabkeys.ts`). Read from the physical key, since Shift
+  makes `]` a `}`. Not Alt+Shift and the arrows, which select words on a Mac and are a window manager's elsewhere,
+  and not Ctrl+Tab or Ctrl+PageUp/PageDown, the browsers' own. Each tab's tooltip names them.
 
 `bun scripts/verify-place-keys.ts <demo hub>` presses them in headless Chromium with real key input: G then P, G
 then I and G then S, a stray key after G, G typed in a chat's box, Ctrl+Shift+2 from the box, Alt+2 doing nothing,

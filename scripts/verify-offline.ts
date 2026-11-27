@@ -178,11 +178,15 @@ try {
   await escape();
   await popClosed();
   check(await p.eval<boolean>(`document.activeElement?.classList.contains('head-orb')`), 'Esc closes it, back on the orb');
+  // A day's line in the timeline: somewhere a tap does nothing else. Where one is drawn moves with the hour and with
+  // what the chat holds (under the popover, or off the top), so the last one is brought to the middle of the timeline
+  // first, and the timeline put back at its end after.
+  await p.eval(`[...document.querySelectorAll('.timeline-scroll .day-sep')].at(-1)?.scrollIntoView({ block: 'center' })`);
   await openPop(() => tap('.conv-head-actions .head-orb'));
-  // A day's line in the timeline: somewhere a tap does nothing else.
   await tap('.timeline-scroll .day-sep');
   await popClosed();
   check(true, 'a tap elsewhere closes it');
+  await p.eval(`document.querySelector('.timeline-scroll').scrollTop = 0`);
   await openPop(() => tap('.conv-head-actions .head-orb'));
   await tap('.conv-head-actions .head-orb');
   await popClosed();

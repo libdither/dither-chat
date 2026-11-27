@@ -223,8 +223,9 @@ async function settles<T>(get: () => Promise<T>, ok: (v: T) => boolean, ms = 150
 
 // ------------------------------------------------------------------ layout (as verify-phone.ts)
 
-// Rows meant to scroll sideways: on a phone the editor's bar is one (its view switch stays at its end).
-const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips, .me-bar';
+// Rows meant to scroll sideways: on a phone the editor's bar is one (its view switch stays at its end), and a place's
+// switch row with more tabs than fit (a person on six networks: docs/places.md "The switch row").
+const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips, .me-bar, .view-switch';
 async function overflow(): Promise<string[]> {
   return page.eval(`(() => {
     const W = innerWidth, out = [], sideways = ${JSON.stringify(SIDEWAYS)};
@@ -290,7 +291,8 @@ const subjectBox = () =>
     return { text: el.textContent, lines: Math.round(el.clientHeight / parseFloat(cs.lineHeight)), whole: el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1, ellipsis: cs.textOverflow === 'ellipsis' };
   })()`);
 /** The aria-labels of a thread chat's header buttons. */
-const headButtons = () => page.eval<string[]>(`[...document.querySelectorAll('.mail-thread-head .conv-head-actions .hdr-btn')].map((b) => b.getAttribute('aria-label'))`);
+/** The head's buttons that show (a phone hides the bell and Details: they are under ⋯). */
+const headButtons = () => page.eval<string[]>(`[...document.querySelectorAll('.mail-thread-head .conv-head-actions .hdr-btn')].filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.getAttribute('aria-label'))`);
 /** The Inbox's rows (with the Mail filter: people's chats and threads with more people), by key. */
 const inboxRows = () => page.eval<string[]>(`[...document.querySelectorAll('.sidebar .row[data-row]')].map((r) => r.dataset.row)`);
 
@@ -342,7 +344,9 @@ async function phone(themeName: string, first: boolean) {
     check(`${tag}: the subject tag opens the thread's card, with Archive and Star`, card.includes('3 mails · with Sam Rivera') && card.includes('Archive') && card.includes('Star'), card);
     await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
     await holds(`!document.querySelector('.cm-sheet, .cm')`);
-    // Read here after a second in view: the hub has it read.
+    // Read here after a second in view at the newest end: the hub has it read. Sam's chat holds his Signal and Matrix
+    // messages too, so the tag, where the thread starts, is above the newest: back down to it first.
+    await page.eval(`document.querySelector('${PANE} .timeline-scroll').scrollTop = 0`);
     const t = await settles(async () => (await page1('v:inbox:*')).find((x: any) => x.id === dinner.id), (x) => x?.unread === 0);
     check(`${tag}: read here after a second in view`, t?.unread === 0, t?.unread);
   }
@@ -424,6 +428,8 @@ async function phone(themeName: string, first: boolean) {
     await page.until(`!!document.querySelector('.cm-sheet')`, 5000);
     const items = await page.eval<string>(`document.querySelector('.cm-sheet').textContent`);
     check(`${tag}: ⋯ has Star and Move to the trash`, items.includes('Star') && items.includes('Move to the trash'), items);
+    // A phone's head keeps Archive; the bell and Details are under ⋯, as a chat's are (PlaceHead.tsx).
+    check(`${tag}: ⋯ also holds Details and the thread's notification rules`, items.includes('Details') && (await page.eval<boolean>(`!!document.querySelector('.cm-sheet .level-menu [data-rule="none"]')`)), items);
     await page.eval(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
     await holds(`!document.querySelector('.cm-sheet')`);
     check(`${tag}: no sideways overflow: a thread's chat`, !(await overflow()).length, await overflow());
@@ -469,7 +475,7 @@ async function desktop(themeName: string) {
   check(`${tag}: every mail of the thread is a message`, await page.eval<boolean>(`${JSON.stringify(mails.map((m) => m.id))}.every((id) => document.getElementById('m-' + id))`));
   const people = await page.eval<string>(`document.querySelector('.mail-thread-head .mail-people')?.textContent ?? ''`);
   check(`${tag}: under its name, the people on it, the Cc'd too`, people.includes('Alice Chen') && people.includes('Jo Park'), people);
-  check(`${tag}: the thread's filing in its header: Archive, and ⋯`, (await headButtons()).join() === 'Archive,More', await headButtons());
+  check(`${tag}: the thread's head: Archive, the bell, Details and ⋯`, (await headButtons()).join() === 'Archive,Notifications: Automatic,Details,More', await headButtons());
   check(`${tag}: the open row is marked`, await has(`.sidebar .mail-row.active[data-thread="${lease.id}"]`));
   check(`${tag}: no sideways overflow`, !(await overflow()).length, await overflow());
   await shot(`mail-${tag.replace(' ', '-')}`);
@@ -1512,7 +1518,7 @@ async function filing() {
     await page.until(`!!document.querySelector('.mail-thread-pane .mail-thread-head .hdr-btn')`, 15000);
     // The reader's header had Star and Trash beside Archive; a thread's chat has them in ⋯, as a chat's header keeps one
     // row.
-    check(`${tag}: the thread's header has Archive and ⋯`, (await headButtons()).join() === 'Archive,More', await headButtons());
+    check(`${tag}: the thread's head has Archive, the bell, Details and ⋯`, (await headButtons()).join() === 'Archive,Notifications: Automatic,Details,More', await headButtons());
     const more = async () => {
       await click(await at('.mail-thread-head .hdr-btn[aria-label="More"]'));
       await page.until(`!!document.querySelector('.cm .cm-item')`, 5000);
@@ -1527,6 +1533,23 @@ async function filing() {
     await click(await at('.cm .cm-item', `el => el.textContent.trim().startsWith('Unstar')`));
     check(`${tag}: Unstar unstars it`, await settled(c.id, (t) => !t.flagged, 'it unstarred'));
     await holds(`!document.querySelector('.cm')`);
+    // The bell sets the thread's own rule (hub mail/triage.ts reads it), as a chat's does.
+    const rule = () => fetch(`${base}/api/bootstrap`).then((r) => r.json()).then((b: any) => (b.rules ?? []).find((r: any) => r.scope === 'conversation' && r.target === c.id)?.level ?? null);
+    await click(await at('.mail-thread-head .hdr-btn.level'));
+    await click(await at('.level-menu [data-rule="none"]'));
+    check(`${tag}: the bell mutes the thread`, (await holds(`document.querySelector('.mail-thread-head .hdr-btn.level')?.getAttribute('aria-label') === 'Notifications: Mute'`)) && (await rule()) === 'none', await rule());
+    await click(await at('.mail-thread-head .hdr-btn.level'));
+    await click(await at('.level-menu [data-rule=""]'));
+    check(`${tag}: …and Automatic takes the rule away`, (await holds(`document.querySelector('.mail-thread-head .hdr-btn.level')?.getAttribute('aria-label') === 'Notifications: Automatic'`)) && (await rule()) === null);
+    // Details: the panel a chat's opens in, listing who is on the thread with their addresses.
+    await click(await at('.mail-thread-head .hdr-btn[data-track="details"]'));
+    await holds(`!!document.querySelector('.details.mail-details .member')`);
+    const who = await page.eval<string[]>(`[...document.querySelectorAll('.mail-details .member small')].map((s) => s.textContent.trim())`);
+    check(`${tag}: Details opens the thread's panel, its people with their addresses`, who.length > 1 && who.every((w) => /^(From|To|Cc) · \S+@\S+$/.test(w)), who);
+    check(`${tag}: …with its filing`, (await page.eval<string>(`document.querySelector('.mail-details .det-filing')?.textContent ?? ''`)).includes('Trash'));
+    await shot(`mail-desktop-${themeName}-thread-details`);
+    await click(await at('.mail-details .icon-btn[aria-label="Close details"]'));
+    await holds(`!document.querySelector('.mail-details')`);
     await shot(`mail-desktop-${themeName}-thread`);
     await page.eval('document.activeElement?.blur?.()');
     await key('e');

@@ -181,8 +181,15 @@ const channel = boot.conversations.find((c: any) => c.id === bigChannel.id);
 const space = channel?.spaceIds?.[0];
 const dmConv = boot.conversations.find((c: any) => c.id === bigDm.id);
 const person = dmConv?.peerPersonId ?? boot.persons.find((p: any) => p.id !== boot.selfPersonId)?.id;
+// Someone reached by several routes: their page has the switch row of their networks (docs/places.md).
+const directsOf = (id: string) => boot.conversations.filter((c: any) => c.shape === 'direct' && c.peerPersonId === id);
+const several = boot.persons.filter((x: any) => new Set(directsOf(x.id).map((c: any) => c.network)).size >= 2).sort((x: any, y: any) => directsOf(y.id).length - directsOf(x.id).length)[0]?.id;
 const folder = boot.folders.find((f: any) => f.items.some((i: any) => i.kind === 'conversation'));
 const account = boot.accounts[0];
+const cabin = (boot.mail?.threads ?? []).find((t: any) => /Cabin weekend/.test(t.subject));
+// Every place's head (ui/PlaceHead.tsx): a mail thread's and a post's, where the world has them.
+const mailThread = (boot.mail?.threads ?? []).find((t: any) => t.count > 1)?.id ?? boot.mail?.threads?.[0]?.id;
+const postsConv = boot.conversations.find((c: any) => c.variant === 'posts');
 
 interface PageCase {
   name: string;
@@ -206,6 +213,7 @@ const PAGES: PageCase[] = [
   ...(folder ? [{ name: 'a folder', at: `#/f/${folder.id}` }] : []),
   { name: 'People', at: '#/people' },
   ...(person ? [{ name: 'a person', at: `#/people/${person}` }, { name: "a person's profile", at: `#/p/${person}` }] : []),
+  ...(several ? [{ name: 'a person on several networks', at: `#/people/${several}` }] : []),
   { name: "a channel's About", at: `#/about/c/${bigChannel.id}` },
   { name: 'Search', at: '#/search?q=deploy' },
   { name: 'Notices', at: '#/notices' },
@@ -214,7 +222,18 @@ const PAGES: PageCase[] = [
   { name: 'Settings', at: '#/settings' },
   { name: 'the directory', at: '#/directory' },
   { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
+  ...(mailThread
+    ? [
+        { name: 'a mail thread', at: `#/inbox/c/${mailThread}` },
+        { name: 'a mail thread, details open', at: `#/inbox/c/${mailThread}`, prefs: { details: true } },
+      ]
+    : []),
+  ...(postsConv ? [{ name: 'the posts the hub logged', at: `#/inbox/c/${postsConv.id}` }] : []),
   { name: 'Feed', at: '#/feed' },
+  // A post's thread and a mail thread that branches (docs/places.md "A thread as a chat or a tree"): the switch row,
+  // the replies as a chat and a tree, the box at the bottom with its account. The demo's X post with replies.
+  { name: "a post's thread", at: '#/inbox/c/pst_x_1900000000000104729' },
+  ...(cabin ? [{ name: 'a mail thread that branches', at: `#/inbox/c/${cabin.id}` }] : []),
   { name: 'Notification calibration', at: '#/calibration' },
 ];
 

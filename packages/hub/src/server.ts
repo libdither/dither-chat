@@ -6,6 +6,7 @@ import { codeBuild } from './restarts.ts';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
+import { personPosts, withPublic } from './personposts.ts';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
 import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
@@ -1725,9 +1726,13 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown; warning?: unknown }>();
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown; warning?: unknown; media?: unknown }>();
       try {
-        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account, warning: b.warning });
+        // Pictures with a reply (a thread's box, docs/places.md "The box"): upload ids, as the Feed page's composer sends them.
+        const ids = Array.isArray(b.media) ? b.media.filter((x): x is string => typeof x === 'string') : [];
+        const media = ids.length ? await this.postFiles(ids) : undefined;
+        if (ids.length && !media) throw new PostsError('A picture is gone from the hub: add it again.', 410);
+        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account, warning: b.warning, ...(media?.length ? { media } : {}) });
         this.flush();
         return ok(v);
       } catch (e) {
@@ -1898,8 +1903,9 @@ export class HubServer {
         // With mail (docs/mail.md "Mail as chats"): their mail with you alone, merged in by the same cursor, and what
         // they wrote in threads with others in the page's range.
         const places = ref.kind === 'person' ? mailPlaces(this.opts.mail) : null;
-        if (ref.kind === 'person' && places?.chat) return ok(personPage(this.opts.mail!, places, s, ref.personId, before, limit));
-        return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
+        // And what they wrote to you in public, as short rows the same way (personposts.ts withPublic).
+        if (ref.kind === 'person') return ok(withPublic(s, ref.personId, before, places?.chat ? personPage(this.opts.mail!, places, s, ref.personId, before, limit) : s.personTimeline(ref.personId, before, limit)));
+        return ok(s.mergedTimeline([ref.conversationId], before, limit));
       }
       if (m[2] === '/messages' && method === 'POST') {
         const b = await body<SendBody & { route?: { conversationId?: string; accountId?: string } }>();
@@ -1930,6 +1936,11 @@ export class HubServer {
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stream$/)) && method === 'GET') {
       if (!s.one('SELECT 1 FROM conversation WHERE id = ?', m[1])) return bad('no such conversation', 404);
       return ok(s.mergedTimeline(s.channelStream(m[1]), parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
+    }
+    // Their public posts as the hub logged them, newest first (personposts.ts, docs/places.md "A person's networks").
+    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/posts$/)) && method === 'GET') {
+      const v = personPosts(s, m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 30, 100), url.searchParams.get('toYou') === '1');
+      return v ? ok(v) : bad('nobody by that id', 404);
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));

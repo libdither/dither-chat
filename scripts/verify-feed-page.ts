@@ -344,7 +344,7 @@ try {
   await tap('.feed-entry[data-test="routing"] .post-text');
   await page.until(`document.querySelectorAll('.feed-thread .ct [data-post]').length > 3`, 10000);
   check('a thread read ahead opens with its replies, never “Reading the replies…”', !(await page.eval<boolean>(`window.__coming`)));
-  check('no Reply button on the post itself: its box is under it', !(await count('.feed-thread .thread-focal .pa-btn.reply')) && (await count('.feed-thread .thread-focal .compose-closed')) === 1);
+  check('one box at the bottom of the thread, none under the post', (await count('.feed-thread .thread-box .compose-text')) === 1 && !(await count('.feed-thread .thread-focal .post-composer')));
 
   // Show more replies, until there are none to show: then it is gone.
   for (let i = 0; i < 5 && (await count('.feed-thread .thread-more')); i++) {
@@ -369,19 +369,14 @@ try {
   await page.until(`[...document.querySelectorAll('.toast')].some((t) => /new repl/i.test(t.textContent))`, 10000);
   check('Check for new replies asks again and says what came', true, await page.eval(`[...document.querySelectorAll('.toast')].map((t) => t.textContent).find((t) => /new repl/i.test(t))`));
 
-  // A reply begun and thought better of: Cancel, and Undo brings it back.
-  await tap('.feed-thread .thread-focal .compose-closed');
-  await page.until(`document.activeElement?.matches('.feed-thread .thread-focal textarea')`, 5000);
+  // The post's Reply puts you in the box; what you begin stays there as the thread's draft.
+  await tap('.feed-thread .thread-focal .pa-btn.reply');
+  await page.until(`document.activeElement?.matches('.feed-thread .thread-box .compose-text')`, 5000);
+  check('the post’s Reply puts you in the box at the bottom', true);
   await typeText('A reply I think better of.');
-  await tap('.feed-thread .thread-focal .compose-cancel');
-  await page.until(`!!document.querySelector('.feed-thread .thread-focal .compose-closed')`, 5000);
-  check('Cancel closes the reply box', true);
-  await page.until(`[...document.querySelectorAll('.toast')].some((t) => /Reply discarded/.test(t.textContent))`, 5000);
-  await page.eval(`[...document.querySelectorAll('.toast')].find((t) => /Reply discarded/.test(t.textContent)).setAttribute('data-test', 'discarded')`);
-  await tap('.toast[data-test="discarded"] .toast-action');
-  await page.until(`document.querySelector('.feed-thread .thread-focal textarea')?.value === 'A reply I think better of.'`, 5000);
-  check('…and Undo brings back what was written', true);
-  await tap('.feed-thread .thread-focal .compose-cancel');
+  await page.eval(`(() => { const t = document.querySelector('.feed-thread .thread-box .compose-text'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await page.until(`document.querySelector('.feed-thread .thread-box .compose-text')?.value === '' && document.querySelector('.feed-thread .thread-box .compose-send')?.disabled`, 5000);
+  check('…and an emptied box has nothing to send', true);
   await page.eval(`history.back()`);
   await page.until(`!document.querySelector('.feed-thread')`, 5000);
 

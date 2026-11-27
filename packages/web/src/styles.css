@@ -1768,10 +1768,18 @@ button.inbox-status:hover {
   margin: 6px 16px 4px;
   padding: 2px;
   align-self: flex-start;
+  /* A row wider than the page (a person on six networks, on a phone) scrolls sideways. */
+  max-width: calc(100% - 32px);
+  overflow-x: auto;
+  scrollbar-width: none;
   border-radius: 8px;
   background: var(--bg-hover, var(--border-soft));
 }
 .view-switch-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 10px;
   border: none;
   border-radius: 6px;
@@ -3406,6 +3414,12 @@ button.inbox-status:hover {
 }
 .msg.head > .msg-actions {
   top: -16px;
+}
+/* A name line that ends in a tag you can press (a route's, a mail's subject: `.route-tag`) is not empty on its right
+   once the pane is narrow: there the bar would cover the tag, and a press meant for it would land on a reaction. It
+   stays whole above such a line. */
+.msg.head:has(.route-tag) > .msg-actions {
+  top: -34px;
 }
 .icon-btn.emoji {
   font-size: 16px;
@@ -17490,8 +17504,7 @@ button.pair-last:hover {
   font-size: 10px;
   color: var(--text-faint);
 }
-/* After the line, the one control a person's chat adds: the other routes' networks and their number, or "only
-   this ✕" while one route is shown (which returns to all). */
+/* After the line while one route is shown: "only this ✕", which returns to all. */
 .pair-more {
   display: inline-flex;
   align-items: center;
@@ -17506,23 +17519,6 @@ button.pair-last:hover {
   color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
-}
-.pair-dd-btn:hover .pair-more,
-.pair-dd-btn.open .pair-more {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-.pair-more-nets {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-right: 1px;
-}
-/* A phone's line has room for the network's name or the other networks' icons, and the name says more. */
-@media (max-width: 520px) {
-  .pair-more-nets {
-    display: none;
-  }
 }
 .pair-only {
   align-self: center;

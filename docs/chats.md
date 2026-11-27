@@ -184,7 +184,7 @@ once (meta `name_source_set`, MIGRATIONS 2 → 3): a name one of their accounts 
 | call | does |
 | --- | --- |
 | `GET /api/chats/:id` | `ChatView`: name, `nameSource`, `routes` (each with their identity, yours, last message time, unread), `route` (the default route, with `why: 'chosen' \| 'latest'`) |
-| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). `name` is refused (400): a nickname is `{ nickname }` on the person or the account |
+| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). An email route is chosen the same way, `{ conversationId: 'email:<account>:<address>', accountId: <mail account> }`, and gives way by the same rule; a chat send without a route still never goes by mail. `name` is refused (400): a nickname is `{ nickname }` on the person or the account |
 | `PATCH /api/persons/:id` | `{ nickname: string \| null }` gives the person your nickname, no account's, or takes it away (null or empty); `{ nameFrom }`, `{ face }` and `{ picture }` as in docs/profile.md. `name` is refused (400) |
 | `PATCH /api/identities/:id` | `{ nickname: string \| null }` gives one account your nickname, or takes it away (null or empty); answers `{ identity }`, and other open views hear of it as an `identity` event (and a `person` event when their name follows). 400 for your own accounts, 404 for an unknown one |
 | `GET /api/chats/:id/messages?before=<ts>:<id>&limit=` | every route's messages as one timeline, newest page first |
@@ -208,7 +208,8 @@ conversations too and pages with the same cursor.
 A chat of several routes is one page: the page any conversation has (`PersonChat` uses the same header, timeline and
 message box as `ConversationPane`), with every route interleaved. Opening any DM of theirs, from anywhere, shows it,
 sending through that DM; `#/people/<id>` shows the same page. With one route, a person's page is that conversation's
-page, exactly.
+page, exactly, unless they also post where your accounts read: then it is their page, with a Posts tab
+(docs/places.md "A person's networks").
 
 It adds detail only as the chat needs it. **One rule decides everything it adds** (`tells` in `chatroutes.ts`): for a
 route among the chat's routes, what tells it apart. Of the routes on the same network as this one:
@@ -233,7 +234,10 @@ What it adds to a conversation's page:
   where yours differ (`via zyn.alt`), after yours it is theirs where theirs differ (`to kit.work`), and the network's
   icon leads where the chat spans networks. Where nothing is left (Mo's messages: the head already says `mo.codes` or
   `mo.draws`), there is no tag. It is a button: a click sends through that route, and its title says so in full
-  ("Send as zyn.alt to kit.work on Discord"). A long run on one route reads like that conversation's own page, with
+  ("Send as zyn.alt to kit.work on Discord"). The bar that shows over a hovered message (reactions, reply, more)
+  sits whole above a head line that has a tag, a route's or a mail's subject: on the line itself, as it sits for
+  other heads, it covered the tag once the pane was narrow, and a press meant for the tag reacted to the message
+  instead. A long run on one route reads like that conversation's own page, with
   the accounts' names. Until 2026-11-11 a row of its own (the network's icon, their name, yours, and "sending here")
   stood above each run, and then, for a day, the tag said the route's whole label.
 - **The picture's badge**, the same badge an inbox row has (the network, and dots for your accounts), only when it
@@ -254,11 +258,14 @@ What it adds to a conversation's page:
   group how many people are in it (`6 people`). Until 2026-11-20 that line was `Discord › Groups › <the name again>
   via ● account`, the network's name spelled out and the account only where you had more than one, and the
   picture and name had a button's padding, so the name started 6 px right of the line under it; now they line up.
-  **A chat of several routes adds one control after the line**, a pill of the other
-  routes' networks (their icons, at most three, left out on a phone) and how many routes more: `+7 ▾`. The whole line
-  opens the list: press and drag down to a row and let go, click and click again, or Enter (or ↓) then the arrows,
-  Enter and Escape. Picking a route shows its history alone and sends through it, without leaving the address; the
-  line then says that route and the pill becomes `only this ✕`, whose ✕ returns to all chats together.
+  **In a chat of several routes the whole line opens the list** (a small ▾ after it says so): press and drag down
+  to a row and let go, click and click again, or Enter (or ↓) then the arrows, Enter and Escape. Picking a route
+  shows its history alone and sends through it, without leaving the address; the line then says that route,
+  `only this ✕` follows it, whose ✕ returns to all chats together, and the switch row has its network chosen.
+  Until 2026-11-26 a pill after the line (`+7 ▾`) was the only way to the other networks.
+- **The switch row** under the head: All, then each network they are on, with its unread, so one network's routes can
+  be read together and sent through in one click; Ctrl+Shift+] and [ move along it from the message box
+  (docs/places.md "A person's networks").
 - **The list** is a card: their picture, name and what they come to ("7 accounts · 8 chats · 4 networks", leaving out
   a count of one), with All, which shows every route together. Then the routes. A network with two or more routes
   has a small heading in its colour (Discord, Matrix) over them; routes alone on their network come after those,
@@ -283,10 +290,11 @@ What it adds to a conversation's page:
   more of your accounts sit has the same line for the one choice it has: "To #general · via main" (`SendAsLead`), the
   account a token that switches or opens a menu; until 2026-11-16 that was a chip at the box's start. Until 2026-11-14 it took the placeholder's place, as a dashed link, and jumped to the box's top
   edge once typed in; then, on a computer, it was a row of its own over the box, under the typing line's.
-- **The header's buttons** are a conversation's, bare icons with their names in their titles: call, search,
-  notifications (a bell; a dot and the rule's own icon where a rule other than Automatic holds), details, and for a
-  group or channel its about page. A DM's profile is its picture and name and the details panel's Profile. A phone
-  keeps call and search and puts the rest under ⋯: profile or about, details, and the notification rules. Until
+- **The header's buttons** are a conversation's, bare icons with their names in their titles, in the order every
+  place's head has them ([places.md](places.md#the-head)): call, for a group or channel its about page, search,
+  notifications (a bell; a dot and the rule's own icon where a rule other than Automatic holds), details. A DM's
+  profile is its picture and name and the details panel's Profile. A phone keeps call and search and puts the rest
+  under ⋯: profile or about, details, and the notification rules. Until
   2026-11-20 they were outlined buttons, notifications and call with their names, and a DM had a profile button. With all chats shown
   they act on every route: search is `in:<person id>` (the hub reads a person's id as every direct conversation with
   them), and a notification rule is set on each. With one route picked, search is `in:<conversation>`. A call goes
@@ -326,8 +334,8 @@ anchoring scrolls by whole pixels. A message you send goes to the newest end fro
 
 - **Groups as one chat.** The same group on two networks (every member on both) needs a stored link, `group_link`,
   that you make. `chatRef` would then accept a group id.
-- **Read state per route.** Reading the chat reads every route. Reading with one route picked reads that conversation only,
-  as before.
+- **Read state per route.** Reading the chat reads every route. Reading with one network's tab or one route picked
+  reads only what is shown.
 - **Mute.** Muting a person is already a person rule, so it covers routes that come later. A mute on one conversation
   stays on that conversation.
 - **A route choice reaching other devices live.** Another device sees it the next time it opens the page, not at once.

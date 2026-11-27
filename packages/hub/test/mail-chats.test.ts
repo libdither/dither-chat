@@ -416,3 +416,38 @@ describe('mail chats of their own and the routes list', () => {
     expect(seen(ids[1])).toBe(0);
   });
 });
+
+describe('an email route as the chosen route', () => {
+  const chat = () => `/api/chats/${encodeURIComponent(`person:${sam()}`)}`;
+  const route = { conversationId: `email:${ACC}:${SAM.email}`, accountId: ACC };
+
+  test('PATCH keeps it as the chat route, and the next GET starts there', async () => {
+    const r = await call<P.ChatView>('PATCH', chat(), { route });
+    expect(r.status).toBe(200);
+    expect(r.json.route).toMatchObject({ ...route, why: 'chosen' });
+    const again = await call<P.ChatView>('GET', chat());
+    expect(again.json.route).toMatchObject({ ...route, why: 'chosen' });
+  });
+
+  test('an email route of someone else, or through the wrong account, is not this chat’s', async () => {
+    const theo = await call('PATCH', chat(), { route: { conversationId: `email:${ACC}:${THEO.email}`, accountId: ACC } });
+    expect(theo.status).toBe(409);
+    const wrong = await call('PATCH', chat(), { route: { conversationId: route.conversationId, accountId: ACC2 } });
+    expect(wrong.status).toBe(409);
+  });
+
+  test('a chat send with no route still goes through a chat route, never mail', async () => {
+    const asked = await call('POST', `${chat()}/messages`, { body: 'hi', route });
+    expect(asked.status).toBe(409);
+  });
+
+  test('a message on another route since gives the choice way, as a chat route’s does', async () => {
+    await call('PATCH', chat(), { route });
+    const sig = store.account(store.one<{ id: string }>("SELECT id FROM account WHERE network = 'signal'")!.id)!;
+    store.ingest(sig, { t: 'message', message: { nativeId: 's-after-choice', conversation: 'dm-sam', author: 'aci-sam', ts: Date.now() + 60_000, body: 'later on Signal' } });
+    store.flush();
+    const v = await call<P.ChatView>('GET', chat());
+    // The Signal DM's, where the latest message came.
+    expect(v.json.route).toMatchObject({ conversationId: store.one<{ id: string }>("SELECT id FROM conversation WHERE native_id = 'dm-sam'")!.id, accountId: sig.id, why: 'latest' });
+  });
+});

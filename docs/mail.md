@@ -80,7 +80,8 @@ The people you write to by mail join the people the hub already knows (`hub/src/
   behind each address (`MailAddressView.identityId`, `personId`; `MailThreadView.personIds`).
 - **When an account's mail is deleted** (24 h after access ended), the identities and persons only it held go too;
   a person you merged or named keeps its address.
-- Email-only people are not in the People list (it lists people you have chats with) or in the graph.
+- Someone you have mail with alone is in the People list, as anyone with a chat is: their mail is a route of their
+  chat (above). Someone only ever Cc'd with others has no route, so no row, and is not in the graph.
 
 How: `mail_party` (`schema-people.sql`) holds who is on each thread and how (sent, written to, in a thread you wrote
 in, the name used), kept by `MailStore.recompute`'s hook in the same transaction, so `mailPeople(hub).sender(address)`
@@ -199,14 +200,28 @@ asked for, never copied into the message table.
   header (the tile, the name, and beneath it up to two of the people on it, from its mails' From, To and Cc, then "+3",
   a click listing everyone), the mail
   lists' rows and search hits (the name over who wrote), and Ctrl+K and search's Jump to, which find it by its
-  people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive, with
-  Star and Trash in ⋯. In a mail message's menu the thread's trash comes last, under a line of its own.
+  people's names and addresses too. Every thread has the same grey envelope tile.
+- **A thread's head** is the head every place has ([places.md](places.md#the-head)): Archive, the bell, Details and ⋯.
+  The bell sets the thread's own rule, as a chat's does (Always alert, List only or Mute: "Triage and notifications"
+  below). Details opens the thread's panel where a chat's opens (`ui/MailDetails.tsx`): who is on it with their
+  addresses, its files and links, when it started and its newest mail, the account it is in, and Archive, Star and
+  Trash. ⋯ and a right-click on the head hold the thread's filing (Mark read, Star, Move to, Junk, Trash). A phone keeps
+  Archive and puts the bell and Details under ⋯. A thread has no Search in its head yet (places.md says what it would
+  take). In a mail message's menu the thread's trash comes last, under a line of its own.
+- **A thread as a tree** (web `mail/threadtree.ts`, `MailThreadBody` in `ui/Timeline.tsx`; docs/places.md "A thread as
+  a chat or a tree"): a thread's own chat where some mail has two answers or more has a switch row, **Chat · Thread**.
+  Thread puts each mail under the one it answers (its `inReplyTo` to the Message-ID of a mail in the thread): one
+  answer goes on in the same column, two or more step in, each a branch with a rail that folds it to "N more mails".
+  The page reads the rest of the thread in first, up to 200 mails; a longer thread, or one where nobody branched,
+  has no row and reads as Chat. Chat is the default, and the pick is kept on the device (`dither.mailthread.show`).
+  Each mail is the chat's own row, with all it has there.
 - **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
   for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
   again); `rung` when one is chosen or taken back.
 - **Marking read** what a chat showed: `POST /api/mail/flag {messageIds, seen: true}` marks only those messages.
 
-Tests: `hub/test/mail-chats.test.ts`.
+Tests: `hub/test/mail-chats.test.ts`; `verify-mail.ts` (a thread's head: Archive, the bell muting it, Details listing
+its people, and on a phone ⋯ holding both).
 
 ## Sending (slice 5)
 
@@ -687,6 +702,10 @@ scored thread in the window, Inbox paged by date while a score changes), `web/te
   mail lowers Sam's importance on Signal once the two are one person, and the reverse. The author is read as it is
   now, so a merge after the mark counts. A mail notification you left alone teaches nothing: as in chat, only what
   you did counts.
+- **A thread's own rule**, set from the bell in its head (a conversation rule on the thread's id, `PUT /api/rules`):
+  Always alert makes each new mail in it an alert (never when the sender looks spoofed); List only keeps it to the
+  list, even from someone set to Always alert; Mute silences it, as a muted thread is. Mail reads no other rule: not an
+  account's, Email's or a global one.
 - **What keeps it quiet**: from a sender set to Always alert, a body that warns of spoofing (a name that is another
   address, Reply-To elsewhere, a link that says one site and goes to another) is no alert ("No alert: …"), only a
   row on the list or below it. Quiet hours hold an alert as a list row, into chat's summary. Mail that reached the

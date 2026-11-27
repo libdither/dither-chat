@@ -268,6 +268,29 @@ describe('what notifies', () => {
     expect(w.sent.map((n) => n.messageId)).toEqual([w.mid('<m1@x>')]);
   });
 
+  test("a thread's own rule, from its head's bell: Always alert, List only, Mute", async () => {
+    const w = await world();
+    const first = await w.arrive({ messageId: '<r1@x>', subject: 'Plans' });
+    expect(first).toMatchObject({ decision: 'digest' });
+    const thread = w.tid('<r1@x>');
+    const next = (n: number) => w.arrive({ messageId: `<r${n}@x>`, subject: 'Re: Plans', inReplyTo: '<r1@x>', references: ['<r1@x>'] });
+    w.chat.setRule('conversation', thread, 'all');
+    const loud = await next(2);
+    expect(loud).toMatchObject({ decision: 'push', delivered: 1, decided_by: 'rules' });
+    expect(JSON.parse(loud!.reasons)).toEqual(['This thread is set to always alert']);
+    // List only keeps even someone set to always alert to the list.
+    w.alwaysAlert(SAM);
+    w.chat.setRule('conversation', thread, 'digest');
+    const listed = await next(3);
+    expect(listed).toMatchObject({ decision: 'digest' });
+    expect(JSON.parse(listed!.reasons)).toContain('This thread is set to List only');
+    w.chat.setRule('conversation', thread, 'none');
+    expect(await next(4)).toMatchObject({ decision: 'silent', delivered: 0 });
+    // Automatic again: the person's rule holds.
+    w.chat.setRule('conversation', thread, null);
+    expect(await next(5)).toMatchObject({ decision: 'push' });
+  });
+
   test('a sender who looks spoofed never alerts, always alert or not: the list at most', async () => {
     const w = await world();
     w.alwaysAlert(SAM);

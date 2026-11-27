@@ -207,6 +207,9 @@ export function usePager(app: { current: HTMLElement | null }, card: { current: 
         return visible ? 'pull' : null;
       }
       if (scrollsSideways(target, root, dx) || g!.sideways?.(dx)) return null;
+      // A switch row wider than the page (docs/places.md) is dragged along, at its ends too: never a swipe back.
+      const row = target.closest<HTMLElement>('.view-switch');
+      if (row && row.scrollWidth > row.clientWidth + 1) return null;
       const w = root.clientWidth;
       const inCard = !!card.current?.contains(target);
       const inDetails = !!target.closest('.details');

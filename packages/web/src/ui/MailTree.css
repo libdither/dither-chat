@@ -1,0 +1,61 @@
+/* A mail thread as a tree (Timeline `tree`, docs/places.md "A thread as a chat or a tree"): each branch steps in by
+   its depth, with a rail on its left that folds it. */
+.mail-tree-row {
+  position: relative;
+  padding-left: calc(var(--depth, 0) * 18px);
+}
+.mail-tree-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--depth, 0) * 18px - 12px);
+  width: 10px;
+  padding: 0;
+  border: 0;
+  background: linear-gradient(var(--border), var(--border)) center / 2px 100% no-repeat;
+  cursor: pointer;
+}
+.mail-tree-rail:hover,
+.mail-tree-rail:focus-visible {
+  background-image: linear-gradient(var(--accent), var(--accent));
+}
+.mail-tree-row.head > .mail-tree-rail {
+  top: 10px;
+}
+/* Where a branch begins, its rail turns in toward the mail: a mail under the turn answers the one above the branch,
+   a mail further down the same rail answers the mail before it. */
+.mail-tree-row.head > .mail-tree-rail::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 4px;
+  width: 9px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.mail-tree-row.head > .mail-tree-rail:hover::before,
+.mail-tree-row.head > .mail-tree-rail:focus-visible::before {
+  background: var(--accent);
+}
+.mail-tree-more {
+  margin: 0 0 6px 64px;
+  padding: 2px 0;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.mail-tree-more:hover {
+  text-decoration: underline;
+}
+@media (max-width: 820px) {
+  .mail-tree-row {
+    padding-left: calc(var(--depth, 0) * 12px);
+  }
+  .mail-tree-rail {
+    left: calc(var(--depth, 0) * 12px - 10px);
+  }
+  .mail-tree-more {
+    margin-left: 48px;
+  }
+}

@@ -180,6 +180,62 @@ export function Count({ n, muted }: { n: number; muted?: boolean }) {
   return <span class={`count ${muted ? 'muted' : ''}`}>{n > 99 ? '99+' : n}</span>;
 }
 
+/** One tab of a place's switch row (docs/places.md "The switch row"). */
+export interface PlaceTab<T extends string = string> {
+  id: T;
+  label: string;
+  /** Drawn before the label: a network's glyph, a view's icon. */
+  icon?: ComponentChildren;
+  /** Unread there, as a count after the label. */
+  count?: number;
+  /** The tooltip, where the label does not say it all. */
+  title?: string;
+}
+
+/**
+ * The switch row under a page's header: the ways one place can be looked at. A channel's Stream, Topics and own
+ * messages; a person's networks (All, Signal, Email, Posts); a thread as a chat or a tree. One row, one look and the
+ * same keys wherever a place has more than one way: a click or Enter picks, the arrow keys move through the tabs as
+ * through radio buttons, Home and End go to the ends. A row that is too wide scrolls sideways (a phone).
+ * `track` names the row in the click log ("channel view", "person tab"): a tab is logged as `<track> <id>`.
+ */
+export function PlaceTabs<T extends string>({ tabs, value, onPick, label, track, class: cls }: { tabs: readonly PlaceTab<T>[]; value: T; onPick: (id: T) => void; label: string; track: string; class?: string }) {
+  const row = useRef<HTMLDivElement>(null);
+  if (tabs.length < 2) return null;
+  const at = Math.max(0, tabs.findIndex((t) => t.id === value));
+  const key = (e: KeyboardEvent) => {
+    const to = e.key === 'ArrowRight' ? at + 1 : e.key === 'ArrowLeft' ? at - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
+    if (to === null || e.altKey || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    const next = tabs[(to + tabs.length) % tabs.length];
+    if (next.id !== value) onPick(next.id);
+    // The row is drawn again with the new tab chosen: the focus follows it there.
+    requestAnimationFrame(() => row.current?.querySelector<HTMLElement>(`[data-tab="${CSS.escape(next.id)}"]`)?.focus());
+  };
+  return (
+    <div class={`view-switch ${cls ?? ''}`} role="tablist" aria-label={label} ref={row} onKeyDown={key}>
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={t.id === value}
+          tabIndex={t.id === value ? 0 : -1}
+          class={`view-switch-btn ${t.id === value ? 'on' : ''}`}
+          data-tab={t.id}
+          data-track={`${track} ${t.id}`}
+          title={t.title}
+          onClick={() => t.id !== value && onPick(t.id)}
+        >
+          {t.icon}
+          {t.label}
+          {!!t.count && <Count n={t.count} />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Dialogs on a phone are bottom sheets: same content, a grabber, and drag down or press back to close. */
 function useDialog(onClose: () => void) {
   const box = useRef<HTMLDivElement>(null);

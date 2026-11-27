@@ -1,0 +1,23 @@
+/* A person's page (Pairs.tsx): the parts it adds that the conversation's chunk draws. */
+
+/* "Also Mom on Signal · Same person? Join · Not them", one slim line under the head. */
+.same-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 5px;
+  margin: 2px 16px 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.same-line .link-btn {
+  font-size: inherit;
+}
+.same-line-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.same-line-q {
+  color: var(--text-faint);
+}

@@ -20,7 +20,7 @@ import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DemoStage, demoStageSeed } from './demostage.ts';
-import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
+import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX, X } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
 import { DEMO_CLOCKS_ACCOUNT, DemoClocks, demoClocksOn } from './demo-clocks.ts';
@@ -3475,7 +3475,17 @@ export function applyDemoOverlay(store: Store) {
   }
   const alice = merge('Alice Chen', ['signal', S.alice], ['discord', D.alice], ['matrix', M.alice], ['whatsapp', W.alice], ['telegram', TG.alice]);
   const sam = merge('Sam Rivera', ['signal', S.sam], ['matrix', M.sam]);
-  merge('Theo', ['signal', S.theo], ['discord', D.theo]);
+  // Their mail is part of their chat (docs/mail.md "Mail as chats"): the address seedDemoMail writes from is theirs,
+  // whichever comes first, this or the mail (MailPeople.place reuses the identity and its person). Mom and Jo Park
+  // stay apart, so the Same person? flow has someone to show (scripts/verify-profile.ts).
+  const mailOf = (address: string, name: string) => store.ensurePerson(store.emailIdentity(address, name));
+  store.mergePersons(alice, mailOf('alice.chen@example.org', 'Alice Chen'));
+  store.mergePersons(sam, mailOf('sam@rivera.example', 'Sam Rivera'));
+  const theo = merge('Theo', ['signal', S.theo], ['discord', D.theo]);
+  // Theo posts on X too, and the hub logged some of it (demo-x.ts loggedPosts): their page has a Posts tab
+  // (docs/places.md "A person's networks"). X's Alice and Ravi stay apart, for the Same person? flow
+  // (scripts/verify-people-links.ts, verify-same-person.ts).
+  if (store.one('SELECT 1 FROM identity WHERE id = ?', idn('x', X.theo))) store.mergePersons(theo, personOf('x', X.theo));
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
   if (MULTI_ACCOUNT) merge('Mo', ['discord', MO.main], ['discord', MO.art]);
   if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);
@@ -3676,6 +3686,17 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
   }
   if (process.env.DITHER_DEMO_MAIL_PROTON) seedDemoProton(fake, now);
   if (process.env.DITHER_DEMO_MAIL_GMAIL) seedDemoGmail(fake, now);
+  // A thread that branches (docs/places.md "A thread as a chat or a tree"): Rosa asks you and Jo, both answer Rosa's
+  // mail, and Rosa answers yours. Its page offers Chat and Thread.
+  {
+    const rosa = { name: 'Rosa Lind', email: 'rosa@lind.example' };
+    const cabin = (k: string) => id(`cabin-${k}`);
+    const subject = 'Cabin weekend in March';
+    put({ messageId: cabin('1'), from: [rosa], to: [ME, jo], subject, receivedAt: now - 2 * D, text: 'The cabin is free from the 14th to the 16th. Who is in? I can drive two more.\n\nRosa' });
+    put({ mailboxId: 'Sent', messageId: cabin('2'), inReplyTo: cabin('1'), references: [cabin('1')], from: [ME], to: [rosa, jo], subject: `Re: ${subject}`, receivedAt: now - 2 * D + 3 * H, text: 'In! I will bring the board games and something for dinner on Saturday.' });
+    put({ messageId: cabin('3'), inReplyTo: cabin('1'), references: [cabin('1')], from: [jo], to: [rosa, ME], subject: `Re: ${subject}`, receivedAt: now - 2 * D + 5 * H, text: 'Count me in, but I can only come on the 15th. Is there a bus?\n\nJo' });
+    put({ messageId: cabin('4'), inReplyTo: cabin('2'), references: [cabin('1'), cabin('2')], from: [rosa], to: [ME, jo], subject: `Re: ${subject}`, receivedAt: now - 20 * H, flags: { seen: false }, text: 'Perfect, dinner on Saturday is yours. I will get the firewood.' });
+  }
 }
 
 /**

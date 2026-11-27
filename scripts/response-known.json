@@ -565,6 +565,54 @@
   "a mail list / mail-row.row": [
    "M$1"
   ],
+  "a mail thread / Profile of Sam Rivera": [
+   "M$1"
+  ],
+  "a mail thread / Profile of Zyan": [
+   "M$1"
+  ],
+  "a mail thread / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a mail thread / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail thread that branches / Profile of Jo Park": [
+   "M$1"
+  ],
+  "a mail thread that branches / Profile of Rosa Lind": [
+   "M$1"
+  ],
+  "a mail thread that branches / Profile of Zyan": [
+   "M$1"
+  ],
+  "a mail thread that branches / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a mail thread that branches / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail thread, details open / Profile of Sam Rivera": [
+   "M$1"
+  ],
+  "a mail thread, details open / Profile of Zyan": [
+   "M$1"
+  ],
+  "a mail thread, details open / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a mail thread, details open / hub: a visit counted": [
+   "M$1"
+  ],
+  "a mail thread, details open / mail details: person": [
+   "M$1"
+  ],
   "a person / # people": [
    "AddButton",
    "HoverReactions",
@@ -580,6 +628,41 @@
    "RowTyping"
   ],
   "a person / held: the app's clocks": [
+   "Ago"
+  ],
+  "a person on several networks / Profile of Alice Chen": [
+   "CallMark",
+   "Count",
+   "PersonRow",
+   "RowTyping"
+  ],
+  "a person on several networks / elsewhere close": [
+   "AccountDots",
+   "Attachments",
+   "Avatar",
+   "Body",
+   "CallMark",
+   "ContactCards",
+   "Count",
+   "DisappearsMark",
+   "Embeds",
+   "Icon",
+   "InviteCards",
+   "M$1",
+   "Marks",
+   "MessageItem",
+   "MissingFiles",
+   "PersonRow",
+   "ReactionBar",
+   "RichHead",
+   "RichMarks",
+   "RouteTag",
+   "RowTyping",
+   "SendFailures",
+   "StoryReplyLine",
+   "TriageNote"
+  ],
+  "a person on several networks / held: the app's clocks": [
    "Ago"
   ],
   "a person's profile / Message": [
@@ -604,6 +687,14 @@
    "NetGlyph",
    "PersonRow",
    "RowTyping"
+  ],
+  "a post's thread / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a post's thread / hub: a visit counted": [
+   "M$1"
   ],
   "the directory / hub: a visit counted": [
    "SpacesEntry"
