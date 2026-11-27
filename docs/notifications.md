@@ -96,61 +96,89 @@ taken back on the old route takes back the answer it stood as.
 
 ### The calibration feed
 
-One page, **Notification calibration** (`#/calibration`, `calfeed.ts`, `CalibrationPane.tsx`), of the last three
-days' notifications as they looked, each with three answers: **Sound**, **Show**, **Inbox**. Nothing pops up for it
-anywhere: the inbox has a quiet row with the count of cards waiting, like Requests and Notices (no sound, no push), and
-Settings → *Ask me* links to it.
+One page, **Notification calibration** (`#/calibration`, `calfeed.ts`, `CalibrationPane.tsx`), of the one or two
+notifications a day most worth asking about, each as it looked, with three answers: **Sound**, **Show**, **Inbox**.
+Nothing pops up for it anywhere: the inbox has a quiet row with the count of cards waiting, like Requests and Notices
+(no sound, no push), only while there is a card, and Settings → *Ask me* links to it.
 
-Each item draws the notification as you came across it: its picture, network, who, the text and the time, in the look
-it had (the phone's shade, a toast or browser notification, or only a row in the app when none went out). Under each
-answer a bar, on a fixed scale of 0 to 100%:
+**First, what you say in place.** The model learns from the answers and marks you give where you see a message
+(Louder, Quieter, Less like this, Should have alerted, Alert was wrong, a notification's buttons; on chat messages,
+notices and mail: [What it learns from](#what-it-learns-from)). The feed asks nothing until there are 20 of them
+(`FITTED_AT`; the feed's own answers do not count): at 20, a rate it learns is known to within ±0.22 (95%, at worst),
+enough to tell "mostly wanted" from "mostly not"; with fewer it would only ask what it cannot yet use. Until then the
+page says how far along it is, with a bar.
+
+**What it asks about.** Only notifications that reached one of your devices (a push server took it, or a device said
+it was delivered, shown or tapped), and sounds the model would have made but did not (a loudness of 80 or more that
+was not sent as a sound). A message that only ever sat in the inbox is never asked about.
+
+**What you did** is read only from signals that are about that one message:
+
+| Signal | What you did |
+| --- | --- |
+| An answer or mark of yours on it (a notification's buttons, Louder, Quieter, the old marks) | the band it asks for |
+| A tap on its notification | within 10 minutes Sound, later Show |
+| A reply of yours in its chat within 5 minutes (or from the notification) | Sound |
+| A swipe away | Inbox |
+
+Opening the chat later is not one: in a busy group you open it for other messages. With none of these, what you did
+is not known: the item is never asked about as a surprise, only by what the model itself expects it cost (below). An
+item goes on the feed once what you did is known, or three hours after it came.
+
+**Worth asking** is regret, weighted by what a mistake costs:
+
+```
+cost(said, you)  said ↓ / you →   Sound   Show   Inbox
+                  Sound              0     0.5    0.6
+                  Show               1      0     0.1
+                  Inbox              1     0.15    0
+regret       = cost(the band it gave, what you did) × (1 − its chance of what you did)
+               (what you did unknown: ½ × Σ its chance of each × that one's cost)
+worth asking = regret × 2^(−age / 1 day)
+```
+
+A sound you needed and did not get costs most, a sound you did not want next, a silent mix-up (shown when the inbox
+would do, or the other way) barely: no silent mix-up can reach the bar for a card (0.3). The chances are the loudness
+blurred by how few answers there are about that person or chat (a normal spread of 30 points with none, down to 4),
+cut at the bands. At each round (once an hour, and when the page or the inbox row asks) the most worth asking over 0.3
+among the last two days become **cards**, at most two in any 24 hours (*Ask me*: never, one a day, up to two); the
+rest are kept unseen, scored once. A card is picked outright, so its answer counts once (`cal_item.chance` 1). A card
+waits two days; you would hardly remember the moment after that.
+
+Each card draws the notification as you came across it: its picture, network, who, the text and the time, in the
+look it had (the phone's shade, or a toast or browser notification). Above it, the cost as a picture and no words: a
+bell struck through (a sound you needed), a ringing bell (a sound you did not want) or a quiet row (a silent mix-up),
+and a bar as long as the regret. Under each answer a bar, on a fixed scale of 0 to 100%:
 
 - its fill is the chance the model gave that answer, and a whisker how unsure it was;
-- **▲** marks what you did, read from how soon you opened, tapped or answered it (within 10 minutes of a sound or
-  shown: Sound; within 3 hours: Show; later or never: Inbox);
-- the underlined answer is what the model did (it sounded, showed silently, or sent nothing).
+- **▲** marks what you did, where it is known;
+- the underlined answer is what was done (it sounded, showed silently, or sent nothing).
 
-The chances are the loudness blurred by how few answers there are about that person or chat (a normal spread of 30
-points with none, down to 4), cut at the bands. Tapping an answer sends it and draws the chances again as the model
-gives them after learning it, with a dashed line at the old one. **What was it wrong about?** then opens six parts: the
-person, the chat, the topic, can wait, the moment and the delivery, each with a small bar of which way it pushed this
-one (from taking that part away). Picking parts routes the answer to them only and draws the after-bars again: the
-person moves only want and owed for that author, the chat only that chat's, the topic only the words, can wait only the
-wait, the moment only the moment's cost, and the delivery (it went to the wrong device, or late) teaches the scale
-nothing. With no part picked the answer moves all of them a little. The parts picked are kept with the answer
-(`attn_answer.parts`). The context line (where it was seen, whether it sounded, while a computer was in use) and what
-moved it, by how many points, are under a closed `<details>`, as is **Open the chat**.
-
-**Worth asking.** Each notification gets a score:
-
-```
-surprise    = −log₂ P(what you did), capped at 5 bits
-unsure      = spread of its guess (entropy over the three, 0 to 1) × few answers (1 / (1 + n/5))
-worth asking = (0.6 · surprise/5 + 0.4 · unsure) × 2^(−age / 3 days)
-```
-
-Those over 0.5 may open as **cards**, about three a day (*Ask me*: never, one a day, up to three): each is drawn at
-random with a chance in proportion to its score, `min(1, per day × worth / the day's total)`, and that chance is kept
-(`cal_item.chance`). The scorecard and the learner weigh a card's answer back by it (`min(3, max(1, 0.5 / chance))`),
-so the cards' lean towards surprises does not tilt what is learned. The rest are compact **rows**, three small bars
-each; tapping one opens it in place as a card. The hub draws once an hour, and when the page or the inbox row asks.
+Tapping an answer sends it and draws the chances again as the model gives them after learning it, with a dashed line
+at the old one. **What was it wrong about?** then opens six parts: the person, the chat, the topic, can wait, the
+moment and the delivery, each with a small bar of which way it pushed this one (from taking that part away). Picking
+parts routes the answer to them only and draws the after-bars again: the person moves only want and owed for that
+author, the chat only that chat's, the topic only the words, can wait only the wait, the moment only the moment's
+cost, and the delivery (it went to the wrong device, or late) teaches the scale nothing. With no part picked the answer
+moves all of them a little. The parts picked are kept with the answer (`attn_answer.parts`). The context line (where
+it was seen, whether it sounded, while a computer was in use) and what moved it, by how many points, are under a
+closed `<details>`, as is **Open the chat**.
 
 **A past answer comes back once**, as a dashed card a day after you gave it, when the model had given that answer
 under 20%: what you said, its guess then and its guess now. **Keep** leaves it learned; **Only that once** says it was a
 one-off: it stays in the history but teaches nothing from then on (`attn_answer.until`); **Undo** takes it back, with
 the mark it stood as.
 
-**The ones it is sure of** sit under a closed *N it was sure of* at the end, only when all of these hold: it gave
-what you did 95% or more, there are 30 or more answers about that person or chat, none of them against it in 30 days,
-and it was not a sound held back (quiet hours, a computer in use, a burst). One in 20 of them is still shown, at
-random, and says so.
+One column of cards, on a phone and on a computer. **×** at a card's top right skips it, and so does a swipe of about
+100 px sideways, with **Undo** on the toast. On a computer the chosen card has an accent border; × shows on hover,
+**1**–**3** answer it, **x** skips it, **j** and **k** move, **w** opens what it was wrong about. Escape goes back, as
+everywhere ([desktop.md](desktop.md)). A skip is kept and never counts as an answer. A late answer counts a little less
+in what is learned: in full within a day of the message, then in a straight line down to half at two weeks
+(`lateWeight`).
 
-On a phone: one column; **×** at a card's or row's top right skips it, and so does a swipe of about 100 px sideways,
-with **Undo** on the toast. On a computer: the list on the left, the chosen one open on the right; × shows on hover,
-**1**–**3** answer, **x** skips, **j** and **k** move, **w** opens what it was wrong about. Escape goes back, as
-everywhere ([desktop.md](desktop.md)). Cards and past answers wait up to two weeks; a skip is kept and never counts as an
-answer. A late answer counts a little less in what is learned: in full within a day of the message, then in a straight
-line down to half at two weeks (`lateWeight`).
+Until 2026-11-27 the feed listed every notification of the last three days (cards drawn at random by surprise and
+uncertainty, the rest as rows, the ones it was sure of folded), read what you did from opening the chat, and asked
+before the model had learned anything.
 
 #### Where you saw it
 
@@ -169,13 +197,29 @@ each device's own word on where it showed it (`notification_event.seen`, codes a
 
 Then the push it skipped (`push_skip`: watched on a computer, or capped) and the first time you opened its chat after
 it came and from which list (`visit.source`, on which device). All of it stays in the hub's database. A demo world
-seeds every kind of item with invented devices (`demo-calibration.ts`): cards in the shade, as a toast and as a row,
-past answers, rows, and sure ones.
+seeds the feed with invented devices and marks (`demo-calibration.ts`): first enough marks to fit the model, then a
+sound it missed (shown silently, tapped within a minute) and a sound not wanted (on a laptop, swiped away in seconds)
+as cards, a past answer back, and, kept unseen, a silent mix-up, a notification nothing you did says anything about
+and a message only ever in the inbox.
 
 ### What it learns from
 
-Answers count most (weight 1; a feed answer late a little less, and a card's weighed by its chance: above), as do the
-marks from before. Then what you did: a reply 0.3, an open of five seconds or more 0.1 (never one right after a sound,
+Answers count most (weight 1; a feed answer late a little less: above), and so do the marks, wherever you gave them.
+Each mark on a chat message is kept as an answer of its own (`attn_answer`, source `mark`, `loudlearn.ts`
+`syncMarks`), read again at every start so the marks from before the scale count too, and kept in step when a mark
+changes or is taken back; a mark that an answer already stands for (Louder, Quieter, Could have waited, Shouldn't have
+reached me, or a feed answer against what was done) is not kept twice. Notices' and mail's marks are read where they
+are kept (votes.ts `others`).
+
+| Mark | Teaches |
+| --- | --- |
+| Should have alerted | Sound: wanted, needed within minutes |
+| Alert was wrong | not a sound: not needed within minutes (want unchanged) |
+| Less like this | toward the inbox and unread: want down, can wait hours |
+| A vote from before the tiers (push, quiet, digest, drop) | the band it asked for, at half weight |
+| A notification's Worth it, Could have waited, Louder, Quieter | as in [Answers](#answers) |
+
+ Then what you did: a reply 0.3, an open of five seconds or more 0.1 (never one right after a sound,
 which says only that it sounded), a swipe 0.05. Each part is fitted with the same L2 pooling as the importance. *What
 it learned* in Settings lists what moved most, each with **Forget**. A feed answer also stands as a mark: Show or
 Inbox on one that sounded as Alert was wrong, Sound on one that did not as Should have alerted.
@@ -496,7 +540,8 @@ chats opened within a day, quick answers), once the day's outcomes are in.
 
 What the tiers learn from. The app's **Louder** and **Quieter** stand as these marks (Louder as "Should have
 alerted", Quieter as "Alert was wrong" on an alert and "Less like this" elsewhere), and the route below still takes
-them as they were, from a page or a notification shown before the scale: each such mark is kept as an answer too.
+them as they were, from a page or a notification shown before the scale: each such mark is kept as an answer the scale
+learns from ([What it learns from](#what-it-learns-from)).
 
 - **In the app**, Louder and Quieter on a message (its menu, the bell among its hover actions, and the phone's
   long-press sheet). Mail keeps **Less like this**.
@@ -1078,7 +1123,8 @@ dry run.
 
 The scale: `GET /api/loudness/state` (the mode, your settings, sounds today, cards asked and answered today, what
 waits and what it learned), `PUT /api/loudness/prefs`, `GET /api/loudness/feed/count` (`{ pending }`, the row's
-count), `GET /api/loudness/feed` (`CalFeedView`: the cards, past answers and rows, and the sure ones apart),
+count), `GET /api/loudness/feed` (`CalFeedView`: the cards and past answers, and `fitted`: the in-place signals
+learned from and how many it needs),
 `POST /api/loudness/feed/:id { answer }` (`{ answerId, before, after }`), `POST /api/loudness/feed/:id/parts
 { parts }` (`{ after }`), `POST /api/loudness/feed/:id/settle { settle: keep | once | undo }`,
 `POST /api/loudness/feed/:id/skip { skip }`, `POST /api/loudness/answers { messageId, answer, source, scope? }`

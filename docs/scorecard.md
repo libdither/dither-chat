@@ -111,10 +111,9 @@ no budget: the counts are kept and shown as they are.
 
 From the calibration feed's cards ([notifications.md](notifications.md#the-calibration-feed)), and before
 2026-11-25 the check-ins' random half, weighting each answer by one over the chance it had of being drawn (inverse
-propensity), so the rates lean less towards what was worth asking. A card is drawn in proportion to how worth asking it
-is, so each has a chance well above nothing and the weights stay honest, but only over notifications worth asking
-about at all (those over 0.5): the rates say how the model does where it is unsure or surprised, not across every
-sound. A feed answer counts as the old ones did: Sound on one that sounded as worth it, Show or Inbox on it as could
+propensity). Until 2026-11-27 a card was drawn at random in proportion to how worth asking it was; since, the one or
+two a day with the highest cost-weighted regret are picked outright (chance 1, weight 1), so the rates say how the
+model does on the notifications most likely to have cost you something, not across every sound. A feed answer counts as the old ones did: Sound on one that sounded as worth it, Show or Inbox on it as could
 have waited, Sound on one that did not as wish I'd known sooner, Show or Inbox on it as fine.
 
 - `attn.worth`: of the sounds, the share worth it; `attn.worth_shadow`, the same for those the scale alone would have

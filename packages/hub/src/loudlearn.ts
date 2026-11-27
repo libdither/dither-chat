@@ -19,15 +19,20 @@
  *    for the can-wait buckets), this chat, this person (want and owed, across networks), this topic (the words), the
  *    moment (a sound's cost then, not the message), or "I'd already seen it" (nothing learned: a delivery fault).
  *  - Your own words are read by the local model only, turned into one of the reasons, and never kept.
+ *  - The marks given in place, wherever they were given (syncMarks: kept as answers of source 'mark', read again at
+ *    each start, so the ones from before the scale count too): Should have alerted as Sound (want, and needed within
+ *    minutes); Alert was wrong as not a sound (not needed within minutes; want unchanged); Less like this as want down
+ *    and can wait hours (toward the inbox and unread). The votes from before the tiers as the band they asked for, at
+ *    half weight. Notices' and mail's marks (votes.ts `others`) the same way, from where they are kept.
  *
- * Label weights: answers and marks 1; you answered 0.3; an open of 5 s or more that did not follow a sound 0.1; a
+ * Label weights: answers and marks 1 (votes from before the tiers 0.5); you answered 0.3; an open of 5 s or more that did not follow a sound 0.1; a
  * row swiped away unopened 0.05; an open right after a sound 0 (the sound caused it).
  */
 import type * as P from '@dither-chat/protocol';
 import { bandOf, DEFAULT_ATTENTION_PREFS, CAL_ANSWERS, LOUDER_WHY, QUIETER_WHY } from '@dither-chat/protocol';
-import { words, type Facts, type Namer } from './learn.ts';
+import { OLD_VOTE, words, type Example, type Facts, type Namer } from './learn.ts';
 import { answerWeight, ATTN_WEIGHTS, emptyAttnModel, learnedList, loudness, partPoints, trainAttn, validAttnModel, type AttnExample, type AttnModel, type LoudInput } from './loudness.ts';
-import { CalibrationFeed, ipsWeight, lateWeight, newId } from './calfeed.ts';
+import { CalibrationFeed, IN_PLACE, ipsWeight, lateWeight, newId } from './calfeed.ts';
 import { gatherOutcomes, LATE, OPEN_DWELL, type Outcome } from './labels.ts';
 import { previewText, type Store } from './store.ts';
 import { jobFailed } from './errors.ts';
@@ -70,6 +75,8 @@ type Ask = (question: string, text: string) => Promise<number | null>;
 interface Saved {
   model: AttnModel;
   rejected: string[];
+  /** Learned with the marks given in place (since 2026-11-27): a model from before learns them at the first round. */
+  marks?: boolean;
 }
 
 export class LoudLearner {
@@ -83,6 +90,11 @@ export class LoudLearner {
   /** Mirrors Louder / Quieter onto today's marks (votes.ts), so the tiers keep learning. */
   mark: ((messageId: string, marks: P.TriageMarks) => void) | null = null;
   namer: Namer | null = null;
+  /** Notices' and mail's marks (votes.ts `others`), as the tiers learn them. */
+  others: ((now: number) => Example[]) | null = null;
+  private otherCache: { at: number; examples: AttnExample[] } | null = null;
+  /** Marks found at start that the model has not learned yet: the first round learns them. */
+  private stale = false;
 
   constructor(
     private store: Store,
@@ -93,7 +105,87 @@ export class LoudLearner {
       this.model = saved.model;
       this.rejected = saved.rejected ?? [];
     }
-    this.feed = new CalibrationFeed(store.db, (id) => this.describe(id), { loudNow: (id) => this.loudNow(id), points: (id) => this.points(id) });
+    this.feed = new CalibrationFeed(store.db, (id) => this.describe(id), { loudNow: (id) => this.loudNow(id), points: (id) => this.points(id), signals: (now) => this.signals(now) });
+    // The marks as answers, every start: the ones from before the scale, and any a hub without the scale kept.
+    this.stale = this.syncMarks() > 0 || !saved?.marks;
+  }
+
+  /**
+   * The marks on chat messages (triage.alert_mark, less_mark, and the votes from before the tiers) kept as answers of
+   * source 'mark', one per mark with an id of its own, so this is safe to run again: a mark changed changes its
+   * answer, a mark taken back takes it away. A mark that an answer already stands for (Louder, Quieter, Could have
+   * waited, Shouldn't have reached me, or a feed answer against what was done: they set the marks) is not kept twice.
+   * Returns how many answers changed.
+   */
+  syncMarks(messageId?: string): number {
+    const db = this.store.db;
+    const one = messageId ? ' AND t.message_id = ?' : '';
+    const args = messageId ? [messageId] : [];
+    const rows = db
+      .query(
+        `SELECT t.message_id, t.alert_mark, t.less_mark, t.marked_at, t.feedback, t.feedback_at, t.loud, m.conversation_id, COALESCE(i.person_id, m.author_id) AS author,
+           EXISTS (SELECT 1 FROM notification n WHERE n.message_id = t.message_id AND n.alert = 1) AS sounded,
+           EXISTS (SELECT 1 FROM attn_answer a WHERE a.message_id = t.message_id AND a.source != 'mark'
+             AND (a.answer IN ('louder', 'quieter', 'could_wait', 'shouldnt') OR (a.source = 'feed' AND ((a.sounded = 1 AND a.answer != 'sound') OR (a.sounded = 0 AND a.answer = 'sound'))))) AS mirrored
+         FROM triage t JOIN message m ON m.id = t.message_id LEFT JOIN identity i ON i.id = m.author_id
+         WHERE (t.marked_at IS NOT NULL OR t.feedback IS NOT NULL) AND t.facts IS NOT NULL${one}`,
+      )
+      .all(...args) as Row[];
+    const want = new Map<string, { r: Row; answer: P.AttnAnswer | P.CalAnswer; at: number }>();
+    for (const r of rows) {
+      if (r.mirrored) continue;
+      if (r.marked_at != null && r.alert_mark != null) want.set(`mk_a_${r.message_id}`, { r, answer: r.alert_mark ? 'should_alert' : 'alert_wrong', at: r.marked_at });
+      if (r.marked_at != null && r.less_mark) want.set(`mk_l_${r.message_id}`, { r, answer: 'less', at: r.marked_at });
+      // A vote from before the tiers, unless a mark says more (as votes.ts reads them).
+      const vote = r.feedback === 'push' ? 'sound' : r.feedback === 'quiet' ? 'show' : r.feedback === 'digest' ? 'inbox' : r.feedback === 'drop' ? 'less' : null;
+      if (vote && r.marked_at == null) want.set(`mk_v_${r.message_id}`, { r, answer: vote, at: r.feedback_at ?? 0 });
+    }
+    const had = db.query(`SELECT id, answer, at FROM attn_answer WHERE source = 'mark'${messageId ? ' AND message_id = ?' : ''}`).all(...args) as Row[];
+    let changed = 0;
+    db.transaction(() => {
+      for (const h of had) {
+        const w = want.get(h.id);
+        if (w && w.answer === h.answer && w.at === h.at) want.delete(h.id);
+        else if (!w) {
+          db.query('DELETE FROM attn_answer WHERE id = ?').run(h.id);
+          changed++;
+        }
+      }
+      const put = db.query(
+        `INSERT INTO attn_answer (id, message_id, conversation_id, author, answer, source, band, sounded, at) VALUES (?, ?, ?, ?, ?, 'mark', ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET answer = excluded.answer, band = excluded.band, sounded = excluded.sounded, at = excluded.at`,
+      );
+      for (const [id, w] of want) {
+        put.run(id, w.r.message_id, w.r.conversation_id, w.r.author, w.answer, w.r.loud != null ? bandOf(w.r.loud) : null, w.r.sounded ? 1 : 0, w.at);
+        changed++;
+      }
+    })();
+    return changed;
+  }
+
+  /** Answers and marks given in place, the feed's own aside: what the feed waits for before it asks (calfeed.ts FITTED_AT). */
+  signals(now = Date.now()): number {
+    const n = this.store.one<Row>(`SELECT COUNT(*) AS n FROM attn_answer WHERE ${IN_PLACE} AND (until IS NULL OR until > ?)`, now)?.n ?? 0;
+    return n + this.otherExamples(now).length;
+  }
+
+  /** Notices' and mail's marks as what they teach (markRouted), read again at most every ten minutes. */
+  otherExamples(now = Date.now(), fresh = false): AttnExample[] {
+    if (!this.others) return [];
+    if (!fresh && this.otherCache && now - this.otherCache.at < 10 * MIN && now >= this.otherCache.at) return this.otherCache.examples;
+    const out: AttnExample[] = [];
+    for (const x of this.others(now)) {
+      const base: AttnExample = { facts: x.facts, words: x.words, why: [], importance: 0.3, weight: 0, at: x.at };
+      const e = (y: Partial<AttnExample>): AttnExample => ({ ...base, ...y, weight: x.weight, at: x.at });
+      const marks: string[] = [];
+      if (x.y?.alert === 1) marks.push('should_alert');
+      if (x.y?.alert === 0) marks.push('alert_wrong');
+      if (x.y?.important === 0) marks.push('less');
+      if (!x.y && x.label) marks.push(x.label === 'push' ? 'sound' : x.label === 'quiet' ? 'show' : x.label === 'digest' ? 'inbox' : 'less');
+      for (const m of marks) out.push(...markRouted(m, e));
+    }
+    this.otherCache = { at: now, examples: out };
+    return out;
   }
 
   prefs(): P.AttentionPrefs {
@@ -169,26 +261,19 @@ export class LoudLearner {
     return { ok: true, answerId: id, ...(asked ? { why: side } : {}) };
   }
 
-  /** A mark from the old route (POST /api/messages/:id/feedback), kept as the answer it now is. */
+  /**
+   * A mark from the old route (POST /api/messages/:id/feedback, on a chat message, a notice or mail): kept as the
+   * answer it is (syncMarks; a notice's or mail's where it lies), and learned at once.
+   */
   fromMark(messageId: string, marks: P.TriageMarks, now = Date.now()) {
-    // A mark taken back (`alert: null`, `less: false`) takes back the answer it stood as.
+    // A mark taken back also takes back the answer an older hub kept it as (source 'sheet').
     const back: P.AttnAnswer[] = [];
     if ('alert' in marks && marks.alert == null) back.push('louder', 'quieter');
     if ('less' in marks && marks.less === false) back.push('quieter');
-    if (back.length) {
-      const ph = back.map(() => '?').join(', ');
-      this.store.db.query(`DELETE FROM attn_answer WHERE message_id = ? AND source = 'sheet' AND answer IN (${ph})`).run(messageId, ...back);
-      this.learn(now);
-    }
-    const answer: P.AttnAnswer | null = marks.alert === true ? 'louder' : marks.alert === false || marks.less === true ? 'quieter' : null;
-    if (!answer) return;
-    const mark = this.mark;
-    this.mark = null;
-    try {
-      this.answer({ messageId, answer, source: 'sheet' }, now);
-    } finally {
-      this.mark = mark;
-    }
+    if (back.length) this.store.db.query(`DELETE FROM attn_answer WHERE message_id = ? AND source = 'sheet' AND answer IN (${back.map(() => '?').join(', ')})`).run(messageId, ...back);
+    this.syncMarks(messageId);
+    this.otherCache = null;
+    this.learn(now);
   }
 
   private whyDue(conversationId: string | null, answer: P.AttnAnswer, now: number): boolean {
@@ -267,7 +352,7 @@ export class LoudLearner {
     const answerId = newId('ans');
     s.db
       .query(`INSERT INTO attn_answer (id, message_id, conversation_id, author, answer, source, checkin_id, band, sounded, chance, at) VALUES (?, ?, ?, ?, ?, 'feed', ?, ?, ?, ?, ?)`)
-      .run(answerId, it.message_id, t?.conversation_id ?? it.conversation_id, t?.author ?? it.author, answer, id, bandOf(it.loud), it.did === 'sound' ? 1 : 0, it.kind === 'row' && !it.sure_shown ? null : it.chance, now);
+      .run(answerId, it.message_id, t?.conversation_id ?? it.conversation_id, t?.author ?? it.author, answer, id, bandOf(it.loud), it.did === 'sound' ? 1 : 0, it.chance, now);
     this.feed.answered(id, answer, answerId, base, now);
     const mark = feedMark(it.did, answer);
     if (mark && this.mark && t?.decision && t.decision !== 'silent') this.tryMark(it.message_id, mark);
@@ -364,8 +449,11 @@ export class LoudLearner {
       // drawn with a small chance more (ipsWeight).
       const late = (r.source === 'checkin' || r.source === 'feed') && typeof r.message_ts === 'number' ? lateWeight(r.at - r.message_ts) : 1;
       const drawn = r.source === 'feed' ? ipsWeight(r.chance) : 1;
-      out.push(...routed(r, base, answerWeight(r.at, now) * ATTN_WEIGHTS.answer * late * drawn));
+      // A mark counts as an answer; a vote from before the tiers half.
+      const kind = r.source !== 'mark' ? ATTN_WEIGHTS.answer : String(r.id).startsWith('mk_v_') ? ATTN_WEIGHTS.mark * OLD_VOTE : ATTN_WEIGHTS.mark;
+      out.push(...routed(r, base, answerWeight(r.at, now) * kind * late * drawn));
     }
+    out.push(...this.otherExamples(now));
     // For you's answers (from before the feed): want, for the chat and the author.
     for (const r of s.raw<Row>(
       `SELECT c.answer, c.answered_at, t.facts, t.probs, t.loud_view, m.body, m.ts AS message_ts FROM checkin c JOIN triage t ON t.message_id = c.message_id JOIN message m ON m.id = c.message_id
@@ -402,10 +490,11 @@ export class LoudLearner {
 
   /** Fit again: after each answer (what you did as last read), and daily (read again). */
   learn(now = Date.now(), daily = false) {
+    this.stale = false;
     try {
       const ex = [...this.answerExamples(now), ...this.implicitExamples(now, daily)];
       this.model = trainAttn(ex, new Set(this.rejected), now);
-      this.store.setMetaValue('attn_model', { model: this.model, rejected: this.rejected } satisfies Saved);
+      this.store.setMetaValue('attn_model', { model: this.model, rejected: this.rejected, marks: true } satisfies Saved);
     } catch (e) {
       console.error('attention: could not learn', e);
       jobFailed('attention: learn', e);
@@ -413,7 +502,7 @@ export class LoudLearner {
   }
 
   daily(now = Date.now()) {
-    if (!this.model.learnedAt || now - this.model.learnedAt > DAY || now < this.model.learnedAt) this.learn(now, true);
+    if (this.stale || !this.model.learnedAt || now - this.model.learnedAt > DAY || now < this.model.learnedAt) this.learn(now, true);
   }
 
   /** Forget something learned, for good, or let it be learned again (keys as learnedList gives them). */
@@ -475,6 +564,7 @@ export function routed(a: Row, base: AttnExample, weight: number): AttnExample[]
   const e = (x: Partial<AttnExample>): AttnExample => ({ ...base, moment: undefined, ...x, weight, at: a.at });
   const scope = a.scope === 'chat' ? 'conv' : a.scope === 'person' ? 'author' : undefined;
   if (a.source === 'feed' && (CAL_ANSWERS as readonly string[]).includes(a.answer)) return feedRouted(a, base, e, keys);
+  if (a.source === 'mark') return markRouted(a.answer, e);
   const reason = a.reason as P.WhyReason | null;
   if (reason) {
     switch (reason) {
@@ -557,6 +647,29 @@ export function feedRouted(a: Row, base: AttnExample, e: (x: Partial<AttnExample
     // delivery: how it was sent, not the message: nothing to learn.
   }
   return out;
+}
+
+/**
+ * A mark given in place as what it teaches: Should have alerted, a sound (wanted, needed within minutes); Alert was
+ * wrong, not a sound (not needed within minutes; want unchanged); Less like this, toward the inbox and unread (want
+ * down, can wait hours); a vote from before the tiers, the band it asked for.
+ */
+export function markRouted(answer: string, e: (x: Partial<AttnExample>) => AttnExample): AttnExample[] {
+  switch (answer) {
+    case 'should_alert':
+      return [e({ want: 1, wait: [1, 1, 1] })];
+    case 'alert_wrong':
+      return [e({ wait: [0, undefined, undefined] })];
+    case 'less':
+      return [e({ want: 0, wait: [0, 0, undefined] })];
+    case 'sound':
+    case 'show':
+      return [e({ want: 1, wait: FEED_WAIT[answer] })];
+    case 'inbox':
+      return [e({ wait: FEED_WAIT.inbox })];
+    default:
+      return [];
+  }
 }
 
 /** What you did, as a label of want: answered (0.3), opened and stayed, not right after a sound (0.1), swiped away unopened (0.05). */

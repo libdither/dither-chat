@@ -144,6 +144,9 @@ const loud = new LoudLearner(store, attentionMode(process.env.DITHER_ATTENTION))
 triage.loud = loud;
 loud.mark = (id, marks) => void votes.mark(id, marks);
 loud.namer = votes.namer();
+// Notices' and mail's marks teach the scale too (loudlearn.ts otherExamples), and mail's own vote route says so.
+loud.others = (now) => votes.others.flatMap((o) => o.examples(now));
+votes.onMark = (id, marks) => loud.fromMark(id, marks);
 if (loud.mode !== 'shadow') console.log(`attention: ${loud.mode} (DITHER_ATTENTION)`);
 /** When the last sound went out: a second one minutes later costs more (loudness.ts momentKeys). */
 let lastSoundAt: number | null = null;
@@ -158,16 +161,8 @@ const foryou = new ForYou(store, {
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
-// A demo world's calibration feed (demo-calibration.ts): once its accounts have brought messages in. Its draws are
-// the same from run to run (mulberry32), so its pictures are too.
+// A demo world's calibration feed (demo-calibration.ts): once its accounts have brought messages in.
 if (demo) {
-  let seed = 7;
-  loud.feed.random = () => {
-    seed = (seed + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
   const seedCalibration = setInterval(() => {
     try {
       if (seedDemoCalibration(store.db, loud, loud.prefs())) clearInterval(seedCalibration);

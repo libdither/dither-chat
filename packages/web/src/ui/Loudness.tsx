@@ -220,7 +220,7 @@ export function LoudnessSettings() {
         options={[
           ['never', 'Never'],
           ['rarely', 'One a day'],
-          ['often', 'Up to three a day'],
+          ['often', 'Up to two a day'],
         ]}
       />
       <label class="toggle-row">

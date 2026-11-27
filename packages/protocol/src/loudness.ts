@@ -74,10 +74,14 @@ export type AttnAnswer =
   | 'sooner' // Wish I'd known sooner (a quiet one)
   | 'fine' // Fine where it was
   | 'louder' // Louder, for this person or chat
-  | 'quieter'; // Quieter, for this person or chat
+  | 'quieter' // Quieter, for this person or chat
+  // The marks from before, kept as answers (source 'mark', loudlearn.ts syncMarks): never sent to /api/loudness/answers.
+  | 'should_alert' // Should have alerted
+  | 'alert_wrong' // Alert was wrong
+  | 'less'; // Less like this
 
 /** Where an answer came from. */
-export type AttnSource = 'checkin' | 'feed' | 'sheet' | 'notification' | 'followup';
+export type AttnSource = 'checkin' | 'feed' | 'sheet' | 'notification' | 'followup' | 'mark';
 
 /** Why, after Quieter, Could have waited or Shouldn't have reached me; and after Louder (or Wish I'd known sooner). */
 export type WhyReason =
@@ -233,6 +237,13 @@ export type CalPart = 'person' | 'chat' | 'topic' | 'wait' | 'moment' | 'deliver
 export const CAL_PARTS: readonly CalPart[] = ['person', 'chat', 'topic', 'wait', 'moment', 'delivery'];
 export const CAL_PART_NAME: Record<CalPart, string> = { person: 'person', chat: 'chat', topic: 'topic', wait: 'can wait', moment: 'moment', delivery: 'delivery' };
 
+/**
+ * Which kind of mistake a card is about, by what the model said and what you did: a sound you needed and did not get,
+ * a sound you did not want, a silent mix-up (shown when the inbox would do, or the other way); null when it was right
+ * or what you did is not known.
+ */
+export type CalCost = 'missed' | 'unwanted' | 'mixup' | null;
+
 /** Chances or spreads, one for each answer in CAL_ANSWERS' order. */
 export type Trio = [number, number, number];
 
@@ -242,8 +253,8 @@ export type Trio = [number, number, number];
  */
 export interface CalItem {
   id: string;
-  /** card: open with its answers; row: compact, tap to open; past: an answer of yours back once; sure: hidden as sure. */
-  kind: 'card' | 'row' | 'past' | 'sure';
+  /** card: open with its answers; past: an answer of yours back once. */
+  kind: 'card' | 'past';
   messageId: string;
   conversationId: string | null;
   network: string | null;
@@ -258,17 +269,22 @@ export interface CalItem {
   /** The model's chance of each answer, and how unsure each is (a spread, not a range). */
   p: Trio;
   u: Trio;
-  /** What the model did: it sounded, showed silently, or sent nothing. */
+  /** What was done: it sounded, showed silently, or sent nothing. */
   did: CalAnswer;
-  /** What you did, read from how soon you opened or answered it; null while that is not known. */
+  /** The band the model gave it (while the scale runs in shadow, not always what was done). */
+  said: CalAnswer;
+  /** What you did, from strong signals only (a tap, a swipe, a quick reply, an answer or mark); null when none says. */
   you: CalAnswer | null;
-  /** "Opened in 1 min", "Not opened" */
+  /** "Tapped in 1 min", "Nothing you did says" */
   youWhat: string;
-  /** How surprised (bits, at most 5) and how unsure (0 to 1) the model is, and worth asking now (with its fading). */
+  /** How surprised (bits, at most 5) and how unsure (0 to 1) the model was. */
   surprise: number;
   unsure: number;
+  /** Cost-weighted regret, 0 to 1 (calfeed.ts), its kind, and worth asking now (the regret, fading). */
+  regret: number;
+  cost: CalCost;
   score: number;
-  /** The chance it had of being drawn as a card: answers are weighted back by it. */
+  /** The chance it had of being picked as a card: answers are weighted back by it (1 since cards are picked outright). */
   chance: number;
   /** A sound held back (quiet hours, a computer in use, a burst): never hidden as sure. */
   held?: boolean;
@@ -283,10 +299,11 @@ export interface CalItem {
   reasons: LoudReason[];
 }
 
-/** GET /api/loudness/feed: the cards and rows, newest worth asking first; the sure ones apart. */
+/** GET /api/loudness/feed: the cards and past answers, most worth asking first; and how far the model is fitted. */
 export interface CalFeedView {
   items: CalItem[];
-  sure: CalItem[];
+  /** In-place signals learned from, and how many it needs before any card (calfeed.ts FITTED_AT). */
+  fitted: { signals: number; need: number };
 }
 
 /** POST /api/loudness/feed/:id { answer }: the chances before and after it was learned. */
@@ -312,7 +329,7 @@ export interface AttentionPrefs {
   readily: 'less' | 'learned' | 'more';
   /** While a computer is in use, the phone stays silent and nothing reaches it for a chat open and read there. */
   computerFirst: boolean;
-  /** How many cards a day open on the calibration feed: never, rarely (one a day), up to three a day. */
+  /** How many cards a day the calibration feed picks: never, rarely (one a day), often (up to two a day). */
   ask: 'never' | 'rarely' | 'often';
   /** A note on people you're drifting from, in the weekly report. */
   drifting: boolean;
