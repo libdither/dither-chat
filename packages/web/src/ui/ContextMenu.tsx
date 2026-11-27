@@ -335,7 +335,8 @@ function SheetMenu({ spec, onClose }: { spec: MenuSpec; onClose: () => void }) {
       <div class="sheet-actions" role="menu" data-track-area={spec.track}>
         {items.map((e) => {
           if (e.kind === 'sep') return <div class="cm-sep" role="separator" />;
-          if (e.kind === 'label') return <div class={`cm-label ${e.note ? 'note' : ''}`}>{e.label}</div>;
+          // A heading that only repeats the menu's name: the sheet's own title says it already.
+          if (e.kind === 'label') return spec.head && !top && !e.note && e.label === spec.label ? null : <div class={`cm-label ${e.note ? 'note' : ''}`}>{e.label}</div>;
           if (e.kind === 'row') return e.render(onClose, true);
           return (
             <button

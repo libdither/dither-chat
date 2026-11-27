@@ -190,7 +190,8 @@ try {
 
   // The inset dragged to the other side settles in the nearest corner.
   const w0 = await win(p);
-  const [ix, iy] = mid(corner[selfId]);
+  // Measured again: a screenshot (--shots) hides the stats, which moves the inset from where it was measured above.
+  const [ix, iy] = mid((await rects(p))[selfId]);
   await dragMouse(p, ix, iy, w0.x + 60, iy);
   const after = await rects(p);
   check(after[selfId].x < w0.x + 40 && (await kept(p)).corner === 'bl', 'the inset dragged left snaps to the bottom-left corner', after[selfId]);

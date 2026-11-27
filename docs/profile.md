@@ -15,7 +15,7 @@ command (`packages/protocol/src/about.ts` `PersonAbout`).
 ## The frame
 
 - **Hero.** A banner (their Discord banner, else their accent colour, else the network's), the picture overlapping it,
-  the name (for a person of one account, with a pencil on hover for that account's nickname, also under More), then a
+  the name (a click copies it; a pencil beside it chooses which of their names shows: "Choosing from the hero"), then a
   line of what it is: a person's handle (click to copy), or for someone with several accounts their
   networks' marks and "N accounts", which scrolls to them; a place's network, kind,
   member and channel counts. Tags under it: pronouns, one per kind of connection with the networks' marks (Friend,
@@ -98,14 +98,14 @@ Right:
   right-click or a hold opens it as a menu): Make Main Account, Use Its Picture, Set Nickname… (Change Nickname… and
   Remove Nickname once it has one, editing the name on the row in place; only you see it, docs/chats.md "Names"), Copy
   the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
-  speaks for them, whether you chose it or the hub did, and which account their picture is from. Under each row, how
-  each of your accounts stands with it ("Connections", below: In your Telegram contacts, Friends on Discord from
-  alt and from main), each with its Remove friend or the like. A row whose name is the person's leads with its handle
-  instead of repeating the name. A hint when someone elsewhere has the same name, saying where ("Alice Chen on
-  Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name or handle (an email address
-  too) and email addresses no person holds yet (`GET /api/persons/candidates`), sit under it. Before 2026-11-23 each account was a
-  tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero had a chip per handle and the right
-  column a plain row per identity, with one picture for the person.
+  speaks for them, whether you chose it or the hub did, and which accounts their name and picture are from when
+  another's. Under each row, how each of your accounts stands with it ("Connections", below: In your Telegram
+  contacts, Friends on Discord from alt and from main), each with its Remove friend or the like. A row whose name is
+  the person's leads with its handle instead of repeating the name. A hint when someone elsewhere has the same name,
+  saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
+  or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`), sit under
+  it. Before 2026-11-23 each account was a tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero
+  had a chip per handle and the right column a plain row per identity, with one picture for the person.
 - **In common** (on your own page, your friends and **Your places**): **People**, the friends you share and the people
   they talk with most, in one list (`PeopleInCommon` in ui/VoiceClose.tsx; below, "People in common"), how many of each
   on top, eight shown with All for the rest; then **Places**, a row each server and group chat you are both in, with
@@ -141,6 +141,29 @@ and so does making that account main or splitting it off. The hub keeps both on 
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
 
+**Choosing from the hero.** Their name is text a click copies, with nothing after it but the pencil. Under it,
+always shown, a line of their other names ("also"), each once with "×N" where it is shared (hover for which
+accounts), a click copying it; handles stay off it (the Accounts card has them), and the line wraps. The pencil
+beside the name turns it into a field, the name selected, with every name of theirs listed under it: the main
+account's name as you see it first ("Main account's", following it as it changes, once, with the marks of the
+accounts that share it), then their other names, then their handles ("Handle"), each text once with its accounts'
+network marks (a handle that is a phone number is left out). Typing filters the list; a name none of theirs is goes
+first as **Call them "…"**, so Enter saves what you typed as your nickname for their main account, which then is the
+name shown. Up and Down move through the list, Enter or ✓ takes the row, Escape or ✕ leaves the name as it was. A pick
+names them everywhere their name shows, ticked when the field opens again, and follows that account: a new display
+name renames them, and while it lacks that name (a nickname you removed) the main account's shows, and the first row
+is the one ticked. The first row puts the main account's back. Someone of one account has the same: its names, then
+its handle. Each account's own nickname is still set from its row in the Accounts card. The Accounts card's note
+says where their name and picture come from when not from the main account. Kept on the person (`person.name_identity_id` with `name_field`, set with `PATCH
+/api/persons/:id { nameFrom: { identityId, field: nickname | display | handle } | null }`, refused whole for an
+account not theirs or a name it lacks; `PersonView.nameFrom`) and cleared when that account is split off. Where their
+accounts have more than one picture, their picture has a badge (a picture on it) and opens all of them in the image viewer, each once, the main
+account's first, starting on the one shown. Each has its account's name, network and handle in the bar, and a row of them
+along the bottom: the one in view ringed, the one shown ticked. Swipe, click one in the row or use the arrow keys to
+page through them; **Use this picture** shows the one in view (the main account's is `{ picture: null }`), and the
+tick moves to it once the hub has it (viewer.ts `choose`). Helpers in `namechoices.ts`, the hero's name in `ui/HeroName.tsx`; checked end to end, on a
+computer and on a phone, by `scripts/verify-name-picture.ts` on the `multiaccount` demo.
+
 ### Your own bio
 
 On your own page, the bio on each network whose adapter can change it (capability `editProfile`: Discord, Signal,
@@ -161,7 +184,8 @@ and its code under My code (docs/add.md, "QR codes"), come from the last time it
 ### Changing a picture
 
 A hero's picture you may not change is a button that opens it full screen in the image viewer (ui/Viewer.tsx), to
-zoom and pan; one you may change has **View Picture** first in its menu.
+zoom and pan (for someone whose accounts have several pictures, all of them, to choose the one shown: "Which account
+speaks for them"); one you may change has **View Picture** first in its menu.
 
 Where you may change a picture, the hero's picture is a button with a camera on it ("Change" over it on hover):
 a group's or server's where its About says `fields.avatar.canEdit`, and yours on each network whose profile lists

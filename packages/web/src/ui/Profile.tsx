@@ -22,12 +22,15 @@ import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
 import { copy, groups, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
-import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
+import { nicknamable, nicknameEntries, NicknameInput, ownName, saveNickname } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { PeopleInCommon, tiesOf, useCloseTo, VoiceCard } from './VoiceClose.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
+import { alsoNames, nameEntries, nameRows, pictureChoices } from '../namechoices.ts';
+import { HeroName } from './HeroName.tsx';
+import { viewer } from '../viewer.ts';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
@@ -530,8 +533,8 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const S = selfParts.value;
   useEffect(() => void loadSelf(), []);
   const [merging, setMerging] = useState(false);
-  // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
-  const [naming, setNaming] = useState(false);
+  // The hero's nickname editor, in place of the name: the account it names (Nickname.tsx), from the name's menu or More.
+  const [naming, setNaming] = useState<string | null>(null);
   // How this page changed where an account stands with them (`account|identity` → the newest word), until the profile
   // is fetched again: ended (stranger), or made (Add friend, Accept). connections.ts withChanges.
   const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
@@ -736,7 +739,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     const base = person ? personMenu(person) : identityMenu(first?.id);
     const extra: MenuEntry[] = groups(
       // One account's nickname is theirs (with several, each tile has its own).
-      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
+      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(first!.id)) : [],
       [{ label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
       // Ignore on their networks (ProfileSelf.tsx).
       isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
@@ -758,8 +761,15 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
   // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
   const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
-  const sources = (patch: { face?: string | null; picture?: string | null }) =>
-    person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+  // Their name chosen from another account than the main one (the hero's pencil), for the Accounts card's note.
+  const nameAcct = (person?.nameFrom && person.nameFrom.identityId !== speaker?.id && ids.find((i) => i.id === person.nameFrom!.identityId)) || null;
+  /** Saved, or false where it could not be (said in a toast). */
+  const sources = async (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null }) =>
+    !!person &&
+    api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).then(
+      () => true,
+      (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
+    );
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
   /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
   const reach = (i: P.IdentityView): { run: () => void; label: string } | null => {
@@ -812,21 +822,54 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const ownPicture = picTarget();
   editing.current = picturing ? ((picturing.came ? picTarget(picturing.came) : ownPicture) ?? editing.current) : null;
 
+  // Which name and which picture show for them, chosen in the hero (docs/profile.md "Which account speaks for them").
+  // In the Accounts card's order (by network), the main account's first.
+  const mainAcct = speaker ?? first;
+  const entries = isSelf ? [] : nameEntries(tiles, mainAcct?.id);
+  const nameRowsOf = !isSelf && person ? nameRows(entries, person, identityName(mainAcct?.id), several) : [];
+  // A name typed in the hero is your nickname for their mainAcct account, and the name shown (a choice made goes back to it).
+  const mayNickname = !isSelf && nicknamable(mainAcct) && !mainAcct.isBot;
+  const nicknameMain = async (text: string) => {
+    if (!mainAcct || !(await saveNickname(mainAcct.id, text))) return;
+    if (person?.nameFrom) void sources({ nameFrom: null });
+  };
+  const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
+  // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
+  const viewPictures = () => {
+    const on = Math.max(0, pictures.findIndex((c) => c.on));
+    viewer.value = {
+      images: pictures.map((c) => ({ url: c.url, name: c.label, detail: c.detail, fill: true })),
+      index: on,
+      choose: { on, pick: (k) => sources({ picture: pictures[k].id === speaker?.id ? null : pictures[k].id }) },
+    };
+  };
+
   const hero = (
     <Hero
       id={person?.id ?? first?.id ?? ''}
       name={name}
       picture={picture}
       onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing, picture ? () => viewPicture(picture, name) : undefined) : undefined}
+      onView={pictures.length > 1 ? viewPictures : undefined}
       presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
       accent={accent}
       title={
-        <h1>
-          {/* One account: their name is its name, and the pencil gives that account a nickname. */}
-          {!several && nicknamable(first) && !first.isBot ? <NicknamedName i={first} label={name} title={first.nickname ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" /> : name}
-        </h1>
+        isSelf ? (
+          <h1>{name}</h1>
+        ) : (
+          <HeroName
+            name={name}
+            also={alsoNames(entries, name)}
+            rows={nameRowsOf}
+            nickname={mayNickname}
+            editing={naming !== null}
+            setEditing={(on) => setNaming(on ? (mainAcct?.id ?? '') : null)}
+            onPick={(r) => void sources({ nameFrom: r.from })}
+            onNickname={(t) => void nicknameMain(t)}
+          />
+        )
       }
       sub={
         <span class="pf-handles">
@@ -1150,6 +1193,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {speaker ? (
             <span>
               <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now'}
+              {nameAcct ? `; their name is from ${netName(nameAcct.network)}` : ''}
               {pictureOf ? `; their picture is from ${netName(pictureOf.network)}` : ''}.
             </span>
           ) : (
