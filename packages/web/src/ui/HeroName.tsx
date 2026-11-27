@@ -36,7 +36,7 @@ export function HeroName({
   also: NameEntry[];
   /** The names to pick from (namechoices.ts nameRows); empty where none may be chosen. */
   rows: NameRow[];
-  /** Whether a typed name may be saved, as your nickname for their main account. */
+  /** Whether a typed name may be saved, as your nickname for the person (no account's). */
   nickname: boolean;
   editing: boolean;
   setEditing: (on: boolean) => void;
@@ -122,7 +122,7 @@ export function HeroName({
           </div>
           <div class="pf-name-list" id="pf-name-list" role="listbox">
             {list.map((r, k) => (
-              <button key={('new' in r ? '+' : '') + r.text} role="option" aria-selected={k === hi} class={`pf-name-row ${k === hi ? 'hi' : ''} ${'new' in r ? 'new' : ''}`} data-track={'new' in r ? 'name: nickname' : 'name: choose'} onPointerEnter={() => setHi(k)} onClick={() => choose(k)}>
+              <button key={('new' in r ? '+' : r.nick ? '~' : '') + r.text} role="option" aria-selected={k === hi} class={`pf-name-row ${k === hi ? 'hi' : ''} ${'new' in r ? 'new' : ''}`} data-track={'new' in r ? 'name: nickname' : 'name: choose'} onPointerEnter={() => setHi(k)} onClick={() => choose(k)}>
                 <span class="pf-name-tick">{'new' in r ? <Icon name="pencil" size={13} /> : r.on ? <Icon name="check" size={14} /> : null}</span>
                 <span class="pf-name-text">{'new' in r ? `Call them “${r.text}”` : r.text}</span>
                 <span class="pf-name-from">
