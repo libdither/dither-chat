@@ -220,3 +220,26 @@ test('events that cannot be saved are logged as lost, with their count', () => {
   expect(r).toEqual({ applied: 0, carried: 0, lost: 50 - EVENTS_STEP });
   expect(logged.some((l) => l.includes(`LOST ${50 - EVENTS_STEP} events`))).toBe(true);
 });
+
+describe('the queue between runs', () => {
+  test('a batch that comes after the last slice, while the worker is still finishing, is applied without waiting for another', async () => {
+    const s = run();
+    // The first batch is applied in one slice (a clock that never moves); the next comes before the worker has said
+    // it is done.
+    s.slices = { clock: () => 0 };
+    s.apply(ann.id, msgs(ann, 0, 3 * EVENTS_STEP));
+    s.apply(ann.id, msgs(ann, 1000, 1000 + 2 * EVENTS_STEP));
+    expect(await s.settled(ann.id, 5000)).toBe(true);
+    expect(stored(ann)).toBe(5 * EVENTS_STEP);
+  });
+
+  test("an account's barrier passes once everything it sent before is in, not another account's", async () => {
+    const s = run();
+    s.apply(bob.id, msgs(bob, 0, 4 * EVENTS_STEP));
+    s.apply(ann.id, msgs(ann, 0, 2 * EVENTS_STEP));
+    const at = s.settled(ann.id).then(() => stored(ann));
+    expect(await at).toBe(2 * EVENTS_STEP);
+    await s.drained();
+    expect(stored(bob)).toBe(4 * EVENTS_STEP);
+  });
+});

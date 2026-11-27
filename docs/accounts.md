@@ -89,7 +89,8 @@ too old to list them leaves a note to add mail on its page.
 
 The manager keeps running the remote adapters. Their events wait for the hub in the manager's memory, never on disk.
 If more wait than the manager keeps (100,000 events or 64 MB), it drops that account's and tells the hub (a gap). The
-hub then restarts that adapter, and its fresh snapshot fills the hole.
+hub then restarts that adapter, whose fresh snapshot brings back its chats and their state. No snapshot carries the
+messages of that time: the hub catches up on them through the account's history ([catch-up.md](catch-up.md)).
 
 Once the manager has handed events over, it keeps no copy and never sends them again, so they are the hub's to keep.
 A big batch (a backlog after a gap, a history page) waits in the hub's memory while it is applied a slice at a time,

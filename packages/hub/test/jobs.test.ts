@@ -4,6 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import type * as P from '@dither-chat/protocol';
 import { Jobs, PAGE } from '../src/jobs.ts';
+import { LAND_RETRIES, NOT_LANDED } from '../src/historypage.ts';
 import { BRISK, ReadingPace } from '../src/readingpace.ts';
 import { BATCH, GAP_MS, HOURLY_CAP, NetSearch } from '../src/netsearch.ts';
 import { mediaSigner } from '../src/server.ts';
@@ -48,6 +49,42 @@ const brisk = (store: Store, clock: FakeClock) => new ReadingPace(store, BRISK, 
 const hub = (store: Store, network: P.Network, kind: 'conversation' | 'space', native: string) => (store.db.query(`SELECT id FROM ${kind} WHERE network = ? AND native_id = ?`).get(network, native) as any).id as string;
 
 describe('index jobs', () => {
+  test("a page whose messages do not come with its answer records nothing whole, and the channel says so", async () => {
+    const { store, acc } = world();
+    const net = guild(store, acc, 'g1', 'Guild', ['c1'], 120);
+    const clock = new FakeClock(T0 + 1000 * minute);
+    let asks = 0;
+    const jobs = new Jobs(store, {
+      online: () => true,
+      clock,
+      pace: brisk(store, clock),
+      command: async (_a, cmd) => {
+        asks++;
+        const below = net[cmd.conversation].filter((m) => m.ts < cmd.beforeTs);
+        const page = below.slice(-cmd.limit);
+        // Stored an hour after the answer: after every asking.
+        clock.setTimeout(() => {
+          for (const m of page) store.ingest(acc, { t: 'message', message: m, live: false });
+        }, 60 * minute);
+        return { count: page.length, done: page.length === below.length, oldest: page[0]?.ts, next: page[0]?.nativeId };
+      },
+    });
+    const quiet = console.warn;
+    console.warn = () => {};
+    try {
+      const v = jobs.create({ target: { kind: 'conversation', id: hub(store, 'discord', 'conversation', 'c1') }, history: true, members: false });
+      jobs.start();
+      await clock.until(() => ['done', 'failed'].includes(jobs.get(v.id)!.state), 600 * minute, 'the job');
+      jobs.stop();
+      expect(jobs.get(v.id)).toMatchObject({ state: 'failed', fetched: 0 });
+      expect(asks).toBe(1 + LAND_RETRIES);
+      expect(store.db.query('SELECT * FROM history_span').all()).toEqual([]);
+      expect(store.db.query('SELECT error FROM job_task WHERE kind = ?').get('history')).toEqual({ error: NOT_LANDED });
+    } finally {
+      console.warn = quiet;
+    }
+  });
+
   test('page every channel of a server back to its start, then a repeat run fetches only what is new', async () => {
     const { store, acc } = world();
     const net = guild(store, acc, 'g1', 'Guild', ['c1', 'c2'], 250);

@@ -1,0 +1,82 @@
+/* Settings → Catching up (CatchUp.tsx), in its chunk: a hole is an index job's card (styles.css .job), its chats one line each. */
+.catchup-why {
+  color: var(--text);
+}
+.catchup-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-soft);
+  list-style: none;
+}
+.catchup-chat {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 12.5px;
+}
+.catchup-chat-name {
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.catchup-chat-name:hover {
+  text-decoration: underline;
+}
+.catchup-chat-state {
+  color: var(--text-dim);
+}
+.catchup-chat-n {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+.catchup-chat.done .catchup-chat-state {
+  color: var(--good);
+}
+.catchup-chat.failed .catchup-chat-state {
+  color: var(--danger);
+}
+.catchup-chat-why {
+  flex-basis: 100%;
+  color: var(--text-faint);
+}
+/* Check an account: one line each, its asks at the end. */
+.catchup-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.catchup-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.catchup-account-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.catchup-account-buttons,
+.catchup-account .job-pill {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  margin-left: auto;
+}
