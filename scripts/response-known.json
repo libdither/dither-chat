@@ -151,7 +151,8 @@
    "M$1",
    "NetBadge",
    "NetGlyph",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "Requests / Wren's profile": [
    "M$1"
@@ -169,7 +170,8 @@
    "M$1",
    "NetBadge",
    "NetGlyph",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "Requests / held: the app's clocks": [
    "Age",
@@ -201,7 +203,8 @@
    "CallMark",
    "ConvRow",
    "Count",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "Search / search-chip-main:Mentions me": [
    "M$1"
@@ -257,7 +260,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a DM, details open / Every message here is an alert": [
    "AccountDots",
@@ -283,7 +287,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a DM, details open / Never a conversation row or an alert; it can still be on the list": [
    "AccountDots",
@@ -309,7 +314,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a DM, details open / No notification and never on the list; the unread count only": [
    "AccountDots",
@@ -335,7 +341,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a DM, details open / held: the app's clocks": [
    "Age",
@@ -354,7 +361,8 @@
    "Count",
    "NetBadge",
    "NetGlyph",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "a channel's About / About this server": [
    "Icon",
@@ -365,14 +373,16 @@
    "ChannelHead",
    "Count",
    "Icon",
-   "M$1"
+   "M$1",
+   "VoiceNowMark"
   ],
   "a channel's About / Mute": [
    "CallMark",
    "ChannelHead",
    "Count",
    "Icon",
-   "M$1"
+   "M$1",
+   "VoiceNowMark"
   ],
   "a channel's About / hub: a visit counted": [
    "M$1"
@@ -382,7 +392,8 @@
    "ChannelHead",
    "Count",
    "Icon",
-   "M$1"
+   "M$1",
+   "VoiceNowMark"
   ],
   "a channel's stream / held: the app's clocks": [
    "Age",
@@ -396,7 +407,8 @@
    "Count",
    "NetBadge",
    "NetGlyph",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "a channel, a message hovered / held: the app's clocks": [
    "Age",
@@ -427,7 +439,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a channel, details open / Every message here is an alert": [
    "AccountDots",
@@ -453,7 +466,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a channel, details open / Never a conversation row or an alert; it can still be on the list": [
    "AccountDots",
@@ -479,7 +493,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a channel, details open / No notification and never on the list; the unread count only": [
    "AccountDots",
@@ -505,7 +520,8 @@
    "RowTyping",
    "SendFailures",
    "StoryReplyLine",
-   "TriageNote"
+   "TriageNote",
+   "VoiceNowMark"
   ],
   "a channel, details open / held: the app's clocks": [
    "Age",
@@ -577,7 +593,8 @@
    "NetBadge",
    "NetGlyph",
    "PersonRow",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "a person / held: the app's clocks": [
    "Ago"
@@ -603,7 +620,8 @@
    "NetBadge",
    "NetGlyph",
    "PersonRow",
-   "RowTyping"
+   "RowTyping",
+   "VoiceNowMark"
   ],
   "the directory / hub: a visit counted": [
    "SpacesEntry"
