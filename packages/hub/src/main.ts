@@ -35,7 +35,6 @@ import { Supervisor } from './supervisor.ts';
 import { STOP_QUESTION, Triage, URGENT, type Judge } from './triage.ts';
 import { LoudLearner } from './loudlearn.ts';
 import { attentionMode } from './loudness.ts';
-import { NextLook } from './nextlook.ts';
 import { TriageVotes } from './votes.ts';
 import { Scorecard, seedDemoScores } from './scorecard.ts';
 import { seedDemoCalibration } from './demo-calibration.ts';
@@ -148,25 +147,30 @@ loud.namer = votes.namer();
 if (loud.mode !== 'shadow') console.log(`attention: ${loud.mode} (DITHER_ATTENTION)`);
 /** When the last sound went out: a second one minutes later costs more (loudness.ts momentKeys). */
 let lastSoundAt: number | null = null;
-// Messages held for the next look (DITHER_ATTENTION=on): one bundle when you next look.
-const nextLook = new NextLook(store);
 // For you (docs/foryou.md): served items and their events are logged only while the activity log is on.
 const foryou = new ForYou(store, {
   logging: () => activity.enabled,
   levelOf: (id) => triage.effectiveLevel(id).level,
-  // Asked "worth seeing?" one card a day, and, once the loudness decides, ordered by what those answers taught.
-  ask: (items) => loud.checkins.pickForYou(items, loud.prefs()),
+  // Once the loudness decides, ordered by what the calibration feed's answers taught of each chat and person.
   ...(loud.mode === 'on' ? { worth: (c: { conv: string; author: string | null }) => loud.worth(c) } : {}),
 });
 // How the models did, day by day (scorecard.ts, docs/scorecard.md): each day scored once its outcomes are in. A demo
 // world has three invented weeks of it.
 const scorecard = new Scorecard(store.db);
 if (demo) seedDemoScores(store.db, Date.now());
-// A demo world's Notification calibration page (demo-calibration.ts): once its accounts have brought messages in.
+// A demo world's calibration feed (demo-calibration.ts): once its accounts have brought messages in. Its draws are
+// the same from run to run (mulberry32), so its pictures are too.
 if (demo) {
+  let seed = 7;
+  loud.feed.random = () => {
+    seed = (seed + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
   const seedCalibration = setInterval(() => {
     try {
-      if (seedDemoCalibration(store.db)) clearInterval(seedCalibration);
+      if (seedDemoCalibration(store.db, loud, loud.prefs())) clearInterval(seedCalibration);
     } catch (e) {
       clearInterval(seedCalibration);
       console.error('demo calibration', e);
@@ -289,10 +293,9 @@ async function triageOne(id: string, sp: Span) {
     done = true;
     store.dirty.messages.set(id, true);
     if (d.decision === 'push') lastSoundAt = Date.now();
-    // Once the loudness decides: the next look holds what can wait an hour or more; the inbox band sends nothing.
+    // Once the loudness decides: the inbox band sends nothing.
     const band = loud.mode === 'on' && d.loud?.live && !d.forced ? d.loud.band : null;
-    if (band === 'next') nextLook.hold(id, conversationId, !!d.loud?.parts?.quiet);
-    else if (band === 'inbox' || band === 'unread') {
+    if (band === 'inbox' || band === 'unread') {
       // Ranked in the inbox, or left unread: nothing goes to the devices.
     } else if (d.decision === 'push' || d.decision === 'quiet' || d.decision === 'digest') deliver(d.title, d.body, conversationId, id, d.reasons, server.replyFields(conversationId, id), 'message', d.decision, d.score, listByPrior(d.facts), { rule: !!d.alwaysNotify, capped: capped(d.decision, d.facts) });
     // The local model was too slow: the message went out silent, and is read again once it has had time.
@@ -444,10 +447,8 @@ setInterval(
     span('votes and held alerts', {}, () => {
       votes.daily();
       loud.daily();
-      // Questions for the Notification calibration page: new ones as the day's quota and pace allow, old ones dropped.
-      loud.checkins.fill(loud.prefs());
-      // The next look at the times you set (DITHER_ATTENTION=on).
-      if (nextLook.dueAt(loud.prefs(), Date.now())) flushNextLook('times');
+      // The calibration feed: what came, once what you did with it is known (at most once an hour).
+      loud.feed.fill(loud.prefs());
       const held = triage.takeHeldSummary();
       // The last held one may be a notice: its tap opens Notices, not a chat.
       if (held) deliver(held.title, held.body, held.conversationId, held.messageId, ['Quiet hours ended'], held.messageId.startsWith('ntc_') ? { noticeId: held.messageId } : {});
@@ -629,26 +630,6 @@ const server = new HubServer(store, sup, triage, {
 
 notifier = new Notifier({ store, activity, devices, push, delivery, server, phone, computerFirst: () => loud.prefs().computerFirst });
 
-/**
- * The next look (DITHER_ATTENTION=on): what was held arrives together, as one silent bundle on the phones, when the
- * Android app says the phone was unlocked or at the times you set. Opening the app is a look: the held items are in
- * the inbox, so nothing is sent then and the bundle is let go.
- */
-function flushNextLook(why: 'open' | 'unlock' | 'times') {
-  const b = nextLook.flush(why);
-  if (!b || why === 'open') return;
-  const nid = activity.notification({ kind: 'held' });
-  push
-    .notify(b.title, b.body, undefined, { tag: 'next-look', level: 'quiet', tier: 'digest', band: 'next', nextLook: { count: b.count, chats: b.chats }, keep: true, ...(nid ? { nid } : {}) }, push.desktops(), 'quiet')
-    .then((r) => nid && activity.sent(nid, r))
-    .catch((e) => (console.error('push failed', e), jobFailed('push: next look', e)));
-}
-server.onLook = (why) => {
-  if (loud.mode !== 'on') return;
-  const prefs = loud.prefs();
-  if (why === 'unlock' ? prefs.nextLook !== 'times' : true) flushNextLook(why);
-};
-server.nextLookHeld = () => nextLook.count();
 
 const realAccounts = store.accounts().filter((a) => !a.demo);
 if (demo && realAccounts.length) {
@@ -780,11 +761,21 @@ const shutdown = async () => {
   // Adapter events still queued or held (a backlog after a gap, a locked database): the manager handed them over and
   // keeps no copy, so they are applied now, and what does not make it by stopBy is carried over to the next start.
   // From here to exit nothing awaits, so no event can come in between.
-  sup.settle(stopBy);
+  const settled = sup.settle(stopBy);
+  // What the catch-up must know at the next start: when the hub last heard each account, and events it lost now.
+  let caughtUp = true;
+  try {
+    server.catchup.stopping(settled.lost);
+  } catch (e) {
+    console.error('catch-up: saving at the stop failed', e);
+    caughtUp = false;
+  }
   // What stopping changed is in the journal too; then the next start can trust it (journal.ts).
   // Presence held for coalescing goes too (presence.ts).
   server.flush(true);
-  store.journal.close();
+  // Closing the journal marks the stop clean. Events lost at it that the catch-up could not note are reported only
+  // after an unclean one, from the marker its ticks saved while they waited: then it stays open.
+  if (caughtUp || !settled.lost) store.journal.close();
   // Commits reach the disk at checkpoints (synchronous = NORMAL, store.ts): a clean stop leaves none behind.
   try {
     store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');

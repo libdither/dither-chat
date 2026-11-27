@@ -22,12 +22,15 @@ import { Avatar, Empty, Linked, NetBadge, NetGlyph } from './bits.tsx';
 import { isQuietConv } from '../feed.ts';
 import { copy, groups, useMenu, type MenuEntry, type MenuSpec } from './ContextMenu.tsx';
 import { Icon } from './icons.tsx';
-import { nicknamable, nicknameEntries, NicknamedName, NicknameInput, ownName } from './Nickname.tsx';
+import { nicknameEntries, NicknameInput, ownName } from './Nickname.tsx';
 import { ActivityCard } from './ActivityCard.tsx';
 import { SameBox } from './SameBox.tsx';
 import { HistoryCard } from './HistoryCard.tsx';
 import { PeopleInCommon, tiesOf, useCloseTo, VoiceCard } from './VoiceClose.tsx';
 import { copyEntries, identityMenu, personMenu } from './menus.tsx';
+import { alsoNames, nameEntries, nameRows, pictureChoices } from '../namechoices.ts';
+import { HeroName } from './HeroName.tsx';
+import { viewer } from '../viewer.ts';
 import { Action, Card, Columns, Facts, Hero, monthYear, ProfilePage, StatusEmoji, Tag, viewPicture } from './ProfileShell.tsx';
 import { ConnectActions, ProfileConnections } from './Requests.tsx';
 import { openConv } from '../opening.ts';
@@ -157,7 +160,7 @@ function HandleChip({ i }: { i: P.IdentityView }) {
  * has as buttons under it: make it the main account, use its picture, your nickname for it, copy, open on the
  * network, split. Its bio is in About, with the others'.
  */
-function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
+function AccountRow({ i, same, since, main, chosen, picture, go: open, goLabel, menu: menuOf }: { i: P.IdentityView; same?: boolean; since?: string; main: boolean; chosen: boolean; picture: boolean; go?: () => void; goLabel?: string; menu: (editNickname: () => void) => MenuSpec }) {
   metaRev.value; // its name, which a nickname changes
   const [naming, setNaming] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -174,6 +177,9 @@ function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: 
         <div class="pf-acct-top">
           {naming ? (
             <NicknameInput i={i} onDone={() => setNaming(false)} class="pair-nick-input pf-acct-nick-input" />
+          ) : same ? (
+            // Named as the person: the hero says the name, so its handle leads, on the line with its buttons.
+            <HandleChip i={i} />
           ) : (
             <b class="pf-acct-name" title={i.nickname ? `${name}: your nickname (only you see it)` : name}>
               {name}
@@ -198,14 +204,25 @@ function AccountRow({ i, since, main, chosen, picture, go: open, goLabel, menu: 
             {editing ? 'Done' : 'Edit'}
           </button>
         </div>
-        {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
-        <span class="pf-acct-handle">
-          <HandleChip i={i} />
-          <small>
+        {same ? (
+          // The network, and their own name where the handle is not it (with no handle, the chip shows that name).
+          <small class="pf-acct-sub">
             {net}
             {since ? ` · since ${since}` : ''}
+            {i.nickname && i.handle && ownName(i) !== i.handle ? ` · their name: ${ownName(i)}` : ''}
           </small>
-        </span>
+        ) : (
+          <>
+            {i.nickname && <small class="pf-acct-own">their name: {ownName(i)}</small>}
+            <span class="pf-acct-handle">
+              <HandleChip i={i} />
+              <small>
+                {net}
+                {since ? ` · since ${since}` : ''}
+              </small>
+            </span>
+          </>
+        )}
         {editing && (
           <div class="pf-acct-edit" role="group" aria-label={`${name} on ${net}`}>
             {entries.map((e) => (
@@ -439,20 +456,26 @@ function OwnBio({ identity, about, account, label, onSaved }: { identity: P.Iden
   );
 }
 
-/** A row of Between you: a message of theirs or a mail thread with them. */
+/** A row of Between you: a message of theirs in a direct chat or anywhere else, or a mail thread with them. */
 interface BetweenRow {
   key: string;
   ts: number;
-  kind: 'chat' | 'mail';
+  kind: BetweenKind;
   el: ComponentChildren;
 }
+type BetweenKind = 'direct' | 'group' | 'mail';
+const BETWEEN_CHIPS: [BetweenKind, string][] = [
+  ['direct', 'Direct'],
+  ['group', 'In groups'],
+  ['mail', 'Mail'],
+];
 
 /**
  * Between you (docs/profile.md): their recent messages and your mail with them, newest first, in one list, with
- * Messages and Mail chips when there are both, the first few shown.
+ * Direct, In groups and Mail chips when there are two of them, the first few shown.
  */
 function Between({ rows, shown = 6, foot }: { rows: BetweenRow[]; shown?: number; foot?: ComponentChildren }) {
-  const [only, setOnly] = useState<'chat' | 'mail' | null>(null);
+  const [only, setOnly] = useState<BetweenKind | null>(null);
   const [all, setAll] = useState(false);
   const kinds = new Set(rows.map((r) => r.kind));
   const list = rows.filter((r) => !only || r.kind === only).sort((a, b) => b.ts - a.ts);
@@ -460,13 +483,7 @@ function Between({ rows, shown = 6, foot }: { rows: BetweenRow[]; shown?: number
     <div class="pf-between">
       {kinds.size > 1 && (
         <div class="pf-friend-nets" role="radiogroup" aria-label="Show">
-          {(
-            [
-              [null, 'All', rows.length],
-              ['chat', 'Messages', rows.filter((r) => r.kind === 'chat').length],
-              ['mail', 'Mail', rows.filter((r) => r.kind === 'mail').length],
-            ] as const
-          ).map(([k, label, n]) => (
+          {[[null, 'All', rows.length] as const, ...BETWEEN_CHIPS.filter(([k]) => kinds.has(k)).map(([k, label]) => [k, label, rows.filter((r) => r.kind === k).length] as const)].map(([k, label, n]) => (
             <button class={`chip-btn ${only === k ? 'on' : ''}`} role="radio" aria-checked={only === k} data-track={`between (${label.toLowerCase()})`} onClick={() => setOnly(k)}>
               <b>{label}</b> {n}
             </button>
@@ -530,13 +547,18 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const S = selfParts.value;
   useEffect(() => void loadSelf(), []);
   const [merging, setMerging] = useState(false);
-  // The hero's pencil, for a person of one account: its nickname (Nickname.tsx).
-  const [naming, setNaming] = useState(false);
+  // The hero's name field (HeroName.tsx), open from its pencil or More's Set Nickname…
+  const [naming, setNaming] = useState<'person' | null>(null);
   // How this page changed where an account stands with them (`account|identity` → the newest word), until the profile
   // is fetched again: ended (stranger), or made (Add friend, Accept). connections.ts withChanges.
   const [changed, setChanged] = useState<Record<string, P.PersonRelationship>>({});
   useEffect(() => setChanged({}), [personId, identityId]);
   const change = (accountId: string | null, identityId: string, rel: P.PersonRelationship) => accountId && setChanged((x) => ({ ...x, [`${accountId}|${identityId}`]: rel }));
+  // Add friend, Accept and the like, from the hero or an account's line: the network's new word, kept and shown.
+  const connected = (a: P.PersonAboutView) => {
+    if (a.relationship) change(a.accountId, a.identityId, a.relationship);
+    learn(a);
+  };
   const [filter, setFilter] = useState('');
   const person = personId ? db.persons.get(personId) : undefined;
   // Same person? suggestions with them in: by their person, or the identity when no person holds it.
@@ -735,8 +757,13 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const moreMenu = (): MenuSpec | null => {
     const base = person ? personMenu(person) : identityMenu(first?.id);
     const extra: MenuEntry[] = groups(
-      // One account's nickname is theirs (with several, each tile has its own).
-      ids.length === 1 && !first?.isBot ? nicknameEntries(first, () => setNaming(true)) : [],
+      // Your nickname for the person, no account's (each account's own is on its row in Accounts).
+      !isSelf && person
+        ? [
+            { label: person.nickname ? 'Change Nickname…' : 'Set Nickname…', icon: 'pencil', run: () => setNaming('person') },
+            !!person.nickname && { label: 'Remove Nickname', icon: 'x', run: () => void sources({ nickname: null }) },
+          ].filter(Boolean) as MenuEntry[]
+        : [],
       [{ label: 'Ask the Networks Again', icon: 'refresh', run: refresh }],
       // Ignore on their networks (ProfileSelf.tsx).
       isSelf || !S ? [] : S.selfEntries(ids, profile, profile.links ?? [], update),
@@ -758,8 +785,15 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const pictureChosen = (several && ids.find((i) => i.id === person?.pictureIdentityId)) || null;
   // It shows only while it has a picture and is not the main account's own; its entry stays to clear it.
   const pictureOf = pictureChosen?.avatar && pictureChosen.id !== speaker?.id ? pictureChosen : null;
-  const sources = (patch: { face?: string | null; picture?: string | null }) =>
-    person && api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).catch((e) => toast({ kind: 'error', title: 'Could not save that', body: e.message }));
+  // Their name chosen from another account than the main one (the hero's pencil), for the Accounts card's note.
+  const nameAcct = (person?.nameFrom && person.nameFrom.identityId !== speaker?.id && ids.find((i) => i.id === person.nameFrom!.identityId)) || null;
+  /** Saved, or false where it could not be (said in a toast). */
+  const sources = async (patch: { face?: string | null; picture?: string | null; nameFrom?: P.NameFrom | null; nickname?: string | null }) =>
+    !!person &&
+    api(`/api/persons/${person.id}`, { method: 'PATCH', body: patch }).then(
+      () => true,
+      (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
+    );
   const sinceOf = new Map(said.filter((a) => a.createdAt).map((a) => [a.identityId, monthYear(a.createdAt!)]));
   /** How to reach one account: its chat (the person's page, sending there), else start one, else mail it. */
   const reach = (i: P.IdentityView): { run: () => void; label: string } | null => {
@@ -812,21 +846,50 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
   const ownPicture = picTarget();
   editing.current = picturing ? ((picturing.came ? picTarget(picturing.came) : ownPicture) ?? editing.current) : null;
 
+  // Which name and which picture show for them, chosen in the hero (docs/profile.md "Which account speaks for them").
+  // In the Accounts card's order (by network), the main account's first.
+  const mainAcct = speaker ?? first;
+  const entries = isSelf ? [] : nameEntries(tiles, mainAcct?.id);
+  const nameRowsOf = !isSelf && person ? nameRows(entries, person, identityName(mainAcct?.id), several) : [];
+  // A name typed in the hero is your nickname for the person, no account's, and the name shown over all of theirs.
+  const mayNickname = !isSelf && !!person;
+  const pictures = several && !isSelf && person ? pictureChoices(ids, person, speaker) : [];
+  // Their pictures, full screen, the one shown first in view: swipe or page through them and use another.
+  const viewPictures = () => {
+    const on = Math.max(0, pictures.findIndex((c) => c.on));
+    viewer.value = {
+      images: pictures.map((c) => ({ url: c.url, name: c.label, detail: c.detail, fill: true })),
+      index: on,
+      choose: { on, pick: (k) => sources({ picture: pictures[k].id === speaker?.id ? null : pictures[k].id }) },
+    };
+  };
+
   const hero = (
     <Hero
       id={person?.id ?? first?.id ?? ''}
       name={name}
       picture={picture}
       onPicture={ownPicture ? (e) => pe!.pictureMenu(e, ownPicture, setPicturing, picture ? () => viewPicture(picture, name) : undefined) : undefined}
+      onView={pictures.length > 1 ? viewPictures : undefined}
       presence={isSelf ? undefined : person ? { person: person.id } : { identity: first?.id }}
       network={nets.length === 1 ? nets[0] : undefined}
       banner={banner}
       accent={accent}
       title={
-        <h1>
-          {/* One account: their name is its name, and the pencil gives that account a nickname. */}
-          {!several && nicknamable(first) && !first.isBot ? <NicknamedName i={first} label={name} title={first.nickname ? `Your nickname for ${ownName(first)}` : name} editing={naming} setEditing={setNaming} class="pf-name" /> : name}
-        </h1>
+        isSelf ? (
+          <h1>{name}</h1>
+        ) : (
+          <HeroName
+            name={name}
+            also={alsoNames(entries, name)}
+            rows={nameRowsOf}
+            nickname={mayNickname}
+            editing={naming !== null}
+            setEditing={(on) => setNaming(on ? 'person' : null)}
+            onPick={(r) => void sources({ nameFrom: r.from })}
+            onNickname={(t) => void sources({ nickname: t })}
+          />
+        )
       }
       sub={
         <span class="pf-handles">
@@ -888,14 +951,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {!isSelf && messageOptions > 0 && (messageOptions === 1 ? <Action primary icon="send" label="Message" onClick={message} /> : <Action primary icon="send" label="Message" menu={messageMenu} />)}
           {!isSelf && <Action icon="merge" label="Merge" title="Merge another identity in" onClick={() => setMerging(!merging)} />}
           {!isSelf && (
-            <ConnectActions
-              identities={ids}
-              abouts={abouts}
-              onChanged={(a) => {
-                if (a.relationship) change(a.accountId, a.identityId, a.relationship);
-                learn(a);
-              }}
-            />
+            <ConnectActions identities={ids} abouts={abouts} onChanged={connected} />
           )}
           {ids.length > 0 && <Action icon="copy" label="Copy" menu={() => ({ label: 'Copy', items: copyEntries(ids) })} />}
           {blocks.length > 0 && <Action icon="x" label="Block" menu={() => ({ label: 'Block', items: blocks })} />}
@@ -1139,8 +1195,9 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           const mine = conns.filter((c) => c.identityId === i.id);
           return (
             <div class="pf-acct-item" data-same={identityName(i.id) === name || undefined}>
-              <AccountRow key={i.id} i={i} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />
+              <AccountRow key={i.id} i={i} same={identityName(i.id) === name} since={sinceOf.get(i.id)} main={speaker?.id === i.id} chosen={speaker?.id === i.id && !!person?.facePinned} picture={pictureOf?.id === i.id} go={r?.run} goLabel={r?.label} menu={(edit) => accountMenu(i, edit)} />
               {mine.length > 0 && <ProfileConnections identities={ids} list={mine} onEnded={ended} />}
+              {!isSelf && <ConnectActions row identities={[i]} abouts={abouts} onChanged={connected} />}
             </div>
           );
         })}
@@ -1150,6 +1207,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
           {speaker ? (
             <span>
               <NetGlyph network={speaker.network} size={11} /> {identityName(speaker.id)} speaks for them{person.facePinned ? '' : ' for now'}
+              {nameAcct ? `; their name is from ${netName(nameAcct.network)}` : ''}
               {pictureOf ? `; their picture is from ${netName(pictureOf.network)}` : ''}.
             </span>
           ) : (
@@ -1165,7 +1223,7 @@ export function ProfilePane({ personId, identityId, onBack }: { personId?: strin
     return {
       key: m.id,
       ts: m.ts,
-      kind: 'chat',
+      kind: c?.shape === 'direct' ? 'direct' : 'group',
       el: (
         <button class="pf-row pf-msg" onClick={() => openMessage(m.conversationId, m.id)} title={fullTime(m.ts)}>
           {c && !isQuietConv(c) ? <PlaceIcon c={c} size={24} /> : <NetBadge network={m.network} size={24} />}

@@ -88,10 +88,16 @@ shows, the nickname shows instead: an account's name as you see it is your nickn
 else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` in `model.ts`, `shownName` and `SHOWN`
 in the hub's `store.ts`).
 
+**A nickname for the person is no account's.** You can also give the person a nickname of your own (`person.nickname`,
+`PersonView.nickname`), from the pencil by their name on their profile or by a one-route chat's name: only you see it,
+no network is told, and it is their name everywhere their person's name shows, over every account's name and over a
+name you chose from one of their accounts. Picking one of their names in the profile's list takes its place, and the
+list's first row is it, ticked, while you have one. Names that differ only in case are different names here.
+
 **A person is shown by one of their accounts, their face** (`person.face_id`, `faceId` on a PersonView): its name as
-you see it is their name, and its picture is their picture. Name and picture never come from two accounts, and both
-follow that account as it changes, unless you chose another of their accounts for the picture (docs/profile.md
-"Which account speaks for them"). Neither is ever set on the person:
+you see it is their name, and its picture is their picture. Both follow that account as it changes, unless you gave
+the person a nickname or chose another of their names or another account's picture from their profile's hero
+(docs/profile.md "Which account speaks for them"). With none of those:
 
 - one account: it is their face, so a nickname for it is their name everywhere (header, inbox row, people list,
   message box, notifications), and the network renaming the account changes nothing while it has one;
@@ -108,9 +114,10 @@ id> }`, `facePinned`), and on the main account it shows checked, **Main Account*
 (`{ face: null }`) asks the hub to choose again. The row that is their face is marked **Main**; the line under the rows
 says whether you chose it or the hub did.
 
-Merging two people keeps the face of the one kept; the nicknames are the accounts' and go along with them. Splitting
-an account off keeps its nickname, which names the new person; the person it left keeps their face, or has another
-chosen when the face was the one that went.
+Merging two people keeps the face of the one kept; account nicknames go along with their accounts, and your nickname
+for the person is the kept one's, else the other's. Splitting an account off keeps its nickname, which names the new
+person; the person it left keeps their face and your nickname for them, or has another face chosen when the face was
+the one that went.
 
 **One face everywhere.** Wherever a person's account shows outside its own tile (message heads in a group or channel,
 reactions, call faces, the ringing card, search results, feed posts), it is drawn with the person's picture and the
@@ -139,11 +146,11 @@ the person's name as every conversation does.
 
 **Where you set one.** On a person's profile, each account's tile has Set Nickname…, Change Nickname… and Remove
 Nickname in its menu (⋯), which edit the name on the tile in place; a tile with a nickname shows it as the name and
-the account's own beneath it, muted ("their name: kitty"). A person of one account has a pencil by the name at the
-top of their profile, and the same entries under More. The menu of an author, a picture or a mention has them for that
-account. A chat of one route has the pencil by its name, for the account at the other end; a chat of several routes
-has none, since its name is made of the accounts' (it links to the profile, where the tiles are). Leaving the editor
-empty takes the nickname away. Your own accounts take none.
+the account's own beneath it, muted ("their name: kitty"). The menu of an author, a picture or a mention has them for
+that account. Your nickname for the person is typed in the field the pencil by the name at the top of their profile
+opens (docs/profile.md, "Choosing from the hero"), with Set Nickname… and Remove Nickname for it under More; a chat of
+one route has the pencil by its name, for the person at the other end. A chat of several routes has none in its header
+(it links to the profile). Leaving an editor empty takes the nickname away. Your own accounts and person take none.
 
 `person.name_source` says where a person's name came from:
 
@@ -162,7 +169,9 @@ Until 2026-11-11 a nickname was the person's (`user`), set with `PATCH /api/pers
 showed the accounts' own. Those calls now answer 400 and name the new one. On its first start with nicknames by
 account, the hub moves them once (`nicknamesToAccounts`, meta `nicknames_by_account`; MIGRATIONS 4 → 5, so the
 database is copied first): each person named `user` gives that name as a nickname to each of their accounts that has
-none, then has one account's name (`network`) or keeps the name, now an account's (`merge`).
+none, then has one account's name (`network`) or keeps the name, now an account's (`merge`). Since 2026-11-27 the
+person has a nickname again (`{ nickname }` on `PATCH /api/persons/:id`, above), which only names the person: the
+page of several routes still names each message by its account.
 
 Earlier still (an earlier review of this page) every message of theirs showed the person's name and yours your own
 person's name, and only the picture varied, by account; the route tag said which account. Before that, the page
@@ -175,7 +184,8 @@ once (meta `name_source_set`, MIGRATIONS 2 → 3): a name one of their accounts 
 | call | does |
 | --- | --- |
 | `GET /api/chats/:id` | `ChatView`: name, `nameSource`, `routes` (each with their identity, yours, last message time, unread), `route` (the default route, with `why: 'chosen' \| 'latest'`) |
-| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). `name` is refused (400): a nickname is an account's |
+| `PATCH /api/chats/:id` | `{ route: { conversationId, accountId } \| null }` chooses a route, or forgets the choice (409 if it is not a route of this chat). `name` is refused (400): a nickname is `{ nickname }` on the person or the account |
+| `PATCH /api/persons/:id` | `{ nickname: string \| null }` gives the person your nickname, no account's, or takes it away (null or empty); `{ nameFrom }`, `{ face }` and `{ picture }` as in docs/profile.md. `name` is refused (400) |
 | `PATCH /api/identities/:id` | `{ nickname: string \| null }` gives one account your nickname, or takes it away (null or empty); answers `{ identity }`, and other open views hear of it as an `identity` event (and a `person` event when their name follows). 400 for your own accounts, 404 for an unknown one |
 | `GET /api/chats/:id/messages?before=<ts>:<id>&limit=` | every route's messages as one timeline, newest page first |
 | `POST /api/chats/:id/messages` | sends. The route is the one in `route` if given (409 if it is not this chat's), else the route of the message in `replyTo`, else the default route. Otherwise it behaves like `POST /api/conversations/:id/send`: the same body, the same `clientId` retry handling |

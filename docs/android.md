@@ -200,15 +200,13 @@ A push says which tier its message is in ([notifications.md](notifications.md)):
 `quiet` for a Conversation and `digest` for a row of the ranked list, and `importance` (0 to 1) says where a list row
 comes. A hub from before the tiers sends only `level`, which is read as a Conversation when it is `quiet` and as an
 alert otherwise. Each has a channel, so Android's own settings can change one and leave the others: **Sound**
-(`messages`, the only one that sounds), **Shown now (silent)** (`messages-quiet`), **Next look (silent)**
-(`next-look`: the loudness scale's bundle, [notifications.md](notifications.md#next-look)) and **Ranked list
-(silent)** (`list`). The first two ids are older than the tiers and the scale, so a sound someone set on them stays,
-and their names follow the scale's bands.
+(`messages`, the only one that sounds), **Show (silent, in the shade)** (`messages-shade`) and **Ranked list
+(silent)** (`list`). The `messages` id is older than the tiers and the scale, so a sound someone set on it stays.
 
-**The next look** is one notification, tag `next-look`, a push with `nextLook` (`{ count, chats }`): *Next look · N
-waiting*, opening the inbox; a new one takes its place. The app tells the hub you looked when the phone unlocks
-(`ACTION_USER_PRESENT`, `POST /api/loudness/look { why: "unlock" }`, at most once in three minutes). Android delivers
-that only to a receiver registered while the app runs, so it is registered when a push or the app starts the process.
+**Show is minimized** (`IMPORTANCE_MIN`): in the shade only, with no sound, vibration, status-bar icon or lock-screen
+card. Android never lowers the importance of a channel that is already there, so Show has a new id, and the app deletes
+the channels it no longer uses at each start: the old silent one (`messages-quiet`, low) and the next look's bundle
+(`next-look`), which went with the next look ([notifications.md](notifications.md#one-scale-loudness)).
 
 **An alert or a Conversation** is a conversation notification, as Discord, Signal and Google Messages post them
 (`Notifications.kt`, design in [research/notification-design.md](research/notification-design.md) §7–8):
@@ -223,12 +221,16 @@ that only to a receiver registered while the app runs, so it is registered when 
   `setLocusId`, so Android 11+ draws it in the conversation layout: the shortcut's picture in the icon slot, with the
   small icon, the network's mark in its colour, as a badge on it. No large icon. The shortcut opens the conversation.
   Without a valid long-lived shortcut Android falls back to the plain layout, with the picture missing.
-- **A row of its own.** Each is in a group of its own (`conv:<id>`, the shortcut's id) that never gets a summary, and
-  Android shows a notification like that as a separate row in its Conversations section. There is no shared group and
-  no "N conversations" summary any more. With no group at all, Android 15 gathers an app's notifications into a
-  bundle of its own making (`ranker_group`); it did that to five Conversations.
-- **One row through a change of tier.** The tag is the same for both tiers, so a Conversation that gets an alert, or
-  an alert followed by a Conversation, stays one row and moves to the other channel.
+- **A row of its own, when it sounds.** An alert is in a group of its own (`conv:<id>`, the shortcut's id) that never
+  gets a summary, and Android shows a notification like that as a separate row in its Conversations section. With no
+  group at all, Android 15 gathers an app's notifications into a bundle of its own making (`ranker_group`); it did that
+  to five Conversations.
+- **Show ones fold together.** A Conversation (Show) is in the shared group `dither-shade` under one silent summary,
+  *N chats* with their names, so several quiet ones are one row of the shade. The fold is only how they look: each
+  still comes when its message does, and the summary goes once the last of them is read or swiped away.
+- **One notification through a change of tier.** The tag is the same for both tiers, so a Conversation that gets an
+  alert, or an alert followed by a Conversation, stays one notification: it moves to the other channel, and into or
+  out of the fold.
 - **Bursts.** `setOnlyAlertOnce(!alert)`: a push with `alert: false` changes the text without sound, vibration or
   heads-up. When it is the conversation's first notification it is muted with `GROUP_ALERT_SUMMARY`: a notification
   in a group that leaves alerting to the group's summary never alerts, and its group has none. That is what
@@ -645,6 +647,9 @@ ring stopped, and hanging up (from the shade on the phone) ends the call on the 
 bun scripts/verify-call-pair.ts <hub> --conversation <id> --caller <account>@phone --callee <account>@computer \
   [--mode bridge|direct] [--wav-callee speech.wav] --serial emulator-5584
 ```
+
+When the two accounts see the call in different chats (two Signal accounts, each with its own DM to the other), name
+the callee's with `--callee-conversation`. On Signal the caller is in the call only once it is answered.
 
 The emulator reaches the hub through `adb reverse`, which carries TCP only: its call's media needs the hub's TURN
 relay (on an address the emulator can reach, such as the computer's LAN address), since the far end offers only

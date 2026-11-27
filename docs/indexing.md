@@ -58,13 +58,32 @@ channels added since the last run.
   name for where it ended (on Discord, the oldest message's id). So each page goes back from a real message, as
   scrolling does, not from a made-up id at a time. The cursor is kept with the task (`job_task.walk`), so a restart
   keeps it, and it is dropped whenever the walk jumps over a span.
-- Each page is recorded in `history_span` as a stretch known to be whole. Spans that touch are merged, and a span
-  reaching the start has `from_ts` 0.
+- Every reader of history (index jobs, the [gap fill](import-discord.md), [catching up](catch-up.md)) reads a page
+  the same way, through `packages/hub/src/historypage.ts`, so what one fetched the others skip.
+- A page's messages are known exactly. While the page is out, the store records the backfilled messages of that
+  account and chat as they are stored, and which were new to the hub (`Store.tap`). After the answer, the reader waits
+  until every event the account sent before it is applied and committed (`Supervisor.settled`: a marker in the
+  account's events, passed once the transaction that applied it commits). An adapter sends a page's messages before its
+  answer on its socket, and dither-accounts' manager passes a call's events on before its result, so once the marker
+  passes, the page is in.
+- Only then is the page recorded in `history_span` as a stretch known to be whole: from the page's oldest message to
+  where it started, or to the chat's start (`from_ts` 0) when the reply says `done`. Spans that touch are merged.
+  Where the page ended is the reply's `oldest`; for an adapter that leaves it out (Telegram, X, Meta), the
+  `count`-th newest of the page's own messages, so those networks get spans too.
+- A reply's `count` is the messages it sent for that very chat, not everything it read: a reaction, an edit, a deleted
+  row or a thread reply kept in its thread is not one. A page that read only such things says `count: 0` with the
+  `oldest` it reached and not `done`: that stretch is recorded whole (there was nothing in it to miss) and the walk
+  goes on below it.
+- A page whose messages did not come with its answer (an adapter that answers first, or a database locked past two
+  minutes) records nothing, and is asked again 30 s later, three times; then the task fails, saying so. A crash, or an
+  answer that comes early, can no longer leave a stretch marked whole that the hub does not hold. (Spans recorded the
+  old way that hold no message at all were forgotten once, by a migration: a walk reads them again.)
+- An empty page with no `oldest` that does not say `done` ends the walk with nothing recorded.
+- A `done` page is taken for the chat's start only when the hub holds no message older than all the page brought.
+  Otherwise the network could not read that far back (a WhatsApp phone that no longer has them answers empty), so
+  only the page's own stretch is recorded whole, and the walk ends there.
 - Before each request, the walk jumps over any span the cursor is in. A span that reaches the start ends the walk.
 - So a channel already walked costs one page on the next run: its newest page meets the old span, and the walk stops.
-- The adapter's `history` reply names the ts of the page's oldest message (`oldest`). For an adapter that leaves it
-  out, the hub takes the n-th newest stored message below the cursor, which can only make the next page overlap a
-  little, never skip anything.
 
 **Members.**
 
@@ -82,8 +101,8 @@ channels added since the last run.
 
 ## Reading pace
 
-Index jobs, the [gap fill](import-discord.md) and the checks of a post you follow ([feed.md](feed.md#following-a-post))
-fetch through your own accounts, so they go the way you would read back through a chat, not the way an exporter pages
+Index jobs, the [gap fill](import-discord.md), [catching up](catch-up.md) and the checks of a post you follow
+([feed.md](feed.md#following-a-post)) fetch through your own accounts, so they go the way you would read back through a chat, not the way an exporter pages
 it (`readingpace.ts`):
 
 - **Your hours only:** 9:00 to 1:00 local time by default. Reading starts up to 40 minutes after the hour, not on it.
@@ -92,8 +111,8 @@ it (`readingpace.ts`):
   Moving on to another channel adds 3 to 10 s.
 - **A daily cap:** 3,000 messages per account a day. A day runs from the start of the hours to the next start, so
   reading past midnight counts toward the day it started in.
-- **One reader per account:** a job, the gap fill and a followed post's checks never read through one account at the
-  same time.
+- **One reader per account:** a job, the gap fill, catching up and a followed post's checks never read through one
+  account at the same time.
 - Each draw is the mean of two random ones, so values sit around the middle more often than at the ends.
 
 The state lives in `meta` (`pace:<account>`), so a restart neither resets the day's count nor cuts a break short. A

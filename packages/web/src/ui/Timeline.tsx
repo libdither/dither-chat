@@ -3,7 +3,7 @@ import type * as P from '@dither-chat/protocol';
 import { ATTACHMENT_LIMITS, durationLabel, NETWORK_META, RULE_LABEL, RULE_LEVELS, sendBlocker, showsGone, showsInline, type PictureLayout } from '@dither-chat/protocol';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import { ago, clock, dayLabel, fullTime, sameDay } from '../format.ts';
+import { clock, dayLabel, fullTime, gap, sameDay, since } from '../format.ts';
 import { retention } from '../history.ts';
 import { isJumbo, renderMarkdown } from '../markdown.ts';
 import { inviteRef } from '../invites.ts';
@@ -137,6 +137,7 @@ import { Loading } from './Loader.tsx';
 import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
+import { dayHover, TheirDayHost, TimeStamps } from './TheirTime.tsx';
 import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, Sound, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
@@ -341,6 +342,8 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
   // One route: the pencil by the name is for the nickname of their account in it. Several: the name is made of
   // their accounts' names, each with its own nickname on their profile, so it has none.
   const peer = isDirect && !chat ? db.identities.get(peerIdentity(c) ?? '') : null;
+  // The pencil by its name gives the person a nickname, no account's (docs/chats.md, Names).
+  const peerPerson = peer && c.peerPersonId ? db.persons.get(c.peerPersonId) : undefined;
   const openWho = () => go(person && isDirect ? { view: 'profile', person: person.id } : { view: 'profile', conv: c.id });
   return (
     <header class="conv-head" data-track-area="chat header" onContextMenu={onMenu(() => (all ? personMenu(chat!.person) : conversationMenu(c)))}>
@@ -374,7 +377,7 @@ export function ConvHeader({ c, onBack, chat }: { c: P.ConversationView; onBack?
               {chat.person.name}
             </button>
           ) : nicknamable(peer) && !peer.isBot ? (
-            <NicknamedName i={peer} label={convTitle(c)} title={peer.nickname ? `${whoTitle} (your nickname for ${ownName(peer)})` : whoTitle} onOpen={openWho} />
+            <NicknamedName i={peer} person={peerPerson} label={convTitle(c)} title={(peerPerson?.nickname ?? peer.nickname) ? `${whoTitle} (your nickname for ${ownName(peer)})` : whoTitle} onOpen={openWho} />
           ) : (
             <button class="conv-head-name" data-track="name" title={whoTitle} onClick={openWho}>
               {convTitle(c)}
@@ -507,21 +510,46 @@ function Body({ m, tail }: { m: P.MessageView; tail?: ComponentChildren }) {
 }
 
 /**
- * A deleted or disappeared message the hub kept (docs/history.md): shown in full, as it was, with a quiet mark of
- * how and when it went.
+ * A deleted or disappeared message the hub kept (docs/history.md): one short line in grey, so the eye passes over it.
+ * The name, the words cut at the edge, and how long it stayed and when it went ("2 min later · 1h ago"). A click
+ * (a tap) opens it in place, files and all; another folds it. A mention of you keeps a faint amber.
  */
-function Gone({ m, layout }: { m: P.MessageView; layout: PictureLayout }) {
-  // Its "5m ago" moves on with the list, as it did when every change drew every message.
+function GoneLine({ m, name, picture, layout, highlight, menuProps }: { m: P.MessageView; name: string; picture: string | null | undefined; layout: PictureLayout; highlight: boolean; menuProps: Record<string, unknown> }) {
+  // Its "1h ago" moves on with the list.
   rev.value;
-  const how = m.gone!.how === 'disappeared' ? 'Disappeared' : 'Deleted';
+  const [open, setOpen] = useState(false);
+  const g = m.gone!;
+  const how = g.how === 'disappeared' ? 'Disappeared' : 'Deleted';
   const shown = { ...m, deleted: false };
+  const files = m.attachments.length;
+  const later = gap(g.at - m.ts);
+  const went = since(g.at);
+  const toggle = () => setOpen((o) => !o);
   return (
-    <div class="msg-gone open">
-      <Body m={shown} />
-      <Attachments m={shown} layout={layout} />
-      <span class="msg-gone-mark" title={`${how} ${fullTime(m.gone!.at)}`}>
-        <Icon name={m.gone!.how === 'disappeared' ? 'clock' : 'trash'} size={11} />
-        {how} <span class="msg-gone-when">· {ago(m.gone!.at)}</span>
+    <div
+      class={`msg msg-gone ${open ? 'open' : ''} ${m.mentionsSelf ? 'to-you' : ''} ${highlight ? 'flash' : ''}`}
+      id={`m-${m.id}`}
+      data-how={g.how}
+      role="button"
+      tabindex={0}
+      aria-expanded={open}
+      aria-label={open ? undefined : `${how} message from ${name}, ${later} after it was sent, ${went === 'now' ? 'just now' : `${went} ago`}`}
+      // Open, a link, a file or a spoiler does its own thing; anywhere else folds it again.
+      onClick={(e) => !(open && (e.target as HTMLElement).closest?.('a, button, [data-att], .spoiler, video, audio')) && toggle()}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && (e.preventDefault(), toggle())}
+      {...menuProps}
+    >
+      <span class="msg-gone-face">
+        <Avatar id={m.authorId || m.id} name={name} url={picture} size={18} />
+      </span>
+      <span class="msg-gone-who">{name}</span>
+      <div class="msg-gone-text">
+        {m.body ? <Body m={shown} /> : <span class="msg-gone-files">{files === 1 ? 'a file' : `${files} files`}</span>}
+        {open && <Attachments m={shown} layout={layout} />}
+      </div>
+      <span class="msg-gone-mark" title={`${how} ${fullTime(g.at)}`}>
+        <Icon name={g.how === 'disappeared' ? 'clock' : 'trash'} size={10} />
+        {later} later · {went === 'now' ? 'just now' : `${went} ago`}
       </span>
     </div>
   );
@@ -777,6 +805,9 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       </div>
     );
 
+  // A deleted or disappeared message the hub kept: one short grey line the eye passes over (docs/history.md).
+  if (m.deleted && m.gone?.kept && !mail) return <GoneLine m={m} name={name} picture={picture} layout={pictures} highlight={highlight} menuProps={menuProps} />;
+
   // On a touch screen, the chip that switches a run of two or more pictures: on the run's first row (`chipRun`), or on
   // a message with several pictures of its own.
   const chipOn = chipRun ?? (!run && !absorbed && m.attachments.length > 1 ? [m] : undefined);
@@ -796,7 +827,8 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
       {!target && m.quote && <QuoteFallback m={m} />}
       <div class="msg-gutter">
         {grouped ? (
-          <span class="msg-time-hover" title={hover ? fullTime(m.ts) : undefined}>
+          // Another's: pointing shows their usual day (ui/TheirTime.tsx), headed by the day and time; yours keeps the full time as a tooltip.
+          <span class="msg-time-hover" title={hover && self ? fullTime(m.ts) : undefined} {...(hover && !self ? dayHover(m, name, 'yours') : {})}>
             {clock(m.ts)}
           </span>
         ) : (
@@ -825,9 +857,14 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
                 {m.sms.toUpperCase()}
               </span>
             )}
-            <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
-              {clock(m.ts)}
-            </span>
+            {/* Theirs beside yours where their clock differs (ui/TheirTime.tsx); pointing at either shows their usual day. */}
+            {self || !m.authorId ? (
+              <span class="msg-time" title={hover ? fullTime(m.ts) : undefined}>
+                {clock(m.ts)}
+              </span>
+            ) : (
+              <TimeStamps m={m} name={name} hover={hover} />
+            )}
             {/* A person's chat (ui/Pairs.tsx): where the route changes, which one, quietly. A click sends through it. */}
             {mail ? (subject || mail.only) && <SubjectTag m={m} tag={!!subject} /> : conv && chatPerson && onTag && <RouteTag c={conv} directs={directsOf(chatPerson.id)} side={self ? 'mine' : who !== undefined ? 'theirs' : 'other'} onPick={() => onTag(conv.id)} />}
             {(m.editedTs || m.edits) && <Edited m={m} />}
@@ -843,8 +880,6 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
         )}
         {mail ? (
           <MailWords m={m} quoteAbove={quoteAbove} />
-        ) : m.deleted && m.gone?.kept ? (
-          <Gone m={m} layout={pictures} />
         ) : m.forward && !m.deleted ? (
           <ForwardCard m={m}>
             <RichHead m={m} />
@@ -1528,6 +1563,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
           ))}
         {/* Next unread topic (docs/threads.md "Next unread"): one mount for a thread's page and a channel's stream. */}
         {!tkey.startsWith('p:') && convIds[0] && <NextUnreadBar at={convIds[0]} stream={!tkey.startsWith('c:')} bottom={end === all.length && !t?.detached && msgs.length > 0} />}
+        <TheirDayHost />
       </div>
     </div>
   );
@@ -2371,6 +2407,8 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
   const sendAsValue = pref('sendAs')[c.id] ?? accounts.find((a) => a.status === 'online')?.id ?? accounts[0]?.id;
   const voice = c.variant === 'voice' || c.variant === 'stage';
   const held = heldRequest(db.requests, c.id);
+  // A chat with one person: when they are likely to answer you, at the typing line's end (docs/profile.md "When they answer").
+  const peer = c.shape === 'direct' && c.peerPersonId ? db.persons.get(c.peerPersonId) : undefined;
   // A stage you are in is a room (docs/calls.md "The room view"): beside the chat on a wide pane, a Room / Chat switch
   // on a narrow one (a container query on .room-pane), only the room where there is no chat.
   const room = roomCall(c);
@@ -2394,6 +2432,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <TypingBar
         convIds={[c.id]}
         tkey={timelineKey('c', c.id)}
+        awaited={peer ? { who: peer.id, name: peer.name, last: c.lastMessageAt } : undefined}
         lead={
           !held &&
           (accounts.length > 1 ? (
@@ -2549,6 +2588,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       <TypingBar
         convIds={shown.map((d) => d.id)}
         tkey={tkey}
+        awaited={{ who: person.id, name: person.name, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) || null }}
         lead={
           !held && (
             <>

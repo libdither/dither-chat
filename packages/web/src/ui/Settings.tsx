@@ -1,5 +1,6 @@
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useState } from 'preact/hooks';
+import { Loading } from './Loader.tsx';
 import { listPreview } from '../board.ts';
 import { liveRules, netName, ruleIcon, ruleName } from '../model.ts';
 import { api, db, go, mailRev, pref, rev, setPrefs, setRule, toast } from '../state.ts';
@@ -33,6 +34,22 @@ import { followsArchive, globalPictures, PICTURE_LABELS, setFollowArchive, setGl
 import { PICTURE_LAYOUTS, type PictureLayout } from '@dither-chat/protocol';
 import { applyCallInput, myInput } from '../call.ts';
 import { TranslateSettings } from './TranslateSettings.tsx';
+
+/** Settings → Catching up (CatchUp.tsx): a chunk of its own, loaded when Settings draws it, so the first load does not carry it. */
+function CatchUpLazy() {
+  const [Section, setSection] = useState<(typeof import('./CatchUp.tsx'))['CatchUpSettings'] | null>(null);
+  useEffect(() => {
+    void import('./CatchUp.tsx').then((m) => setSection(() => m.CatchUpSettings), () => {});
+  }, []);
+  return Section ? (
+    <Section />
+  ) : (
+    <section class="set-block" id="set-catchup">
+      <h3>Catching up</h3>
+      <Loading inline label="Loading…" />
+    </section>
+  );
+}
 
 /** A phone's way to any section without scrolling past the rest: a button in the header, and the sections in a sheet. */
 function SectionsButton() {
@@ -378,6 +395,7 @@ export function SettingsPane() {
           <PrivacySettings />
           <HistorySettings />
           <IndexingSettings />
+          <CatchUpLazy />
           <AdversarialSettings />
         </Later>
         <Later>

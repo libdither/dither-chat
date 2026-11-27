@@ -55,6 +55,7 @@ export function Hero({
   status,
   actions,
   onPicture,
+  onView,
   presence,
 }: {
   id: string;
@@ -75,6 +76,8 @@ export function Hero({
    * among it). Elsewhere a picture is a button that opens it full screen.
    */
   onPicture?: (e: MouseEvent) => void;
+  /** Opens it full screen some other way: a person's accounts' pictures, to choose one of, in the viewer. */
+  onView?: () => void;
   /** Whose status dot the picture shows (PresenceDot.tsx). */
   presence?: PresenceOf;
 }) {
@@ -95,8 +98,14 @@ export function Hero({
             </span>
           </button>
         ) : picture ? (
-          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => viewPicture(picture, name)} aria-label="View the picture" title="View the picture">
+          <button class={`pf-avatar pf-avatar-view ${square ? 'square' : ''}`} data-track="profile: view picture" onClick={() => (onView ? onView() : viewPicture(picture, name))} aria-label={onView ? 'View their pictures and choose the one shown' : 'View the picture'} title={onView ? 'View their pictures, and choose the one shown' : 'View the picture'}>
             {pic}
+            {/* Several to choose from: a badge says so, as the camera does where you may change it. */}
+            {onView && (
+              <span class="pf-avatar-badge" aria-hidden="true">
+                <Icon name="image" size={13} />
+              </span>
+            )}
           </button>
         ) : (
           <span class={`pf-avatar ${square ? 'square' : ''}`}>{pic}</span>

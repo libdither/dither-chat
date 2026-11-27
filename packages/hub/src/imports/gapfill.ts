@@ -9,24 +9,21 @@
  * go back from the top of the gap until a page brings nothing above it. Progress is kept in gap_fill, so a restart
  * carries on. Direct and group chats always; server channels only where an import reached, unless asked.
  *
- * At a person's reading pace (readingpace.ts), shared with the index jobs: one reader per account at a time.
+ * At a person's reading pace (readingpace.ts), shared with the index jobs: one reader per account at a time. Pages are
+ * read through historypage.ts, as the index jobs and the catch-up read them, and what they cover is recorded whole.
  */
 import type * as P from '@dither-chat/protocol';
 import { type Clock, realClock, sleep } from '../clock.ts';
+import { LAND_AGAIN_MS, LAND_RETRIES, NOT_LANDED, type Pager, readPage, skipWhole } from '../historypage.ts';
 import { READING, ReadingPace } from '../readingpace.ts';
 import type { Store } from '../store.ts';
 
-/** Messages a page: what Discord's client loads when you scroll up. */
-const PAGE = 50;
 /** The pace's name for this reader. */
 const READER = 'gapfill';
 /** A wait for the pace is slept in steps this long at most, so a stop tells soon. */
 const REST_STEP_MS = 60_000;
 /** An extractor that cannot read just now (deferMs) is asked again after at most this long. */
 const DEFER_MAX_MS = 10 * 60_000;
-/** A page's messages may land just after its answer (remote accounts): looked for this often, this many times. */
-const LAND_MS = 500;
-const LAND_TRIES = 6;
 
 type Row = Record<string, any>;
 
@@ -44,6 +41,8 @@ export class GapFill {
     private log: (msg: string) => void = () => {},
     private clock: Clock = realClock,
     private pace: ReadingPace = new ReadingPace(store, READING, clock),
+    /** Until what the account sent is applied (Supervisor.settled): historypage.ts. */
+    private settled?: Pager['settled'],
   ) {}
 
   /** Conversations still to do, and done, for an account. */
@@ -138,33 +137,40 @@ export class GapFill {
           .query('UPDATE gap_fill SET pages = ?, fetched = ?, done = ?, error = ?, updated_at = ? WHERE account_id = ? AND conversation_id = ?')
           .run(pages, fetched, patch.done ? 1 : 0, patch.error ?? null, this.clock.now(), accountId, g.conversation_id);
       try {
+        let tries = 0;
         for (;;) {
           if (!(await this.turn(accountId, state))) return save({});
-          const count = () => (this.store.db.query('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?').get(g.conversation_id) as Row).n as number;
-          const before = count();
-          const r = await this.command(accountId, { t: 'history', conversation: native, beforeTs: cursor, limit: PAGE, pace: 'read', ...(mark && mark.at === cursor ? { cursor: mark.next } : {}) });
-          if (r?.deferMs && !r.count) {
-            await sleep(this.clock, Math.min(Math.max(r.deferMs, 1000), DEFER_MAX_MS));
+          // Over what is known whole: reaching the gap's end (or the start) ends it.
+          cursor = skipWhole(this.store, g.conversation_id, cursor);
+          if (cursor <= gapEnd) {
+            save({ done: true });
+            break;
+          }
+          const p = await readPage(this.store, { command: this.command, settled: this.settled }, { accountId, cid: g.conversation_id, native, beforeTs: cursor, cursor: mark && mark.at === cursor ? mark.next : undefined });
+          if (p.kind === 'defer') {
+            await sleep(this.clock, Math.min(Math.max(p.deferMs, 1000), DEFER_MAX_MS));
             continue;
           }
           pages++;
-          // The page's messages may land just after the answer (remote accounts): give them a moment.
-          let next = this.top(g.conversation_id, gapEnd);
-          for (let i = 0; i < LAND_TRIES && r && r.count && (next === null || next >= cursor); i++) {
-            await sleep(this.clock, LAND_MS);
-            next = this.top(g.conversation_id, gapEnd);
+          if (p.kind === 'unlanded') {
+            // Its messages did not come with the answer: nothing recorded, the same page again a little later.
+            if (++tries > LAND_RETRIES) throw new Error(NOT_LANDED);
+            await sleep(this.clock, Math.max(LAND_AGAIN_MS, this.pace.read(accountId, READER, p.count, false)));
+            continue;
           }
-          fetched += Math.max(0, count() - before);
-          // Done: the start of the conversation, or a page that brought nothing above the gap.
-          if (!r || r.done || !r.count || next === null || next >= cursor) {
+          tries = 0;
+          fetched += p.fresh.length;
+          if (p.kind === 'failed') throw new Error(p.error);
+          // Done: the start of the conversation, a page that brought nothing, or one that reached the gap's end.
+          if (p.end || p.oldest === null || p.oldest <= gapEnd) {
             save({ done: true });
-            await sleep(this.clock, this.pace.read(accountId, READER, r?.count ?? 0, true));
+            await sleep(this.clock, this.pace.read(accountId, READER, p.count, true));
             break;
           }
-          cursor = next;
-          mark = typeof r.next === 'string' && r.oldest === next ? { next: r.next, at: next } : null;
+          cursor = p.oldest;
+          mark = p.next ? { next: p.next, at: p.oldest } : null;
           save({});
-          await sleep(this.clock, this.pace.read(accountId, READER, r.count, false));
+          await sleep(this.clock, this.pace.read(accountId, READER, p.count, false));
         }
       } catch (e: any) {
         this.log(`gap fill ${accountId} ${g.conversation_id}: ${e?.message ?? e}`);

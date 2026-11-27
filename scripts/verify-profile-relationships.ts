@@ -15,8 +15,8 @@
  * longer says Follows you; one-way follows, a request sent and a block read the same way; People's Friends has the X
  * mutuals beside the Discord friends and Following has the follows; nothing sideways on a phone; nothing sent to any
  * network (X's writeLog, every other account's addLog) until, clicked: Remove friend on Jordan and Unblock on Owl,
- * each then Add friend, which says Request sent, and the networks got exactly a remove and an add each; no script
- * errors.
+ * each then Add friend (Jordan's from the hero, Owl's from the "Not friends on Discord" line under the account), which
+ * says Request sent, and the networks got exactly a remove and an add each; no script errors.
  */
 import { mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -202,7 +202,8 @@ try {
 
   // ------------------------------------------------------------------ ending one, then making another (clicked)
   await page.size(1280, 1000);
-  const endThenAdd = async (who: any, rel: string, what: string) => {
+  // Add friend from the hero's button, or from the line it leaves under their account ("Not friends on Discord").
+  const endThenAdd = async (who: any, rel: string, what: string, from: 'hero' | 'account') => {
     const asker = (await json(`/api/identities/${who.id}/about`)).accountId;
     await profile(`#/i/${who.id}`);
     const row = `.pf-accounts .pf-link-row[data-account="${asker}"][data-rel="${rel}"]`;
@@ -211,16 +212,19 @@ try {
     await page.eval(`document.querySelector('[data-confirm-remove="${rel}"]').click()`);
     await page.until(`!document.querySelector(${JSON.stringify(row)}) && !!document.querySelector('.pf-action[data-action="friend"]')`, 10000);
     check(`${what}: ended, its row goes and Add friend comes`, true);
-    await page.eval(`document.querySelector('.pf-action[data-action="friend"]').click()`);
+    const offer = await page.eval<any>(`(() => { const r = document.querySelector('.pf-accounts .pf-acct-item [data-kind="offer"][data-network="discord"]'); return r && { under: r.closest('.pf-acct-item').querySelector('.pf-acct').dataset.identity, said: r.querySelector('b').textContent, button: r.querySelector('[data-connect="friend"]')?.textContent ?? null }; })()`);
+    check(`${what}: …and under their account too, "Not friends on Discord" with Add friend`, offer?.under === who.id && offer.said === 'Not friends on Discord' && offer.button === 'Add friend', offer);
+    await page.eval(from === 'hero' ? `document.querySelector('.pf-action[data-action="friend"]').click()` : `document.querySelector('.pf-accounts [data-kind="offer"] [data-connect="friend"]').click()`);
     await page.until(`!!document.querySelector('.pf-tag[data-kind="requested"]')`, 10000).catch(() => {});
     const after = await page.eval<any>(`({ tag: !!document.querySelector('.pf-tag[data-kind="requested"]'), row: document.querySelector('.pf-accounts .pf-link-row[data-kind="requested"][data-account="${asker}"] b')?.textContent ?? null })`);
-    check(`${what}, then Add friend: Request sent in the hero and under the account`, after.tag && after.row === 'Friend request sent on Discord', after);
+    const left = await page.eval<number>(`document.querySelectorAll('.pf-accounts [data-kind="offer"]').length`);
+    check(`${what}, then Add friend from the ${from}: Request sent in the hero and under the account, the offer gone`, after.tag && after.row === 'Friend request sent on Discord' && left === 0, { ...after, left });
     return asker;
   };
   const jordan = boot.identities.find((i: any) => i.network === 'discord' && i.displayName === 'Jordan');
-  const a1 = await endThenAdd(jordan, 'friend', 'Jordan: Remove friend');
+  const a1 = await endThenAdd(jordan, 'friend', 'Jordan: Remove friend', 'hero');
   if (shots) await page.shot(join(shots, 'connections-removed-then-added-desktop.png'));
-  const a2 = await endThenAdd(owl, 'blocked', 'Owl: Unblock');
+  const a2 = await endThenAdd(owl, 'blocked', 'Owl: Unblock', 'account');
   logs = await addLogs();
   const sent = (id: string) => logs[id] ?? {};
   const want = (id: string) => [a1, a2].filter((a) => a === id).length;

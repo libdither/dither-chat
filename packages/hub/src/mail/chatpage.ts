@@ -172,6 +172,7 @@ function mailViews(hub: MailHub, places: MailPlaces, chat: Store, rows: Row[], p
     };
     const only = onlyOf(r);
     if (only) mail.only = only;
+    if (body?.blocks) mail.blocks = body.blocks;
     return {
       id: r.id,
       conversationId: p ? p.routeId : r.thread_id,

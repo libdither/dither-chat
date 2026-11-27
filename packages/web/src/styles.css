@@ -1889,6 +1889,26 @@ button.inbox-status:hover {
   font-size: 11px;
   color: var(--text-faint);
 }
+/* The author's own time, where it is not yours (ui/TheirTime.tsx): "~" before a guess, a moon at night for them. */
+.msg-their-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: -4px;
+  font-size: 11px;
+  color: var(--text-faint);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.msg-their-time::before {
+  content: '·';
+  margin-right: 3px;
+}
+.msg-their-time:hover,
+.msg-their-time:focus-visible {
+  color: var(--text-dim);
+  background: var(--bg-hover);
+}
 .msg-edited {
   font-size: 10px;
   color: var(--text-faint);
@@ -7861,6 +7881,98 @@ textarea.chip-box {
     display: none;
   }
 }
+/* Choosing a person's picture (Viewer.tsx `choose`): their pictures in a row along the bottom, the one in view ringed,
+   the one shown ticked, and the button that shows the one in view. */
+.viewer-picks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  /* Within PICKS_H (Viewer.tsx), so it never shades the picture above it. */
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.65) 30%);
+  color: #fff;
+  opacity: var(--viewer-bg, 1);
+}
+.viewer-thumbs {
+  display: flex;
+  gap: 10px;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 5px;
+  scrollbar-width: none;
+}
+.viewer-thumb {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.12s;
+}
+.viewer-thumb.at {
+  outline-color: #fff;
+}
+.viewer-thumb img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  opacity: 0.6;
+  transition: opacity 0.12s;
+}
+.viewer-thumb.at img,
+.viewer-thumb:hover img {
+  opacity: 1;
+}
+@media (max-width: 600px) {
+  .viewer-thumbs {
+    gap: 8px;
+  }
+  .viewer-thumb {
+    width: 40px;
+    height: 40px;
+  }
+}
+.viewer-thumb-on {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  box-shadow: 0 0 0 2px #000;
+}
+.viewer-use {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 20px;
+  font-weight: 600;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+}
+.viewer-use:disabled {
+  opacity: 0.6;
+}
+.viewer-use.on {
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+}
 .att-img,
 .embed-image {
   cursor: zoom-in;
@@ -11089,6 +11201,18 @@ html[data-theme='light'] .acc-dot {
   font-weight: 700;
   color: var(--text);
 }
+/* Your message waiting on their answer: when it is likely to come (Typing.tsx AnswerNote). Pointing shows their day. */
+.answer-note {
+  pointer-events: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.answer-note:hover {
+  color: var(--text-dim);
+}
 .typing-dots {
   display: inline-flex;
   align-items: center;
@@ -11783,6 +11907,7 @@ html[data-theme='light'] .acc-dot {
 }
 /* Anyone else's picture opens full screen in the image viewer, to zoom. */
 .pf-avatar-view {
+  position: relative;
   display: block;
   border: 0;
   font: inherit;
@@ -12009,6 +12134,7 @@ img.pf-status-emoji {
   }
   .pf-names {
     padding-top: 0;
+    align-self: stretch;
   }
 }
 .pf-card {
@@ -12863,20 +12989,96 @@ a.pf-link:hover {
 
 /* ------------------------------------------------------------------ message history (docs/history.md) */
 
-.msg-gone {
-  margin-top: 0;
+/* A kept deleted or disappeared message: one short line, well below the faintest text, that the eye passes over. Its
+   name, its words cut at the edge, and how long it stayed and when it went at the end. A click opens it in place. */
+.msg.msg-gone {
+  --gone: color-mix(in oklab, var(--text) 34%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--text) 22%, var(--bg-center));
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 16px 2px 0;
+  font-size: 12.5px;
+  color: var(--gone);
+  cursor: pointer;
+  min-width: 0;
 }
-/* A kept deleted or disappeared message: in full, with how and when it went in a quiet line under it. */
+/* A mention of you: the whole line in a faint amber, and a faint amber ground. */
+.msg.msg-gone.to-you {
+  --gone: color-mix(in oklab, var(--mention-text) 45%, var(--bg-center));
+  --gone-2: color-mix(in oklab, var(--mention-text) 30%, var(--bg-center));
+  background: color-mix(in oklab, var(--mention-border) 6%, transparent);
+}
+.msg-gone-face {
+  flex: none;
+  align-self: center;
+  width: 56px;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 4px;
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+.msg-gone-who {
+  flex: none;
+  font-weight: 500;
+}
+.msg-gone-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.msg-gone:not(.open) .msg-gone-text {
+  pointer-events: none;
+}
+/* Folded, the words run on one line: what would be a block of its own flows inline. */
+.msg-gone:not(.open) .msg-gone-text :is(.msg-body, .msg-body *) {
+  display: inline;
+  white-space: nowrap;
+}
+.msg-gone .msg-gone-text .msg-body,
+.msg-gone .msg-gone-text .msg-body :is(a, code, .mention) {
+  color: inherit;
+  background: none;
+  font-size: inherit;
+}
+.msg-gone .msg-gone-text .mention {
+  box-shadow: inset 0 0 0 1px var(--gone-2);
+}
+.msg-gone .msg-gone-text :is(img.emoji, .jumbo img) {
+  height: 1.2em;
+  width: auto;
+  opacity: 0.5;
+}
+.msg-gone.open {
+  align-items: flex-start;
+}
+.msg-gone.open .msg-gone-face {
+  align-self: flex-start;
+}
+.msg-gone.open .msg-gone-text {
+  flex: 1 1 auto;
+  white-space: normal;
+}
+.msg-gone.open .atts {
+  opacity: 0.5;
+}
 .msg-gone-mark {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 3px;
   font-size: 11px;
-  color: var(--text-faint);
+  white-space: nowrap;
+  color: var(--gone-2);
 }
-.msg-gone-when {
-  opacity: 0.8;
+.msg-gone:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 button.msg-edited.link {
   font-size: 10px;
@@ -17235,8 +17437,8 @@ button.pair-last:hover {
   width: 10px !important;
   height: 10px !important;
 }
-/* Nickname (ui/Nickname.tsx): a one-route chat's name, or a one-account profile's, with a pencil that shows on hover
-   for your nickname for their account. */
+/* Nickname (ui/Nickname.tsx): a one-route chat's name, with a pencil that shows on hover for your nickname for their
+   account. */
 .pair-nick-edit {
   margin-left: 4px;
   padding: 0 4px;
@@ -17245,7 +17447,6 @@ button.pair-last:hover {
   opacity: 0;
 }
 .conv-head h2:hover .pair-nick-edit,
-h1:hover > .pair-nick-edit,
 .pair-nick-edit:focus-visible {
   opacity: 1;
 }
@@ -19013,6 +19214,169 @@ h1:hover > .pair-nick-edit,
   border: 1px solid var(--border);
   background: var(--bg-center);
 }
+/* A person's name in their profile's hero (ui/HeroName.tsx): a click copies it, "×2" where more than one of their
+   accounts has it, a pencil that turns it into a field with their names listed under it, and their other names on a
+   line under it, a click copying each. */
+.pf-name-line {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.pf-name-copy,
+.pf-also-name {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: copy;
+  border-radius: 6px;
+}
+.pf-name-copy {
+  margin: 0 -4px;
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+.pf-name-copy:hover,
+.pf-also-name:hover {
+  background: var(--bg-hover);
+}
+.pf-name-shared {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+.pf-name-btn {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+.pf-name-btn:hover,
+.pf-name-btn:focus-visible {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.pf-name-btn.pen {
+  margin-left: -4px;
+  opacity: 0.6;
+}
+.pf-name-btn.pen:hover,
+.pf-name-btn.pen:focus-visible {
+  opacity: 1;
+}
+.pf-name-btn.ok {
+  color: var(--accent);
+}
+.pf-name-edit {
+  position: relative;
+}
+.pf-name-fieldline {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 29px;
+}
+.pf-name-field {
+  /* From nothing up to 320px: its own width would make the name's column wider than a phone. */
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  max-width: 320px;
+  padding: 0;
+  font: inherit;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid var(--accent);
+  border-radius: 0;
+  outline: none;
+}
+.pf-name-list {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  left: -6px;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-elev, var(--bg-raised));
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.pf-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+}
+.pf-name-row.hi {
+  background: var(--accent-soft);
+}
+.pf-name-row.new .pf-name-text {
+  color: var(--accent);
+}
+.pf-name-tick {
+  flex: none;
+  width: 16px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--accent);
+}
+.pf-name-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pf-name-from {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pf-name-from:not(:empty) {
+  margin-left: 6px;
+}
+.pf-name-hint {
+  padding: 6px 8px 2px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.pf-also {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.pf-also-label {
+  color: var(--text-faint);
+  margin-right: 2px;
+}
+.pf-also-it {
+  white-space: nowrap;
+}
+.pf-also-name {
+  margin: 0 -3px;
+  padding: 0 3px;
+}
+.pf-also-dot {
+  color: var(--text-faint);
+}
 
 /* The inbox row's loudness edge: how loud its latest message was, as a thin bar on its left. */
 .conv-row[data-loud] {
@@ -19136,26 +19500,21 @@ h1:hover > .pair-nick-edit,
   padding: 4px 6px;
   align-items: center;
 }
-/* An account named as the person: its handle leads, on one line with its buttons. */
-.pf-acct-item[data-same] .pf-acct-name {
-  display: none;
-}
-.pf-acct-item[data-same] .pf-acct-text {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: 8px;
-}
-.pf-acct-item[data-same] .pf-acct-handle {
-  order: -1;
-  flex: 1;
+/* An account named as the person: its handle leads, on the line with its buttons, which keep the right; the network,
+   since when and their own name go on the line under it. */
+.pf-acct-top > .pf-handle {
+  flex: 0 1 auto;
   min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-raised);
 }
-.pf-acct-item[data-same] .pf-acct-top {
-  flex: none;
-}
-.pf-acct-item[data-same] .pf-acct-edit {
-  flex-basis: 100%;
+.pf-acct-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 /* How yours stand with it, a line each under it, its button small. */
 .pf-acct-item .pf-conn-list {
@@ -19189,8 +19548,17 @@ h1:hover > .pair-nick-edit,
   color: var(--accent-text, var(--accent));
 }
 .pf-acct-item .pf-link-row .btn {
+  flex: none;
   padding: 1px 6px;
   font-size: 11px;
   min-height: 0;
   color: var(--text-faint);
+}
+/* Add friend, Accept and the like on a stranger's account: the one thing to do there, so it reads as a button. */
+.pf-acct-item .pf-offers .pf-link-what b {
+  color: var(--text-dim);
+}
+.pf-acct-item .pf-offers .btn.primary {
+  padding: 2px 9px;
+  color: var(--on-accent);
 }

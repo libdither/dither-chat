@@ -158,6 +158,10 @@ const shownName = (r: Row): string =>
   r.nickname || r.display_name || r.handle || r.native_id;
 export const SHOWN = `COALESCE(NULLIF(i.nickname, ''), i.display_name, i.handle, i.native_id)`;
 
+/** One of an account's names (P.NameField), or null where it has none. */
+const nameIn = (r: Row, field: unknown): string | null =>
+  ((field === 'nickname' ? r.nickname : field === 'display' ? r.display_name : field === 'handle' ? r.handle : null) as string | null) || null;
+
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c);
 
 /** A snippet for a match SQLite's tokens could not see. */
@@ -243,7 +247,7 @@ const PRESENCE_DEVICES = new Set<string>(['desktop', 'mobile', 'web']);
  * Bump when a migration step changes without schema.sql changing, so the database is copied before it runs. Mail's
  * migration steps (mail/store.ts) count here too, when no mail schema file changes with them.
  */
-const MIGRATIONS = 7;
+const MIGRATIONS = 9;
 
 /** How long a write waits for another connection's lock before it fails (PRAGMA busy_timeout). */
 export const BUSY_MS = 2000;
@@ -284,6 +288,13 @@ function unreactView(raw: string | null): { data: P.UnreactData; seen?: true } {
   return { data, ...(d.exact ? {} : { seen: true as const }) };
 }
 
+/** A history page's messages as they are stored: by native id, its time and whether it was new to the hub. */
+interface PageTap {
+  accountId: string;
+  conversation: string;
+  seen: Map<string, { ts: number; fresh: boolean }>;
+}
+
 export class Store {
   readonly db: Database;
   readonly dirty = new Dirty();
@@ -294,6 +305,11 @@ export class Store {
    * what you owed, a mark settles or holds it (replymarks.ts). They fold again.
    */
   readonly selfReacted = new Set<string>();
+  /**
+   * History pages being read (historypage.ts): each records the messages of its account and chat that backfill stores
+   * while it is open, and which of them the hub did not hold before. Empty but for the moment a page is out.
+   */
+  private taps = new Set<PageTap>();
   /** What changed at which position, for clients that come back (journal.ts, docs/sync.md). */
   readonly journal: Journal;
   private selfIdentities = new Set<string>();
@@ -374,13 +390,16 @@ export class Store {
       this.addColumns('notification', { alert: 'INTEGER', title: 'TEXT', body: 'TEXT', look: 'TEXT', computer_in_use: 'INTEGER' });
       this.addColumns('notification_event', { seen: 'TEXT' });
       this.addColumns('checkin', { expired_at: 'INTEGER' });
+      this.addColumns('attn_answer', { parts: 'TEXT', chance: 'REAL' });
       this.addColumns('visit', { depth: 'INTEGER', seen_to_ts: 'INTEGER', owed_since: 'INTEGER', owed_shown: 'INTEGER', typed: 'INTEGER NOT NULL DEFAULT 0', draft_left: 'INTEGER', exit: 'TEXT', shadow_rank: 'INTEGER' });
-      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT' });
+      this.addColumns('person', { name_source: "TEXT NOT NULL DEFAULT 'network'", face_id: 'TEXT', face_pinned: 'INTEGER NOT NULL DEFAULT 0', picture_identity_id: 'TEXT', name_identity_id: 'TEXT', name_field: 'TEXT', nickname: 'TEXT' });
       this.addColumns('attachment', { alt: 'TEXT', extra: 'TEXT' });
       this.addColumns('notice', { caught: 'INTEGER NOT NULL DEFAULT 0', shown_ts: 'INTEGER', held_at: 'INTEGER' });
       this.addColumns('place_pref', { mention_scope: 'TEXT', mention_same: 'INTEGER', pictures: 'TEXT' });
       this.addColumns('folder', { parent_id: 'TEXT', parent_pos: 'REAL' });
       this.addColumns('reaction', { at: 'INTEGER', at_exact: 'INTEGER NOT NULL DEFAULT 0' });
+      this.addColumns('catchup_hole', { named: 'TEXT' });
+      this.addColumns('catchup_task', { unsure: 'INTEGER NOT NULL DEFAULT 0' });
       const oldTriage = this.setAsideTriage();
       const oldLog = this.setAside('change_log', 'actor_id', ['change_log_target']);
       this.db.exec(schema);
@@ -397,6 +416,8 @@ export class Store {
       this.nicknamesToAccounts();
       this.facesOnce();
       this.forgetGoneSeenVia();
+      this.bandsWithoutNextLook();
+      this.emptySpansOnce();
       this.db.query(`INSERT INTO meta (key, value) VALUES ('schema_sig', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(sig);
     })();
     timer.step('migrations');
@@ -548,6 +569,41 @@ export class Store {
     }
     if (named.length) console.log(`names: ${named.length} nickname${named.length === 1 ? '' : 's'} moved onto the accounts of the person named`);
     this.db.query(`INSERT INTO meta (key, value) VALUES ('nicknames_by_account', ?)`).run(String(Date.now()));
+  }
+
+  /**
+   * The next look went (2026-11, docs/notifications.md "One scale"): its band, 30 to 55, is the bottom of Show, so every
+   * stored "next" says "show" (the loudness numbers themselves stay as they were), what was held for it is let go (it
+   * is in the inbox already), and its settings (when the next look came, its set times) are dropped. Once.
+   */
+  /**
+   * Index jobs once recorded a page's stretch as whole before its messages were stored (and a page that never came
+   * as the whole chat): a crash between, or an adapter that answered first, left stretches known whole that hold
+   * nothing, skipped by every walk since. Spans that hold no message go, once; a walk that meets one reads it again
+   * (a page each). Pages are recorded only once their messages are in now (historypage.ts).
+   */
+  private emptySpansOnce() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'spans_without_messages'`).get()) return;
+    this.db.exec(
+      `DELETE FROM history_span WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.conversation_id = history_span.conversation_id AND m.ts >= history_span.from_ts AND m.ts <= history_span.to_ts)`,
+    );
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('spans_without_messages', '1')`);
+  }
+
+  private bandsWithoutNextLook() {
+    if (this.db.query(`SELECT 1 FROM meta WHERE key = 'bands_without_next'`).get()) return;
+    this.db.exec(`UPDATE triage SET loud_view = json_set(loud_view, '$.band', 'show') WHERE loud IS NOT NULL AND loud >= 30 AND loud < 55 AND json_extract(loud_view, '$.band') = 'next'`);
+    for (const col of ['live_band', 'shadow_band']) this.db.exec(`UPDATE checkin SET ${col} = 'show' WHERE ${col} = 'next'`);
+    this.db.exec(`UPDATE attn_answer SET band = 'show' WHERE band = 'next'`);
+    this.db.exec('DROP TABLE IF EXISTS next_look');
+    const prefs = this.db.query(`SELECT value FROM meta WHERE key = 'attention_prefs'`).get() as Row | null;
+    if (prefs?.value) {
+      const p = json<Record<string, unknown>>(prefs.value, {});
+      delete p.nextLook;
+      delete p.times;
+      this.db.query(`UPDATE meta SET value = ? WHERE key = 'attention_prefs'`).run(JSON.stringify(p));
+    }
+    this.db.exec(`INSERT INTO meta (key, value) VALUES ('bands_without_next', '1')`);
   }
 
   /**
@@ -853,6 +909,17 @@ export class Store {
 
   isSelf(identityId: string | null) {
     return !!identityId && this.selfIdentities.has(identityId);
+  }
+
+  /** Records the backfilled messages of one account's chat (native id) from now until `untap` (historypage.ts). */
+  tap(accountId: string, conversation: string): PageTap {
+    const t: PageTap = { accountId, conversation, seen: new Map() };
+    this.taps.add(t);
+    return t;
+  }
+
+  untap(t: PageTap) {
+    this.taps.delete(t);
   }
 
   // ------------------------------------------------------------ ingest
@@ -1356,13 +1423,14 @@ export class Store {
 
   /**
    * A person's name and picture, made again from their face (docs/chats.md, Names): the one account they are shown
-   * by, its name as you see it and its picture (the picture account's when you chose one), else the picture of
-   * another of theirs you talked with last. The face
+   * by, its name as you see it (your nickname for the person, else the name you chose while that account has it) and
+   * its picture (the picture account's
+   * when you chose one), else the picture of another of theirs you talked with last. The face
    * stays until you pin another, it leaves them, or (`rechoose`) you ask the hub to choose again; a new one is chosen by
    * chooseFace. Your own person is named by your accounts' networks, not here.
    */
   private refreshFace(pid: string, rechoose = false) {
-    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
+    const p = this.db.query('SELECT name, avatar_url, face_id, face_pinned, picture_identity_id, name_identity_id, name_field, nickname, manual, name_source, is_self FROM person WHERE id = ?').get(pid) as Row | null;
     if (!p || p.is_self) return;
     const ids = this.db.query('SELECT id, nickname, display_name, handle, native_id, avatar_url, updated_at FROM identity WHERE person_id = ?').all(pid) as Row[];
     if (!ids.length) return;
@@ -1377,7 +1445,8 @@ export class Store {
       avatar = others.sort((a, b) => (talked.get(b.id) ?? 0) - (talked.get(a.id) ?? 0))[0]?.avatar_url ?? null;
     }
     const several = ids.length > 1;
-    const next = { name: shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
+    const chosen = ids.find((i) => i.id === p.name_identity_id);
+    const next = { name: (p.nickname as string | null) || (chosen && nameIn(chosen, p.name_field)) || shownName(face), avatar_url: avatar, face_id: face.id, face_pinned: pinned ? 1 : 0, manual: several ? 1 : 0, name_source: several ? 'merge' : 'network' };
     if ((Object.keys(next) as (keyof typeof next)[]).every((k) => p[k] === next[k])) return;
     this.db
       .query('UPDATE person SET name = ?, avatar_url = ?, face_id = ?, face_pinned = ?, manual = ?, name_source = ? WHERE id = ?')
@@ -1408,6 +1477,40 @@ export class Store {
   setPersonPicture(pid: string, identityId: string | null): boolean {
     if (identityId !== null && !this.db.query('SELECT 1 FROM identity WHERE id = ? AND person_id = ?').get(identityId, pid)) return false;
     this.db.query('UPDATE person SET picture_identity_id = ? WHERE id = ?').run(identityId, pid);
+    this.refreshFace(pid);
+    this.dirty.persons.add(pid);
+    this.personsChanged?.([pid]);
+    return true;
+  }
+
+  /**
+   * Shows a person by one name of one of their accounts (docs/profile.md, "Which account speaks for them"): your
+   * nickname for it, its display name or its handle, whatever their face; or (null) their face's name again. It
+   * follows that account as it changes, and while it lacks that name the face's shows. It takes the place of your
+   * nickname for the person, if they had one. False for an account that is not theirs or a name it does not have.
+   */
+  setPersonName(pid: string, from: P.NameFrom | null): boolean {
+    if (from) {
+      const i = this.db.query('SELECT * FROM identity WHERE id = ? AND person_id = ?').get(from.identityId, pid) as Row | null;
+      if (!i || !nameIn(i, from.field)) return false;
+    }
+    this.db.query('UPDATE person SET name_identity_id = ?, name_field = ?, nickname = NULL WHERE id = ?').run(from?.identityId ?? null, from?.field ?? null, pid);
+    this.refreshFace(pid);
+    this.dirty.persons.add(pid);
+    this.personsChanged?.([pid]);
+    return true;
+  }
+
+  /**
+   * Your nickname for a person (docs/chats.md, Names), or none (null or empty): no account's, only you see it, it is
+   * never sent to a network, and it shows over every name of their accounts, taking the place of a name you chose
+   * from one. False for no such person, or your own.
+   */
+  setPersonNickname(pid: string, nickname: string | null): boolean {
+    if (!this.db.query('SELECT 1 FROM person WHERE id = ? AND is_self = 0').get(pid)) return false;
+    const text = nickname?.trim().slice(0, 200) || null;
+    if (text) this.db.query('UPDATE person SET nickname = ?, name_identity_id = NULL, name_field = NULL WHERE id = ?').run(text, pid);
+    else this.db.query('UPDATE person SET nickname = NULL WHERE id = ?').run(pid);
     this.refreshFace(pid);
     this.dirty.persons.add(pid);
     this.personsChanged?.([pid]);
@@ -1672,6 +1775,7 @@ export class Store {
     if (f.reactions) this.reactionSnapshot(acc, id, f.reactions, existed);
     if (existed && f.extra?.poll) pollSeen(this.db, id, f.extra);
     if (!existed) this.ingested.set(cid, Math.min(this.ingested.get(cid) ?? Infinity, f.ts));
+    if (this.taps.size && !live) for (const t of this.taps) if (t.accountId === acc.id && t.conversation === f.conversation) t.seen.set(f.nativeId, { ts: f.ts, fresh: !existed });
     const newForAccount = this.db.query('INSERT OR IGNORE INTO message_seen (message_id, account_id) VALUES (?, ?)').run(id, acc.id).changes > 0;
 
     const conv = this.db.query('SELECT last_message_at, last_message_id, variant FROM conversation WHERE id = ?').get(cid) as Row;
@@ -1975,8 +2079,9 @@ export class Store {
     if (intoId === fromId) return;
     const tx = this.db.transaction(() => {
       this.db.query('UPDATE identity SET person_id = ? WHERE person_id = ?').run(intoId, fromId);
-      // The one kept keeps its name, an account's as you see it. Nicknames are the accounts' and go along with them.
-      this.db.query(`UPDATE person SET manual = 1, name_source = 'merge' WHERE id = ?`).run(intoId);
+      // The one kept keeps its name, an account's as you see it. Account nicknames go along with their accounts; your
+      // nickname for the person is the kept one's, else the other's.
+      this.db.query(`UPDATE person SET manual = 1, name_source = 'merge', nickname = COALESCE(nickname, (SELECT nickname FROM person WHERE id = ?)) WHERE id = ?`).run(fromId, intoId);
       // The route chosen for them goes along, unless the one kept had its own.
       this.db.query(`UPDATE OR IGNORE chat_route SET chat_id = ? WHERE chat_id = ?`).run(`person:${intoId}`, `person:${fromId}`);
       this.db.query(`DELETE FROM chat_route WHERE chat_id = ?`).run(`person:${fromId}`);
@@ -2003,6 +2108,8 @@ export class Store {
     this.db.query('UPDATE identity SET person_id = NULL WHERE id = ?').run(identityId);
     // The account that went no longer gives the person it left their picture (their face is chosen again below).
     this.db.query('UPDATE person SET picture_identity_id = NULL WHERE id = ? AND picture_identity_id = ?').run(old, identityId);
+    // Nor their name, where you chose one of its names.
+    this.db.query('UPDATE person SET name_identity_id = NULL, name_field = NULL WHERE id = ? AND name_identity_id = ?').run(old, identityId);
     const left = (this.db.query('SELECT COUNT(*) AS n FROM identity WHERE person_id = ?').get(old) as Row).n as number;
     // Its deterministic person may be the merged one, kept going by the others: that would rejoin them.
     const natural = 'per_' + identityId.slice(4);
@@ -2348,6 +2455,12 @@ export class Store {
     return r.adversarial && r.presence && r.changes;
   }
 
+  /** Whether statuses over time are logged, in the change log. */
+  logsStatuses(): boolean {
+    const r = this.retention();
+    return r.adversarial && r.statuses && r.changes;
+  }
+
   /**
    * Someone's presence as heard now, logged only while logsPresence(); otherwise the hub keeps nothing of it. The
    * newest logged row is how they are now, so a change is anything else, and the same heard from a second account
@@ -2508,8 +2621,7 @@ export class Store {
     const own = (this.db.query('SELECT i.id FROM person p CROSS JOIN identity i ON i.person_id = p.id WHERE p.is_self = 1 ORDER BY i.id').all() as Row[]).map((r) => r.id as string);
     const selves = [...new Set([...this.selfIdentities, ...own])];
     const self = !!person?.is_self || ids.some((id) => selves.includes(id));
-    const r = this.retention();
-    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: r.adversarial && r.statuses && r.changes });
+    return activityChart(this.db, { ids, selfIds: self ? [] : selves, days, zone, now, presence: this.logsPresence(), statuses: this.logsStatuses() });
   }
 
   /** The top-level community a conversation is in (through sections, and a thread's channel), or null. */
@@ -2833,7 +2945,7 @@ export class Store {
   personView(r: Row, identityIds?: string[], vias?: Map<string, { via: string; url: string | null }[]>): P.PersonView {
     const ids = identityIds ?? (this.db.query('SELECT id FROM identity WHERE person_id = ?').all(r.id) as Row[]).map((x) => x.id);
     const avatar = !r.avatar_url ? null : vias ? this.media(r.avatar_url, pickVia(vias.get(r.id), r.avatar_url)) : this.personPicture(r.id, r.avatar_url);
-    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}) };
+    return { id: r.id, name: r.name, avatar, starred: false, isSelf: !!r.is_self, identityIds: ids, nameSource: (r.name_source ?? 'network') as P.NameSource, ...(ids.length > 1 && r.face_id ? { faceId: r.face_id } : {}), ...(ids.length > 1 && r.face_pinned ? { facePinned: true } : {}), ...(ids.length > 1 && r.picture_identity_id ? { pictureIdentityId: r.picture_identity_id } : {}), ...(r.name_identity_id && r.name_field ? { nameFrom: { identityId: r.name_identity_id, field: r.name_field } } : {}), ...(r.nickname ? { nickname: r.nickname } : {}) };
   }
 
   /**
@@ -3577,7 +3689,16 @@ export class Store {
          ORDER BY COALESCE(m.last, 0) DESC LIMIT 100`,
       )
       .all(...ids, ...ids) as Row[];
-    const recent = this.messageViews(this.db.query(`SELECT * FROM message WHERE author_id IN (${ph}) AND deleted = 0 ORDER BY ts DESC LIMIT 15`).all(...ids) as Row[]);
+    // Their newest in direct chats and their newest anywhere else, 15 each: someone you DM a lot would otherwise
+    // never show what they said in groups and servers.
+    const newest = (direct: boolean) =>
+      this.db
+        .query(
+          `SELECT m.* FROM message m JOIN conversation c ON c.id = m.conversation_id
+           WHERE m.author_id IN (${ph}) AND m.deleted = 0 AND c.shape ${direct ? '=' : '!='} 'direct' ORDER BY m.ts DESC LIMIT 15`,
+        )
+        .all(...ids) as Row[];
+    const recent = this.messageViews([...newest(true), ...newest(false)].sort((a, b) => b.ts - a.ts));
     const span = this.db.query(`SELECT COUNT(*) AS n, MIN(ts) AS first FROM message WHERE author_id IN (${ph}) AND deleted = 0`).get(...ids) as Row;
     return {
       personId: person?.id ?? ((this.db.query('SELECT person_id FROM identity WHERE id = ?').get(ids[0] ?? '') as Row | null)?.person_id ?? null),
@@ -4234,6 +4355,9 @@ export class Store {
   metaValue = <T>(key: string) => this.metaJson<T>(key);
   setMetaValue = (key: string, value: unknown) => this.setMetaJson(key, value);
   quietHours = () => this.metaJson<P.QuietHours>('quiet_hours');
+  /** Zones set by hand for people (theirclock.ts, docs/profile.md "Their time"): by person id, else identity id. */
+  zonePins = () => this.metaJson<Record<string, string>>('zone_pins') ?? {};
+  setZonePins = (m: Record<string, string>) => this.setMetaJson('zone_pins', m);
   privacy = (): P.PrivacySettings => ({ shareTyping: this.metaJson<P.PrivacySettings>('privacy')?.shareTyping ?? true });
   setPrivacy = (p: P.PrivacySettings) => this.setMetaJson('privacy', p);
   setQuietHours = (q: P.QuietHours) => this.setMetaJson('quiet_hours', q);

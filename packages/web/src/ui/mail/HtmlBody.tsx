@@ -11,27 +11,16 @@
  * from here makes) is drawn in the app's theme instead of on the sheet: the page gives the frame its colours and font.
  */
 import type * as P from '@dither-chat/protocol';
-import { hostsDiffer, shownHost } from '@dither-chat/protocol';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { openLink } from '../../desk.ts';
 import { bodies } from '../../mail/api.ts';
 import { api } from '../../state.ts';
 import { mailChanged } from '../../versions.ts';
-import { copy, openMenu } from '../ContextMenu.tsx';
+import { askLink, linkMismatch, openOut } from './linkOut.tsx';
 import { forwardTouches } from '../Pager.ts';
 import { ImageBanner } from './ImageBanner.tsx';
 import type { BodyProps } from './slots.tsx';
 import { TextBody } from './TextBody.tsx';
 import { themeFrame } from './frameTheme.ts';
-
-/** A link out of a mail, opened as chat's links are: the desktop helper, else a new tab (Android: its browser). */
-function openOut(url: string) {
-  void openLink(url).then((ok) => {
-    if (ok) return;
-    if (/^mailto:/i.test(url)) window.location.assign(url);
-    else window.open(url, '_blank', 'noopener,noreferrer');
-  });
-}
 
 /** The quoted part: the top-level quotes the hub marked that nothing but more quotes follows. */
 function foldQuotes(doc: Document, wrap: HTMLElement): HTMLElement[] {
@@ -125,25 +114,10 @@ function host(f: HTMLIFrameElement, doc: Document, themed: boolean): () => void 
       return;
     }
     if (!/^(https?|mailto):$/.test(url.protocol)) return;
-    const shown = url.protocol === 'mailto:' ? null : shownHost(a.textContent ?? '');
-    if (shown && hostsDiffer(shown, url.hostname)) {
+    const shown = linkMismatch(url, a.textContent ?? '');
+    if (shown) {
       const r = f.getBoundingClientRect();
-      return openMenu(
-        { x: r.left + e.clientX, y: r.top + e.clientY },
-        {
-          label: 'Open link',
-          head: (
-            <div class="cm-sheet-title mail-link-ask">
-              The link shows {shown} but goes to <b>{url.hostname}</b>
-            </div>
-          ),
-          items: [
-            { kind: 'label', label: `Shows ${shown}, goes to ${url.hostname}` },
-            { label: `Open ${url.hostname}`, icon: 'external', run: () => openOut(url.href) },
-            { label: 'Copy the link', icon: 'copy', run: () => void copy(url.href, 'Link copied') },
-          ],
-        },
-      );
+      return askLink(url, shown, { x: r.left + e.clientX, y: r.top + e.clientY });
     }
     openOut(url.href);
   };

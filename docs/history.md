@@ -5,8 +5,8 @@ first two, statuses, presence and server members, Adversarial features), everywh
 
 | | What is kept | Where it shows |
 |---|---|---|
-| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | in full in the chat, marked "Deleted · 3m" under it |
-| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, marked "Disappeared" |
+| **Deleted messages** (adversarial) | the words and files of a message someone deleted (not ones you delete yourself) | one short grey line in the chat, with how long it stayed and when it went ("🗑 2 min later · 1h ago"); a click opens it in full |
+| **Disappearing messages** (adversarial) | a Signal or WhatsApp message whose timer ran out | the same, with a clock for the bin |
 | **Edits** | each earlier version of an edited message | click "(edited)" on it |
 | **Reactions taken back** | who took back which reaction and when, with when they had added it; reactions a moderator cleared | Message History in the message's menu; Taken back in a reaction's list of who reacted (docs/reactions.md "When") |
 | **Read receipts** | who got, read and played your messages, and when (Signal, WhatsApp, Matrix) | ticks beside your messages; click for who |
@@ -119,6 +119,11 @@ Rules that keep it honest and small:
   `message_event`.
 
 ## Deleted and disappeared
+
+In the chat (`GoneLine` in ui/Timeline.tsx) a kept message is one line, well below the faintest text, so the eye
+passes over it: a small grey picture, the name, the words cut at the edge, and at the end how long it was up before it
+went and how long ago that was. A mention of you keeps a faint amber, the whole line. A click or a tap opens it in
+place, files and all, and another folds it; its menu is still on a right-click or a long press.
 
 An adapter's `delete` event carries `reason: 'expired'` when a disappearing timer ran out (Signal's and WhatsApp's own
 sweeps), else it is a deletion. When the source keeps that kind, the body and attachments stay; else they are emptied,

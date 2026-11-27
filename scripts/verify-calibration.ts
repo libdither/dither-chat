@@ -1,13 +1,15 @@
 /**
- * Notification calibration (docs/notifications.md, "Asking, without nagging"), end to end against a demo hub of its own
- * in headless Chromium: the inbox shows a quiet row with the count of questions waiting and no card anywhere else;
- * the page draws each notification again where it was seen (an Android phone's lock screen and shade, a laptop's
- * browser, an inbox row when none went out), says the line of where and when, and lists what is not known; an answer
- * takes the question off the page, lands on the hub and lowers the row's count. On a computer and on a phone.
+ * The calibration feed (docs/notifications.md, "The calibration feed"), end to end against a demo hub of its own in
+ * headless Chromium. The demo seeds every kind of item (demo-calibration.ts): cards in the shade, as a toast and as a
+ * row, past answers back, rows, and the ones it was sure of. On a computer: the inbox row counts what waits and opens
+ * the page in two panes; 1 answers and draws the chances after, w opens what it was wrong about, a part is kept with
+ * the answer, j and k move, x skips, a past answer is kept. On a phone: one column, an answer, a row opened in place,
+ * a swipe that skips and the toast's Undo, and no sideways scroll.
  *
  *   bun scripts/verify-calibration.ts [--shots /tmp/shots]
  * Starts its own hub on a free port with a throwaway data dir. DITHER_WEB_DIST serves another web build.
  */
+import { Database } from 'bun:sqlite';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -42,6 +44,8 @@ async function until<T>(what: string, f: () => Promise<T | null | undefined | fa
     await Bun.sleep(100);
   }
 }
+const feed = async () => (await (await fetch(`${url}/api/loudness/feed`)).json()) as P.CalFeedView;
+const pending = async () => ((await (await fetch(`${url}/api/loudness/feed/count`)).json()) as { pending: number }).pending;
 
 const hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--demo', '--data', data, '--port', String(port), '--host', '127.0.0.1', ...web], {
   cwd: REPO,
@@ -50,86 +54,206 @@ const hub = Bun.spawn(['bun', 'packages/hub/src/main.ts', '--demo', '--data', da
   stderr: 'inherit',
 });
 const { page: p, close } = await launch();
-const click = async (sel: string) => {
-  const r = await p.eval<{ x: number; y: number } | null>(
-    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getBoundingClientRect().width > 0); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()`,
+/** Where the first visible match is, scrolled into view. */
+const at = async (sel: string) => {
+  const r = await p.eval<{ x: number; y: number; w: number } | null>(
+    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => x.getBoundingClientRect().width > 0); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2, w: b.width }; })()`,
   );
   if (!r) throw new Error(`nothing matches ${sel}`);
+  return r;
+};
+const click = async (sel: string) => {
+  const r = await at(sel);
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: 'left', clickCount: 1 });
 };
+const key = async (k: string) => {
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, text: k.length === 1 ? k : undefined, code: k.length === 1 ? `Key${k.toUpperCase()}` : k });
+  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code: k.length === 1 ? `Key${k.toUpperCase()}` : k });
+};
+/** A sideways drag on the card (from its text, not a button), `dx` px. */
+const drag = async (sel: string, dx: number) => {
+  const r = await at(`${sel} .cal-n-b, ${sel} .cal-row-main`);
+  await p.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+  for (let i = 1; i <= 8; i++) await p.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x + (dx * i) / 8, y: r.y, button: 'left', buttons: 1 });
+  await p.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r.x + dx, y: r.y, button: 'left', clickCount: 1 });
+};
+const noToasts = () => p.eval(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
 /** Every picture's own images have loaded, so a screenshot shows what a person would see. */
 const drawn = () => p.until(`[...document.images].every((i) => i.complete)`, 10_000);
+const shot = async (name: string) => {
+  if (!shots) return;
+  await drawn().catch(() => {});
+  await noToasts();
+  await p.shot(`${shots}/${name}.png`);
+};
+/** The bars' fill heights on a card, in px. */
+const fills = (id: string) => p.eval<number[]>(`[...document.querySelectorAll('[data-cal-id="${id}"] .cal-p')].map((e) => parseFloat(e.style.height))`);
 
 try {
   await until('the hub to answer', () => fetch(`${url}/api/health`).then((r) => r.ok));
-  // The demo world's questions (demo-calibration.ts) are seeded once its accounts have brought messages in.
-  const list = await until('questions seeded', async () => {
-    const l = (await (await fetch(`${url}/api/loudness/checkins`)).json()) as P.CheckinView[];
-    return l.length >= 6 ? l : null;
+  // The demo world's feed (demo-calibration.ts) is seeded once its accounts have brought messages in.
+  const v = await until('the feed seeded', async () => {
+    const f = await feed();
+    return f.items.some((i) => i.kind === 'past') && f.sure.length ? f : null;
   });
-  check(list.some((c) => c.context.sent?.devices.some((d) => d.surface === 'lock')), 'a question seen on the lock screen');
-  check(list.some((c) => !c.context.sent && c.context.notSent === 'watched'), 'a question about one never sent, the chat being watched');
-  for (const desktop of [true, false]) {
-    const tag = desktop ? 'desktop' : 'phone';
-    await p.size(desktop ? 1360 : 412, desktop ? 900 : 900, !desktop);
-    await p.goto(`${url}/#/inbox`);
-    await p.until(`!!document.querySelector('.calibration-row')`, 20_000);
-    const count = await p.eval<string>(`document.querySelector('.calibration-row .requests-count')?.textContent ?? ''`);
-    check(Number(count) === list.length, `${tag}: the inbox row counts what waits`, count);
-    check(!(await p.eval<boolean>(`!!document.querySelector('.loud-checkin, [data-fy-ask]')`)), `${tag}: no question card in the inbox`);
-    if (shots && desktop) {
-      await p.eval(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
-      await p.shot(`${shots}/${tag}-inbox-row.png`);
-    }
-    await click('.calibration-row');
-    await p.until(`location.hash === '#/calibration' && document.querySelectorAll('.calib-q').length > 0`, 15_000);
-    const seen = await p.eval<{ q: number; android: number; lock: number; desktop: number; row: number; lines: number; unknown: number; tiles: number }>(`({
-      q: document.querySelectorAll('.calib-q').length,
-      android: document.querySelectorAll('[data-mock="android"]').length,
-      lock: document.querySelectorAll('[data-mock="android"][data-surface="lock"]').length,
-      desktop: document.querySelectorAll('[data-mock="desktop"]').length,
-      row: document.querySelectorAll('[data-mock="row"]').length,
-      lines: [...document.querySelectorAll('[data-summary]')].filter((e) => e.textContent.length > 10).length,
-      unknown: document.querySelectorAll('.calib-unknown li').length,
-      tiles: document.querySelectorAll('.calib-tile').length,
-    })`);
-    check(seen.q === list.length, `${tag}: every question is on the page`, seen);
-    check(seen.android > 0 && seen.lock > 0 && seen.desktop > 0 && seen.row > 0, `${tag}: Android (lock screen too), desktop and inbox-row pictures drawn`, seen);
-    check(seen.lines === seen.q, `${tag}: each says where, whether it sounded and when`);
-    check(seen.unknown > 0, `${tag}: what is not known is said`);
-    check(seen.tiles >= 5, `${tag}: the numbers are shown`);
-    const wide = await p.eval<boolean>(`document.documentElement.scrollWidth <= innerWidth + 1`);
-    check(wide, `${tag}: no sideways scroll`);
-    await drawn();
-    if (shots) {
-      // The demo's own notices raise toasts now and then: not part of this page, so out of its pictures.
-      await p.eval(`document.querySelectorAll('.toast').forEach((t) => t.remove()); document.querySelector('.calib-scroll').scrollTop = 0`);
-      await Bun.sleep(200);
-      await p.shot(`${shots}/${tag}-page.png`);
-      // The lock-screen one, whole.
-      await p.eval(`document.querySelector('[data-surface="lock"]').closest('.calib-q').scrollIntoView({ block: 'start' })`);
-      await Bun.sleep(200);
-      await p.eval(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
-      await p.shot(`${shots}/${tag}-lock-and-desktop.png`);
-      await p.eval(`document.querySelector('[data-mock="row"]').closest('.calib-q').scrollIntoView({ block: 'start' })`);
-      await Bun.sleep(200);
-      await p.eval(`document.querySelectorAll('.toast').forEach((t) => t.remove())`);
-      await p.shot(`${shots}/${tag}-inbox-row-mock.png`);
-    }
-    if (desktop) {
-      // Answer the first sounded one: it leaves the page, the hub keeps the answer, the row's count goes down.
-      const id = await p.eval<string>(`[...document.querySelectorAll('.calib-q[data-checkin="sounded"]')].find((q) => !q.querySelector('[data-surface="lock"]')).dataset.checkinId`);
-      await click(`.calib-q[data-checkin-id="${id}"] [data-answer="worth"]`);
-      await p.until(`!document.querySelector('[data-checkin-id="${id}"]')`, 10_000);
-      const after = (await (await fetch(`${url}/api/loudness/checkins`)).json()) as P.CheckinView[];
-      check(!after.some((c) => c.id === id) && after.length === list.length - 1, 'the answer took it off the hub’s list');
-      const stats = (await (await fetch(`${url}/api/loudness/calibration`)).json()) as P.CalibrationStats;
-      check(stats.answers.worth >= 1 && stats.pending === after.length, 'the numbers count it', { worth: stats.answers.worth, pending: stats.pending });
-      list.splice(0, list.length, ...after);
-      // A why may be asked after it: close it so the next pass starts clean.
-      await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    }
-  }
+  const kinds = new Set(v.items.map((i) => i.kind));
+  const looks = new Set(v.items.filter((i) => i.kind === 'card').map((i) => i.look));
+  check(kinds.has('card') && kinds.has('row') && kinds.has('past') && v.sure.length > 0, 'every kind seeded: cards, rows, past answers, sure ones', [...kinds, `sure ${v.sure.length}`]);
+  check(looks.has('shade') && looks.has('toast') && looks.has('row'), 'cards in the shade, as a toast and as a row', [...looks]);
+  // The demo places its scenes as cards whatever their score; which ones the hub draws is in calfeed.test.ts.
+  const top = v.items.filter((i) => i.kind === 'card' || i.kind === 'past');
+  check(
+    top.every((i) => i.chance > 0 && i.chance <= 1) && top.every((i, k) => k === 0 || top[k - 1].score >= i.score - 1e-9),
+    'cards with the chance each was drawn with, most worth asking first',
+  );
+  check(v.items.slice(0, top.length).every((i) => i.kind === 'card' || i.kind === 'past'), 'cards and past answers before the rows');
+  check(
+    v.items.every((i) => Math.abs(i.p[0] + i.p[1] + i.p[2] - 1) < 0.01),
+    'each item’s three chances add to one',
+  );
+  check(v.items.some((i) => i.you !== null) && v.items.some((i) => i.parts.length === 6), 'what you did, and six parts');
+  const cards = v.items.filter((i) => i.kind === 'card' || i.kind === 'past').length;
+  const waiting = await pending();
+  check(waiting === cards, 'the count is the cards and past answers', { waiting, cards });
+
+  // ---------------------------------------------------------------- a computer
+  await p.size(1360, 900);
+  await p.goto(`${url}/#/inbox`);
+  await p.until(`!!document.querySelector('.calibration-row')`, 20_000);
+  const count = await p.eval<string>(`document.querySelector('.calibration-row .requests-count')?.textContent ?? ''`);
+  check(Number(count) === waiting, 'desktop: the inbox row counts what waits', count);
+  await click('.calibration-row');
+  await p.until(`location.hash === '#/calibration' && !!document.querySelector('.cal-desk .cal-main .cal-card')`, 15_000);
+  const desk = await p.eval<{ side: number; main: number; acts: number; you: number; did: number; sure: string }>(`({
+    side: document.querySelectorAll('.cal-side > .cal-row').length,
+    main: document.querySelectorAll('.cal-main .cal-card').length,
+    acts: document.querySelectorAll('.cal-main .cal-card .cal-act').length,
+    you: document.querySelectorAll('.cal-main .cal-card .cal-you').length,
+    did: document.querySelectorAll('.cal-main .cal-card .cal-did').length,
+    sure: document.querySelector('.cal-sure summary')?.textContent ?? '',
+  })`);
+  check(desk.side === v.items.length && desk.main === 1, 'desktop: every item a row on the left, one open on the right', desk);
+  check(desk.acts === 3 && desk.did === 1, 'desktop: Sound, Show, Inbox, with what it did underlined', desk);
+  check(desk.sure.includes(`${v.sure.length} it was sure of`), 'desktop: the sure ones folded', desk.sure);
+  await shot('desktop-feed');
+
+  // The one open first is the one most worth asking, a card or a past answer (both are sorted by worth asking now).
+  const opened = await p.eval<string>(`document.querySelector('.cal-main .cal-card').dataset.calId`);
+  check(opened === v.items[0].id, 'desktop: the first open is the one most worth asking', { opened, top: v.items[0].id });
+  // 1 answers the one open: the bars become the chances after, over a dashed line at the old. A past answer takes
+  // no new one, so open a card from its row on the left first.
+  const first = v.items.find((i) => i.kind === 'card')!.id;
+  await click(`.cal-side [data-cal-id="${first}"]`);
+  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${first}'`, 5_000);
+  const before = await fills(first);
+  await key('1');
+  await p.until(`!!document.querySelector('[data-cal-id="${first}"] .cal-acts.cal-answered') && document.querySelectorAll('[data-cal-id="${first}"] .cal-old').length === 3`, 10_000);
+  check(await p.eval(`!!document.querySelector('[data-cal-id="${first}"] [data-answer="sound"].cal-chosen')`), 'desktop: 1 answered Sound');
+  const afterAnswer = await fills(first);
+  check(afterAnswer[0] > before[0], 'desktop: Sound’s chance is higher after', { before, after: afterAnswer });
+  check(await p.eval(`!!document.querySelector('[data-cal-id="${first}"] .cal-drill[open]')`), 'desktop: what it was wrong about opens');
+  await until('the count to go down', async () => ((await pending()) === waiting - 1 ? true : null), 10_000);
+  check(true, 'desktop: the hub took the answer');
+  // w closes it and opens it again.
+  await key('w');
+  await p.until(`!document.querySelector('[data-cal-id="${first}"] .cal-drill[open]')`, 5_000);
+  await key('w');
+  await p.until(`!!document.querySelector('[data-cal-id="${first}"] .cal-drill[open]')`, 5_000);
+  check(true, 'desktop: w closes and opens what it was wrong about');
+  const parts = await p.eval<number>(`document.querySelectorAll('[data-cal-id="${first}"] .cal-part').length`);
+  check(parts === 6, 'desktop: six parts', parts);
+  await click(`[data-cal-id="${first}"] [data-part="chat"]`);
+  await p.until(`!!document.querySelector('[data-cal-id="${first}"] [data-part="chat"].cal-on')`, 5_000);
+  const db = new Database(join(data, 'hub.sqlite'), { readonly: true });
+  const kept = await until(
+    'the part kept',
+    async () => (db.query(`SELECT a.parts FROM attn_answer a JOIN cal_item f ON f.answer_id = a.id WHERE f.id = ?`).get(first) as { parts: string | null } | null)?.parts,
+    10_000,
+  );
+  check(JSON.parse(kept).includes('chat'), 'desktop: the part is kept with the answer', kept);
+  await shot('desktop-answered');
+
+  // j and k move; x skips the one open.
+  await key('j');
+  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId !== '${first}'`, 5_000);
+  const second = await p.eval<string>(`document.querySelector('.cal-main .cal-card').dataset.calId`);
+  check(await p.eval(`document.querySelector('.cal-side .cal-sel')?.dataset.calId === '${second}'`), 'desktop: j moves to the next, marked on the left');
+  await key('k');
+  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${first}'`, 5_000);
+  check(true, 'desktop: k moves back');
+  // x skips the one open: another card, so the past answer below is still there.
+  const skipped = v.items.find((i) => i.kind === 'card' && i.id !== first)!.id;
+  await click(`.cal-side [data-cal-id="${skipped}"]`);
+  await p.until(`document.querySelector('.cal-main .cal-card')?.dataset.calId === '${skipped}'`, 5_000);
+  await key('x');
+  await p.until(`!document.querySelector('.cal-side [data-cal-id="${skipped}"]') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Undo'))`, 5_000);
+  const skippedOn = await until('the skip kept', async () => (db.query(`SELECT skipped FROM cal_item WHERE id = ?`).get(skipped) as { skipped: number }).skipped === 1, 5_000);
+  check(skippedOn, 'desktop: x skips, with Undo on the toast');
+  await noToasts();
+
+  // A past answer: dashed, its answer chosen, Keep takes it off the page.
+  const past = v.items.find((i) => i.kind === 'past')!;
+  await click(`.cal-side [data-cal-id="${past.id}"]`);
+  await p.until(`!!document.querySelector('.cal-main .cal-card.cal-past[data-cal-id="${past.id}"]')`, 5_000);
+  check(await p.eval(`!!document.querySelector('.cal-main .cal-past [data-answer="${past.answer}"].cal-chosen') && document.querySelectorAll('.cal-main .cal-past .cal-old').length === 3`), 'desktop: a past answer, with its guess before and after');
+  await shot('desktop-past');
+  await click(`.cal-main [data-settle="keep"]`);
+  await p.until(`!document.querySelector('[data-cal-id="${past.id}"]')`, 5_000);
+  check((db.query(`SELECT settled FROM cal_item WHERE id = ?`).get(past.id) as { settled: string }).settled === 'keep', 'desktop: Keep settles it');
+  db.close();
+
+  // Escape is back, as everywhere.
+  await key('Escape');
+  await p.until(`location.hash !== '#/calibration'`, 5_000);
+  check(true, 'desktop: Escape goes back');
+
+  // ---------------------------------------------------------------- a phone
+  await p.size(412, 900, true);
+  await p.goto(`${url}/#/calibration`);
+  await p.until(`!!document.querySelector('.cal-phone .cal-card')`, 20_000);
+  const v2 = await feed();
+  const ph = await p.eval<{ cards: number; rows: number; shade: number; toast: number; row: number; wide: boolean }>(`({
+    cards: document.querySelectorAll('.cal-phone > .cal-card').length,
+    rows: document.querySelectorAll('.cal-phone > .cal-row').length,
+    shade: document.querySelectorAll('.cal-phone [data-look="shade"]').length,
+    toast: document.querySelectorAll('.cal-phone [data-look="toast"]').length,
+    row: document.querySelectorAll('.cal-phone [data-look="row"]').length,
+    wide: document.documentElement.scrollWidth <= innerWidth + 1,
+  })`);
+  const want = v2.items.filter((i) => i.kind !== 'row').length;
+  check(ph.cards === want && ph.rows === v2.items.length - want, 'phone: cards, then rows', { ...ph, want });
+  check(ph.shade > 0 && ph.toast > 0 && ph.row > 0, 'phone: each look drawn', ph);
+  check(ph.wide, 'phone: no sideways scroll');
+  await p.eval(`document.querySelector('.cal-scroll').scrollTop = 0`);
+  await shot('phone-feed');
+  const card = v2.items.find((i) => i.kind === 'card')!;
+  await click(`[data-cal-id="${card.id}"] [data-answer="show"]`);
+  await p.until(`!!document.querySelector('[data-cal-id="${card.id}"] .cal-acts.cal-answered')`, 10_000);
+  check(true, 'phone: an answer draws the chances after');
+  await p.eval(`document.querySelector('[data-cal-id="${card.id}"]').scrollIntoView({ block: 'start' })`);
+  await shot('phone-answered');
+  // A row opens in place as a card.
+  const row = v2.items.find((i) => i.kind === 'row')!;
+  await click(`.cal-row[data-cal-id="${row.id}"] .cal-row-main`);
+  await p.until(`!!document.querySelector('.cal-card[data-cal-id="${row.id}"]')`, 5_000);
+  check(true, 'phone: a row opens in place');
+  // A swipe of 150 px skips it; Undo brings it back.
+  const swiped = v2.items.find((i) => i.kind === 'card' && i.id !== card.id) ?? row;
+  await drag(`[data-cal-id="${swiped.id}"]`, -150);
+  await p.until(`!document.querySelector('[data-cal-id="${swiped.id}"]')`, 5_000);
+  check(true, 'phone: a swipe skips');
+  await click('.toast .toast-action');
+  await p.until(`!!document.querySelector('[data-cal-id="${swiped.id}"]')`, 5_000);
+  check(true, 'phone: Undo brings it back');
+  // A short drag springs back.
+  await drag(`[data-cal-id="${swiped.id}"]`, 40);
+  await Bun.sleep(300);
+  check(await p.eval(`!!document.querySelector('[data-cal-id="${swiped.id}"]')`), 'phone: a short drag springs back');
+  await click(`[data-cal-id="${swiped.id}"] .cal-x`);
+  await p.until(`!document.querySelector('[data-cal-id="${swiped.id}"]')`, 5_000);
+  check(true, 'phone: × skips');
+  await p.eval(`document.querySelector('.cal-sure').open = true; document.querySelector('.cal-how').open = true; document.querySelector('.cal-how').scrollIntoView({ block: 'end' })`);
+  await shot('phone-sure-and-how');
   if (p.errors.length) check(false, 'no page errors', p.errors);
 } catch (e) {
   failed++;

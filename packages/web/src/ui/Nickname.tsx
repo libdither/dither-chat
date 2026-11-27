@@ -1,7 +1,8 @@
 /**
- * Your nickname for one account of someone's (docs/chats.md, Names): only you see it, it stands for that account's
- * name wherever the account's name shows, and a person's name is made of their accounts' names, so it follows. Set
- * from an account's tile on a profile, the identity menu, or the pencil by a one-route chat's name.
+ * Your nicknames (docs/chats.md, Names), which only you see. One for a person, no account's: it is their name over
+ * every account's, set from the pencil by their name on their profile or by a one-route chat's name. One for one account
+ * of theirs: it stands for that account's name wherever the account's name shows, set from the account's row on a
+ * profile or the identity menu.
  */
 import type * as P from '@dither-chat/protocol';
 import { useState } from 'preact/hooks';
@@ -13,10 +14,19 @@ import type { MenuEntry } from './ContextMenu.tsx';
 /** What the account calls itself on its network, without your nickname. */
 export const ownName = (i: P.IdentityView) => accountName({ ...i, nickname: null });
 
-/** Gives one account a nickname, or takes it away (null or empty). */
+/** Gives one account a nickname, or takes it away (null or empty): whether it was saved. */
 async function saveNickname(identityId: string, nickname: string | null) {
-  await api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).catch((e) =>
-    toast({ kind: 'error', title: 'Could not save that', body: e.message }),
+  return api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).then(
+    () => true,
+    (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
+  );
+}
+
+/** Gives a person a nickname, no account's, or takes it away (null or empty): whether it was saved. */
+async function savePersonNickname(personId: string, nickname: string | null) {
+  return api(`/api/persons/${personId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).then(
+    () => true,
+    (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
   );
 }
 
@@ -39,20 +49,24 @@ export function nicknameEntries(i: P.IdentityView | null | undefined, edit?: () 
   ].filter(Boolean) as MenuEntry[];
 }
 
-/** The inline editor: Enter or leaving it saves, Escape keeps what was there, empty takes the nickname away. */
-export function NicknameInput({ i, onDone, class: cls = 'pair-nick-input' }: { i: P.IdentityView; onDone: () => void; class?: string }) {
+/**
+ * The inline editor: Enter or leaving it saves, Escape keeps what was there, empty takes the nickname away. With
+ * `person`, the nickname is the person's (no account's); else account `i`'s.
+ */
+export function NicknameInput({ i, person, onDone, class: cls = 'pair-nick-input' }: { i: P.IdentityView; person?: P.PersonView; onDone: () => void; class?: string }) {
+  const now = (person ? person.nickname : i.nickname) ?? '';
   const save = (v: string) => {
     onDone();
-    if (v.trim() === (i.nickname ?? '')) return;
-    void saveNickname(i.id, v);
+    if (v.trim() === now) return;
+    void (person ? savePersonNickname(person.id, v) : saveNickname(i.id, v));
   };
   return (
     <input
       class={cls}
-      value={i.nickname ?? ''}
+      value={now}
       placeholder={ownName(i)}
-      aria-label={`Nickname for ${ownName(i)} on ${netName(i.network)}`}
-      title={`Only you see it. Leave it empty to call this account ${ownName(i)} again`}
+      aria-label={person ? `Your nickname for ${ownName(i)}` : `Nickname for ${ownName(i)} on ${netName(i.network)}`}
+      title={person ? 'Only you see it, and no network is told. Leave it empty to call them by their accounts’ names again' : `Only you see it. Leave it empty to call this account ${ownName(i)} again`}
       ref={(el) => {
         if (el && document.activeElement !== el) {
           el.focus();
@@ -69,11 +83,13 @@ export function NicknameInput({ i, onDone, class: cls = 'pair-nick-input' }: { i
 }
 
 /**
- * A name that opens something, with a pencil (shown on hover) for the nickname of the account behind it: a one-route
- * chat's header, a one-account profile. `editing` and `setEditing` may come from outside, so a menu can open it.
+ * A name that opens something, with a pencil (shown on hover) for your nickname for the person behind it (`person`),
+ * else for the account: a one-route chat's header. `editing` and `setEditing` may come from outside, so a menu can
+ * open it.
  */
 export function NicknamedName({
   i,
+  person,
   label,
   title,
   onOpen,
@@ -82,6 +98,7 @@ export function NicknamedName({
   class: cls = 'conv-head-name',
 }: {
   i: P.IdentityView;
+  person?: P.PersonView;
   label: string;
   title: string;
   onOpen?: () => void;
@@ -92,8 +109,8 @@ export function NicknamedName({
   const [inner, setInner] = useState(false);
   const editing = outer ?? inner;
   const setEditing = setOuter ?? setInner;
-  if (editing) return <NicknameInput i={i} onDone={() => setEditing(false)} />;
-  const pencil = i.nickname ? `Change or remove your nickname for ${ownName(i)} (only you see it)` : `Give ${ownName(i)} a nickname (only you see it)`;
+  if (editing) return <NicknameInput i={i} person={person} onDone={() => setEditing(false)} />;
+  const pencil = (person ? person.nickname : i.nickname) ? `Change or remove your nickname for ${ownName(i)} (only you see it)` : `Give ${ownName(i)} a nickname (only you see it)`;
   return (
     <>
       {onOpen ? (

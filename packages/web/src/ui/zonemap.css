@@ -1,0 +1,90 @@
+/* The world map to pick someone's time zone on (ZoneMap.tsx, docs/profile.md "Their time"). */
+.td-zone {
+  width: 100%;
+}
+.zm-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 2px 0 4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--accent) 10%, var(--bg));
+  cursor: crosshair;
+  touch-action: manipulation;
+}
+.zm-land {
+  fill: color-mix(in oklab, var(--text) 30%, var(--bg-raised));
+}
+.zm-night {
+  fill: color-mix(in oklab, #000 24%, transparent);
+  pointer-events: none;
+}
+.zm-city {
+  fill: color-mix(in oklab, var(--text) 70%, transparent);
+}
+.zm-city.lit {
+  fill: var(--accent);
+}
+.zm-mark {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2.5;
+}
+.zm-status {
+  min-height: 1.35em;
+  color: var(--text);
+}
+.zm-status span {
+  color: var(--text-dim);
+}
+.zm-search {
+  width: 100%;
+  margin: 6px 0 2px;
+  padding: 4px 8px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.zm-matches {
+  display: flex;
+  flex-direction: column;
+}
+.zm-matches button {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.zm-matches button:hover,
+.zm-matches button[aria-selected='true'] {
+  background: var(--bg-hover);
+}
+.zm-matches span {
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 6px;
+}
+.zm-set {
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: 12px;
+}
+.zm-set:disabled {
+  opacity: 0.45;
+}
