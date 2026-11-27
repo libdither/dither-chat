@@ -508,7 +508,7 @@ function cutQuote(bs: P.MailBlock[]): P.MailBlock[] {
 }
 
 /** A paragraph's lines. */
-export function splitLines(c: P.MailInline[]): P.MailInline[][] {
+function splitLines(c: P.MailInline[]): P.MailInline[][] {
   const out: P.MailInline[][] = [[]];
   for (const x of c) {
     if (isBr(x)) out.push([]);
@@ -518,7 +518,7 @@ export function splitLines(c: P.MailInline[]): P.MailInline[][] {
 }
 
 /** Inline nodes as plain text. */
-export function plain(xs: P.MailInline[]): string {
+function plain(xs: P.MailInline[]): string {
   return xs.map((x) => (typeof x === 'string' ? x : x.t === 'br' ? '\n' : plain(x.c))).join('');
 }
 

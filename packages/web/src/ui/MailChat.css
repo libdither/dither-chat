@@ -33,11 +33,11 @@
 .mail-h2 {
   font-size: 1.07em;
 }
-.mail-list {
+.mail-wlist {
   margin: 0;
   padding-left: 1.5em;
 }
-.mail-list li + li {
+.mail-wlist li + li {
   margin-top: 2px;
 }
 .mail-bq {
@@ -70,26 +70,6 @@
 }
 .mail-words-empty.none {
   min-height: 1px;
-}
-/* A designed mail shown as sent in place: capped at about 60% of the pane, with a fade and Show all. */
-.chat-mail-framed {
-  position: relative;
-}
-.chat-mail-cap {
-  overflow: hidden;
-}
-.chat-mail-framed.capped .chat-mail-cap {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 72px), transparent);
-}
-.chat-mail-all {
-  margin-top: 4px;
-}
-.chat-mail-framed.capped .chat-mail-all {
-  position: absolute;
-  left: 50%;
-  bottom: 8px;
-  transform: translateX(-50%);
-  background: var(--bg-raised);
 }
 .mail-faint {
   font-size: 12.5px;

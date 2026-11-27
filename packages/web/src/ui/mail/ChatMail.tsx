@@ -17,6 +17,7 @@ import { Loading } from '../Loader.tsx';
 import { MailFiles } from './MailFiles.tsx';
 import { BODY_RENDERERS, MESSAGE_ACTIONS, THREAD_ACTIONS } from './slots.tsx';
 import { TextBody } from './TextBody.tsx';
+import './ChatMail.css';
 
 /** The mail view a chat message stands for, for the reader's renderers. */
 function asMailMessage(m: P.MessageView): P.MailMessageView {
@@ -109,7 +110,7 @@ function Capped({ children }: { children: ComponentChildren }) {
         <div>{children}</div>
       </div>
       {over && (
-        <button class="mail-open-chip chat-mail-all" data-track="mail show all" aria-expanded={all} onClick={() => setAll(!all)}>
+        <button class="chat-mail-all" data-track="mail show all" aria-expanded={all} onClick={() => setAll(!all)}>
           {all ? 'Show less' : 'Show all'}
         </button>
       )}

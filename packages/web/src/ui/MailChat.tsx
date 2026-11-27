@@ -167,11 +167,11 @@ function Block({ b }: { b: P.MailBlock }) {
     </li>
   ));
   return b.ordered ? (
-    <ol class="mail-list" start={b.start}>
+    <ol class="mail-wlist" start={b.start}>
       {items}
     </ol>
   ) : (
-    <ul class="mail-list">{items}</ul>
+    <ul class="mail-wlist">{items}</ul>
   );
 }
 
