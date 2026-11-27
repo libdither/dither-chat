@@ -3415,6 +3415,12 @@ button.inbox-status:hover {
 .msg.head > .msg-actions {
   top: -16px;
 }
+/* A name line that ends in a tag you can press (a route's, a mail's subject: `.route-tag`) is not empty on its right
+   once the pane is narrow: there the bar would cover the tag, and a press meant for it would land on a reaction. It
+   stays whole above such a line. */
+.msg.head:has(.route-tag) > .msg-actions {
+  top: -34px;
+}
 .icon-btn.emoji {
   font-size: 16px;
   line-height: 1.25;

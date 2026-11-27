@@ -234,7 +234,10 @@ What it adds to a conversation's page:
   where yours differ (`via zyn.alt`), after yours it is theirs where theirs differ (`to kit.work`), and the network's
   icon leads where the chat spans networks. Where nothing is left (Mo's messages: the head already says `mo.codes` or
   `mo.draws`), there is no tag. It is a button: a click sends through that route, and its title says so in full
-  ("Send as zyn.alt to kit.work on Discord"). A long run on one route reads like that conversation's own page, with
+  ("Send as zyn.alt to kit.work on Discord"). The bar that shows over a hovered message (reactions, reply, more)
+  sits whole above a head line that has a tag, a route's or a mail's subject: on the line itself, as it sits for
+  other heads, it covered the tag once the pane was narrow, and a press meant for the tag reacted to the message
+  instead. A long run on one route reads like that conversation's own page, with
   the accounts' names. Until 2026-11-11 a row of its own (the network's icon, their name, yours, and "sending here")
   stood above each run, and then, for a day, the tag said the route's whole label.
 - **The picture's badge**, the same badge an inbox row has (the network, and dots for your accounts), only when it

@@ -365,6 +365,22 @@ if (!before) {
   check(on.length > 0 && on.every((r) => r === samMail) && (await lead()).includes('on Email'), 'Sam on Email: their mail alone, sent by email', [[...new Set(on)], await lead()]);
   await shot('12-sam-email');
 
+  // ---- A tag on a name line (a route's after the time, a mail's subject), with the pane narrow (the details panel
+  // open): the bar that shows over a hovered message would reach it there, and stays above the line instead, so a press
+  // on the tag never lands on a reaction. Each row's bar is shown and measured in one pass, with no pointer.
+  await p.size(1190, 800);
+  await p.eval(`(localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), details: true })), (window.__before = true), (location.hash = ${JSON.stringify(`#/people/${sam.id}`)}), location.reload())`).catch(() => {});
+  await p.until(`!window.__before && document.querySelectorAll('.center .pane .msg .route-tag').length > 0`, 15000);
+  const bars = await p.eval<{ reaches: boolean; covers: boolean }[]>(
+    `[...document.querySelectorAll('.center .pane .msg .route-tag')].flatMap((tag) => { const bar = tag.closest('.msg').querySelector(':scope > .msg-actions'); if (!bar) return []; bar.style.display = 'flex'; const b = bar.getBoundingClientRect(), t = tag.getBoundingClientRect(); bar.style.display = ''; const reaches = b.left < t.right && b.right > t.left; return [{ reaches, covers: reaches && b.top < t.bottom && b.bottom > t.top }]; })`,
+  );
+  check(bars.some((x) => x.reaches), 'with the details panel open the pane is narrow enough for a message’s bar to reach the tag on its name line', bars.length);
+  check(bars.length > 0 && !bars.some((x) => x.covers), '…and the bar stays above the line: it never covers the tag', bars.filter((x) => x.covers).length);
+  await shot('13-sam-narrow');
+  await p.size(1280, 800);
+  await p.eval(`(localStorage.setItem('dither-chat:prefs', JSON.stringify({ ...JSON.parse(localStorage.getItem('dither-chat:prefs') || '{}'), details: false })), (window.__before = true), location.reload())`).catch(() => {});
+  await p.until(`!window.__before && !!document.querySelector('.conv-head')`, 15000);
+
   // ---- An email route chosen is kept by the hub: Alice wrote on Signal last, Email is chosen, and a reload starts there.
   const alice = boot.persons.find((q: any) => q.name === 'Alice Chen' && boot.mail.chats.some((c: any) => c.personId === q.id));
   const aliceMail = boot.mail.chats.find((c: any) => c.personId === alice.id).id;
