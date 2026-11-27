@@ -21,7 +21,8 @@ import { BodyCache, storeBody } from '../src/mail/cache.ts';
 import { MailStore } from '../src/mail/store.ts';
 import type * as M from '@dither-chat/protocol/mail-iface';
 import { SLICE_ROWS, sliced, whole, type SliceOptions } from '../src/slices.ts';
-import { noteWork, pathShape, SLOW_WRITE_MS, StallWatch, timedWork, timedWrite } from '../src/stalls.ts';
+import { noteWork, pathShape, SLOW_WRITE_MS, type StallRecord, StallWatch, timedWork, timedWrite } from '../src/stalls.ts';
+import { ownCgroup, someTotal, type Waits, waitShares, waitsOf } from '../src/pressure.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { Triage } from '../src/triage.ts';
 import { SELF_SQL } from '../src/interact.ts';
@@ -619,6 +620,55 @@ describe('the stall log', () => {
       'stalls: 1 of 200 ms or more in the first 10 min, the longest 23.8 s (embeddings refit, GET /api/conversations/:id/messages)',
       'stall: 2.5 s from 600.7 s after start: media archive',
     ]);
+  });
+
+  test("a stall says what the hub's own threads waited on, from its cgroup's pressure totals around the hold", () => {
+    const lines: string[] = [];
+    const records: StallRecord[] = [];
+    // Its own stretch of the work ring's clock on every run: a rerun loads this file again but keeps stalls.ts, ring
+    // and all, so a module-level counter would start over and the last run's notes would fall in.
+    const g = globalThis as { stallWaitsClock?: number };
+    const T = (g.stallWaitsClock = (g.stallWaitsClock ?? 2e10) + 1e6);
+    // The totals a cgroup's pressure files would give, in ms: 3 s on the disk and 0.4 s for a CPU in a 4 s hold.
+    let waits: Waits | null = { memoryMs: 1000, ioMs: 5000, cpuMs: 200 };
+    const w = new StallWatch({ everyMs: 100, overMs: 200, forMs: 10 * MIN, log: (l) => lines.push(l), record: (r) => records.push(r), usage: null, waits: () => waits }).from(T);
+    noteWork('flush', T + 10);
+    waits = { memoryMs: 1000, ioMs: 8000, cpuMs: 600 };
+    w.check(T + 4000);
+    // Without the files (off Linux, or no PSI), the line is as it was.
+    waits = null;
+    noteWork('flush', T + 4010);
+    w.check(T + 8000);
+    expect(lines).toEqual(['stall: 3.9 s from 0 ms after start: flush [waited: disk 75%, memory 0%, CPU 10%]', 'stall: 3.9 s from 4.0 s after start: flush']);
+    expect(records.map((r) => [r.waitDiskPct, r.waitMemoryPct, r.waitCpuPct])).toEqual([
+      [75, 0, 10],
+      [undefined, undefined, undefined],
+    ]);
+  });
+
+  test("pressure files: the `some` total, the process's own cgroup, and a reader that gives up without them", () => {
+    const files: Record<string, string> = {
+      '/proc/self/cgroup': '0::/user.slice/app.slice/hub.service\n',
+      '/sys/fs/cgroup/user.slice/app.slice/hub.service/memory.pressure': 'some avg10=0.00 avg60=0.00 avg300=0.00 total=1500\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=900\n',
+      '/sys/fs/cgroup/user.slice/app.slice/hub.service/io.pressure': 'some avg10=34.93 avg60=22.81 avg300=6.87 total=23834974\nfull avg10=34.91 avg60=22.77 avg300=6.86 total=23737310\n',
+      '/sys/fs/cgroup/user.slice/app.slice/hub.service/cpu.pressure': 'some avg10=0.00 avg60=0.40 avg300=0.26 total=1609944\nfull avg10=0.00 avg60=0.31 avg300=0.19 total=1328888\n',
+    };
+    const read = (f: string) => {
+      if (!(f in files)) throw new Error('ENOENT');
+      return files[f]!;
+    };
+    expect(someTotal(files['/sys/fs/cgroup/user.slice/app.slice/hub.service/io.pressure']!)).toBe(23834974);
+    expect(someTotal('full avg10=0.00 total=5\n')).toBeNull();
+    const dir = ownCgroup(read, (f) => f in files);
+    expect(dir).toBe('/sys/fs/cgroup/user.slice/app.slice/hub.service');
+    expect(waitsOf(dir, read)!()).toEqual({ memoryMs: 1.5, ioMs: 23834.974, cpuMs: 1609.944 });
+    expect(ownCgroup(() => '0::/\n', () => false)).toBeNull();
+    expect(ownCgroup(() => '12:memory:/old\n', () => true)).toBeNull();
+    expect(waitsOf(null)).toBeNull();
+    delete files['/sys/fs/cgroup/user.slice/app.slice/hub.service/cpu.pressure'];
+    expect(waitsOf(dir, read)!()).toBeNull();
+    // Shares are of the whole window and kept within 0-100 (a counter read a little early or late).
+    expect(waitShares({ memoryMs: 0, ioMs: 0, cpuMs: 0 }, { memoryMs: 50, ioMs: 2000, cpuMs: -5 }, 1000)).toEqual({ disk: 100, memory: 5, cpu: 0 });
   });
 
   test('a write transaction of SLOW_WRITE_MS or more is logged with what it was; a quicker one is not', () => {

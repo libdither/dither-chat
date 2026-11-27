@@ -177,6 +177,64 @@ The deployer runs from dither-chat's current release, so it ships its own change
 the timer fires is not started twice (a oneshot). It needs `gh` signed in (for CI and labels) and git able to fetch and
 push the private remote.
 
+### Keeping the hub fed
+
+The hub shares its machine with whatever else runs there, agents' batch jobs included. When those fill memory and
+swap, the hub is the one you notice: on 2026-11-25 a job's dozen 1–2 GB processes left the hub's event loop held for
+25 and 37 s at a time and its pages taking 17 s, while the hub's own memory was never taken from it (its cgroup's
+memory pressure stayed at 0); it waited on the disk instead (its `io.pressure` at 35%). Three things help, in order.
+
+**Know when it happens.** The pressure watch (`packages/deploy/src/pressure.ts`) reads Linux's pressure stall
+information every 10 s, for the machine and for the hub's cgroup, and says it through the manager's notices like the
+deployer: "This machine is short of memory" (memory waits of 3% of a minute with everything stalled, or 15% with
+something stalled, for 2 minutes) and "The hub is held up by this machine" (its threads waited on the disk or memory
+20% of a minute, or for a CPU 40%, for 2 minutes; high urgency). Each names the biggest memory users by systemd unit, so
+you can tell which job to stop. It says each again hourly while it lasts and once, quietly, when it ends.
+`bun packages/deploy/src/pressure.ts --once` prints one reading. The hub's stall log says the same of each hold
+(`[waited: disk 35%, memory 0%, CPU 2%]`, docs/tracing.md). It runs as a unit of its own, so it still speaks when the
+hub is the one held up; restart it after a deploy that changes `pressure.ts`:
+
+```ini
+# dither-pressure.service
+[Service]
+ExecStart=/etc/profiles/per-user/%u/bin/bun %h/.local/share/dither-deploy/chat/current/packages/deploy/src/pressure.ts
+Restart=always
+RestartSec=10
+CPUWeight=1000
+MemoryMin=64M
+[Install]
+WantedBy=default.target
+```
+
+`DITHER_PRESSURE_UNITS` (comma-separated, default `dither-chat.service`) names the units whose own waits it watches.
+
+**Keep what the hub has.** cgroup v2 has no exclusive reservation, and none is needed: `MemoryMin` means the kernel
+never takes back the unit's memory below that much (`MemoryLow`: only once nothing unprotected is left), while memory
+the hub does not use stays free for others. So a floor above the hub's working set protects whatever it uses up to
+there. CPU has no floor at all; `CPUWeight` is the unit's share when CPUs are contended (100 by default), which is as
+good as one for a hub that needs about one core. A drop-in, `dither-chat.service.d/reserve.conf`:
+
+```ini
+[Service]
+MemoryMin=1G
+MemoryLow=2G
+CPUWeight=1000
+```
+
+A unit's protection is capped by every cgroup above it ([kernel docs, memory.min](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)),
+so the floor holds only when `app.slice` in the user manager (`systemctl --user set-property app.slice MemoryMin=1G
+MemoryLow=2G`) and, at the system level, `user.slice`, `user-<uid>.slice` and `user@<uid>.service` have at least as
+much. A weight counts among siblings, so the hub's 1000 counts against the other units in `app.slice`.
+
+On ZFS, two of the usual levers do nothing for the hub: the ARC, which caches the database's pages, is the kernel's and
+belongs to no cgroup, and `IOWeight` does not reach writes ZFS issues from its own threads. A job writing gigabytes to
+a dataset on the same pool (a `/tmp` there, say) slows every writer on it, the hub's database included.
+
+**Cap the rest.** The surest way to keep room for the hub is to keep other work from taking it: a `MemoryHigh` on the
+slice that agents' or batch jobs run in makes them reclaim and swap their own memory before they squeeze the machine,
+and a lower `CPUWeight` there leaves the hub its share. `systemd-run --user -p MemoryHigh=8G -p CPUWeight=20 <job>`
+does it for one job.
+
 ### Who can reach it
 
 The hub answers loopback and tailnet addresses only, and past that only a signed-in device or a program with its

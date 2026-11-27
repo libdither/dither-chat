@@ -44,6 +44,7 @@ import { StartupTrace } from './startup.ts';
 import { startCheckpointer } from './checkpoint.ts';
 import { sliced } from './slices.ts';
 import { StallWatch, timedWrite } from './stalls.ts';
+import { ownCgroup, waitsOf } from './pressure.ts';
 import { NdjsonFile, setSpanThrowHook, setTraceSink, span, spansBetween, type Span } from './trace.ts';
 import { inQuietHours } from './triage.ts';
 import { onRing, ringGate, ringWords, sweepCalls } from './callstate.ts';
@@ -684,7 +685,8 @@ noteListening(dataDir);
   });
 }
 // Every hold-up of the event loop from here on, with what began in it, for the first ten minutes (stalls.ts).
-const stalls = new StallWatch({ record: stallFile?.push ?? null, spans: spansBetween }).begin();
+// With what the hub's own threads waited on in each, from its cgroup's pressure files (pressure.ts).
+const stalls = new StallWatch({ record: stallFile?.push ?? null, spans: spansBetween, waits: waitsOf(ownCgroup()) }).begin();
 // Beside the stall log's summary: whether the checkpoints kept up, and how long the longest took on its own thread.
 setTimeout(() => {
   const c = checkpoints.stats;

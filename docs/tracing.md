@@ -66,6 +66,11 @@ for ten minutes after a start, then 2 s), goes to `event-loop-stalls.ndjson` wit
   (`minorFaults`, `majorFaults`) and context switches. CPU near the hold's length is JavaScript work; little CPU is a
   wait (a synchronous write waiting for the disk, memory being paged in). The counters are the whole process's, so
   Bun's own threads count too. `--stalls` labels each hold `cpu`, `waiting` or `mixed` by that.
+- what the hub's threads waited on in the hold (`waitDiskPct`, `waitMemoryPct`, `waitCpuPct`): the share of it that one
+  or more of them were stalled on the disk, on memory or for a CPU, from its cgroup's pressure files (`pressure.ts`;
+  three small reads every tick). The log line ends with them: `[waited: disk 35%, memory 0%, CPU 2%]`. A hold that
+  waited on the disk or memory was the machine's doing (docs/deploy.md, "Keeping the hub fed"). Left out where the
+  files are not there (another OS, an old kernel).
 
 **Files** (`NdjsonFile`). Batched (written every second, or at 256 KB), rotated by size: the trace at 10 MB keeping
 10 older files (`hub.trace.ndjson.1` is the newest of them), the stall file at 2 MB keeping 3. A failed write is
