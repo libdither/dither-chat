@@ -1714,9 +1714,13 @@ export class HubServer {
     if ((m = path.match(/^\/api\/posts\/([a-z]+)\/publish$/)) && method === 'POST') {
       const network = m[1] as P.Network;
       if (!(network in NETWORK_META)) return bad('no such network', 404);
-      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown; warning?: unknown }>();
+      const b = await body<{ text?: unknown; replyTo?: unknown; quote?: unknown; key?: unknown; account?: unknown; warning?: unknown; media?: unknown }>();
       try {
-        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account, warning: b.warning });
+        // Pictures with a reply (a thread's box, docs/places.md "The box"): upload ids, as the Feed page's composer sends them.
+        const ids = Array.isArray(b.media) ? b.media.filter((x): x is string => typeof x === 'string') : [];
+        const media = ids.length ? await this.postFiles(ids) : undefined;
+        if (ids.length && !media) throw new PostsError('A picture is gone from the hub: add it again.', 410);
+        const v = await this.posts.publish(network, { text: b.text, replyTo: b.replyTo, quote: b.quote, key: b.key, account: b.account, warning: b.warning, ...(media?.length ? { media } : {}) });
         this.flush();
         return ok(v);
       } catch (e) {

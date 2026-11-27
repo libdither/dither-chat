@@ -13,14 +13,18 @@
  *
  * Ctrl/Cmd+Enter posts, Escape closes. What you write is kept on the device until it is posted or cleared, per post
  * answered. Each composer posts once: a key goes with it, so a double press or a retry is one post (posts.ts).
+ *
+ * `docked`: the one box at the bottom of a thread (docs/places.md "The box"), always open, with the line over it saying
+ * where it goes and as whom, a bar when it is aimed at a reply or a quote (✕ or Escape takes the aim off), the emoji
+ * button, and pictures where the network and the account take them. Its draft is the thread's, whatever it is aimed at.
  */
-import { Fragment, h } from 'preact';
+import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { NETWORK_META } from '@dither-chat/protocol';
 // Its own path, so the rules ride in this chunk, not the app's start.
 import { composeState, postRulesFor, rulesForReply, type PostRules } from '@dither-chat/protocol/compose';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { api } from '../../state.ts';
+import { api, db } from '../../state.ts';
 import type { Kit } from './lazy.tsx';
 import { QuotedIn } from './Post.tsx';
 
@@ -66,6 +70,48 @@ export function Ring({ st, rules }: { st: ReturnType<typeof composeState>; rules
   );
 }
 
+type ReactionsChunk = typeof import('../Reactions.tsx');
+let reactions: ReactionsChunk | null = null;
+
+/**
+ * The chat box's emoji picker (Reactions.tsx, a chunk of its own loaded when first opened) over a thread's box. A
+ * network's custom emoji are its notifications chat's.
+ */
+// redraws: the picker keeps its own state once open; a new list of conversations changes nothing it shows.
+function EmojiPicker({ network, anchor, onInsert, onClose }: { network: P.Network; anchor: DOMRect; onInsert: (text: string) => void; onClose: () => void }) {
+  const [m, setM] = useState(reactions);
+  useEffect(() => {
+    if (!m)
+      import('../Reactions.tsx').then(
+        (c) => setM((reactions = c)),
+        () => onClose(),
+      );
+  }, []);
+  const conv = [...db.conversations.values()].find((c) => c.network === network && c.variant === 'feed')?.id ?? '';
+  return m ? <m.InsertPicker conversationId={conv} network={network} anchor={anchor} onInsert={onInsert} onClose={onClose} /> : null;
+}
+
+/** A picture added to the box: shown at once, sent to the hub (upload.ts) meanwhile. */
+interface Pic {
+  local: string;
+  name: string;
+  mime: string;
+  id?: string;
+  error?: string;
+}
+
+/** The thread's box (see the file's head). */
+interface Docked {
+  /** The line over the box: "Reply to Alice on X · as @you". */
+  lead: ComponentChildren;
+  /** The thread's post: the draft is kept under it. */
+  draft: string;
+  /** Aimed at a reply, or a quote: ✕ and Escape take the aim off. */
+  onUnaim?: () => void;
+  /** The account posting takes pictures (capability postMedia). */
+  media: boolean;
+}
+
 interface ComposeTarget {
   /** Answering this post. */
   replyTo?: P.PostFact;
@@ -82,6 +128,7 @@ export function PostComposer({
   autoFocus,
   collapsed,
   account,
+  docked,
 }: {
   network: P.Network;
   target: ComposeTarget;
@@ -93,10 +140,12 @@ export function PostComposer({
   collapsed?: boolean;
   /** Post as this account (the Feed page's), else the kit's, else the first that can. */
   account?: string;
+  docked?: Docked;
 }) {
   const base = postRulesFor(network);
   const rules = base && target.replyTo ? rulesForReply(base) : base;
-  const draftKey = `${network}:${target.quote ? `q${target.quote.id}` : target.replyTo ? `r${target.replyTo.id}` : 'new'}`;
+  const aimed = target.quote ? `q${target.quote.id}` : target.replyTo ? `r${target.replyTo.id}` : 'new';
+  const draftKey = `${network}:${docked ? `t${docked.draft}` : aimed}`;
   const [text, setText] = useState(() => readDraft(draftKey));
   const [open, setOpen] = useState(!collapsed || !!text);
   const [sending, setSending] = useState(false);
@@ -107,7 +156,10 @@ export function PostComposer({
   // to post again after no answer.
   const fresh = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
   const [key, setKey] = useState(fresh);
-  useEffect(() => setKey(fresh()), [draftKey]);
+  useEffect(() => setKey(fresh()), [draftKey, aimed]);
+  const [pics, setPics] = useState<Pic[]>([]);
+  const [emojiAt, setEmojiAt] = useState<DOMRect | null>(null);
+  const file = useRef<HTMLInputElement>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const back = useRef<HTMLDivElement>(null);
   // Reply pressed under the post: its one-line box opens.
@@ -121,7 +173,7 @@ export function PostComposer({
     area.current.focus({ preventScroll: true });
     // The whole box in view, its buttons too.
     area.current.closest('.post-composer')?.scrollIntoView({ block: 'nearest' });
-  }, [autoFocus, draftKey, open]);
+  }, [autoFocus, draftKey, aimed, open]);
   useEffect(() => keepDraft(draftKey, text), [text, draftKey]);
   // The box grows with what is written.
   useLayoutEffect(() => {
@@ -132,21 +184,42 @@ export function PostComposer({
   }, [text, open]);
   if (!rules) return null;
   const st = composeState(text, rules);
+  const video = pics.some((p) => p.mime.startsWith('video/'));
+  const maxPics = docked?.media ? rules.media.images : 0;
+  const canAddPic = maxPics > 0 && pics.length < (video ? 1 : maxPics);
+  const uploading = pics.some((p) => !p.id && !p.error);
+  // Pictures alone are a reply, as the hub takes them.
+  const sendable = (st.sendable || (pics.length > 0 && st.remaining >= 0)) && !uploading && !pics.some((p) => p.error);
+  const addFiles = async (files: FileList | null) => {
+    if (!files) return;
+    for (const f of [...files].slice(0, Math.max(0, maxPics - pics.length))) {
+      const pic: Pic = { local: URL.createObjectURL(f), name: f.name, mime: f.type || 'application/octet-stream' };
+      setPics((ps) => [...ps, pic]);
+      try {
+        const up = await kit.uploadFile(f, f.name, pic.mime);
+        setPics((ps) => ps.map((p) => (p.local === pic.local ? { ...p, id: up.id } : p)));
+      } catch (e) {
+        setPics((ps) => ps.map((p) => (p.local === pic.local ? { ...p, error: (e as Error).message } : p)));
+      }
+    }
+  };
   const words = rules.words;
   const to = target.replyTo ? kit.handle(target.replyTo.author ?? null) : null;
   const send = () => {
-    if (!st.sendable || sending) return;
+    if (!sendable || sending) return;
     setSending(true);
     setError(null);
     api<P.PostView>(`/api/posts/${network}/publish`, {
       method: 'POST',
-      body: { text, key, ...(warning?.trim() ? { warning: warning.trim() } : {}), ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}), ...((account ?? kit.account) ? { account: account ?? kit.account } : {}) },
+      body: { text, key, ...(warning?.trim() ? { warning: warning.trim() } : {}), ...(target.replyTo ? { replyTo: target.replyTo.id } : {}), ...(target.quote ? { quote: target.quote.id } : {}), ...((account ?? kit.account) ? { account: account ?? kit.account } : {}), ...(pics.length ? { media: pics.map((p) => p.id!) } : {}) },
     }).then(
       (p) => {
         setSending(false);
         setText('');
         keepDraft(draftKey, '');
         setKey(fresh());
+        pics.forEach((x) => URL.revokeObjectURL(x.local));
+        setPics([]);
         onPosted(p);
       },
       (e) => {
@@ -162,8 +235,9 @@ export function PostComposer({
    * Cancel: the box goes (the one under a thread's post closes to its line), and what was written with it; a toast
    * brings it back.
    */
-  const cancel =
-    onCancel || collapsed !== undefined
+  const cancel = docked
+    ? undefined
+    : onCancel || collapsed !== undefined
       ? () => {
           const had = text;
           if (collapsed !== undefined) {
@@ -181,16 +255,17 @@ export function PostComposer({
   const overFrom = st.overFrom;
   const nfc = text.normalize('NFC');
   const label = target.quote ? words.quote : target.replyTo ? words.reply : words.post;
-  if (!open)
+  const aimedAt = target.quote ?? target.replyTo;
+  if (!open && !docked)
     return (
       <button class="compose-closed" onClick={() => (setOpen(true), setTimeout(() => area.current?.focus()))} data-composer="reply">
         <span>{target.replyTo ? words.replyPlaceholder : words.placeholder}</span>
         <span class="compose-closed-btn">{label}</span>
       </button>
     );
-  return (
-    <div class={`post-composer ${st.level}`} data-composer={target.quote ? 'quote' : target.replyTo ? 'reply' : 'post'}>
-      {to && !target.quote && (
+  const box = (
+    <div class={`post-composer ${st.level} ${docked ? 'docked' : ''}`} data-composer={target.quote ? 'quote' : target.replyTo ? 'reply' : 'post'}>
+      {to && !target.quote && !docked && (
         <span class="compose-to">
           Replying to <b>@{to}</b>
         </span>
@@ -214,7 +289,7 @@ export function PostComposer({
           ref={area}
           class="compose-text"
           value={text}
-          rows={2}
+          rows={docked ? 1 : 2}
           placeholder={target.quote ? words.quotePlaceholder : target.replyTo ? words.replyPlaceholder : words.placeholder}
           aria-label={label}
           onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
@@ -222,16 +297,51 @@ export function PostComposer({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) (e.preventDefault(), send());
             if (e.key === 'Escape' && cancel) (e.preventDefault(), cancel());
+            // The thread's box: Escape takes the aim off first; then, with nothing written, leaves the box, so the next
+            // Escape leaves the page.
+            else if (e.key === 'Escape' && docked && (docked.onUnaim || !text)) {
+              e.preventDefault();
+              if (docked.onUnaim) docked.onUnaim();
+              else (e.currentTarget as HTMLTextAreaElement).blur();
+            }
           }}
           disabled={sending}
         />
       </div>
       {target.quote && <QuotedIn p={target.quote} kit={kit} network={network} still />}
+      {pics.length > 0 && (
+        <div class="feed-pics">
+          {pics.map((p) => (
+            <figure key={p.local} class={`feed-pic ${p.error ? 'bad' : p.id ? '' : 'up'}`} title={p.error ?? p.name}>
+              {p.mime.startsWith('video/') ? <video src={p.local} muted /> : <img src={p.local} alt={p.name} />}
+              <button class="feed-pic-x" aria-label={`Remove ${p.name}`} onClick={() => (URL.revokeObjectURL(p.local), setPics(pics.filter((x) => x !== p)))}>
+                <kit.Icon name="x" size={12} />
+              </button>
+              {!p.id && !p.error && <span class="feed-pic-up">Sending…</span>}
+            </figure>
+          ))}
+        </div>
+      )}
       {/* Said once when it goes over or comes back, not at every key. */}
       <span class="sr-only" aria-live="polite">
         {st.level === 'over' ? `Too long by ${-st.remaining}` : ''}
       </span>
       <div class="compose-foot">
+        {docked && (
+          <>
+            <button class="icon-btn composer-emoji" data-track="thread box: emoji" title="Emoji" aria-label="Emoji" aria-expanded={!!emojiAt} disabled={sending} onClick={(e) => setEmojiAt(emojiAt ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}>
+              <kit.Icon name="smile" size={18} />
+            </button>
+            {maxPics > 0 && (
+              <>
+                <input ref={file} type="file" hidden multiple accept={rules.media.video ? 'image/*,video/mp4,video/quicktime' : 'image/*'} onChange={(e) => (void addFiles((e.currentTarget as HTMLInputElement).files), ((e.currentTarget as HTMLInputElement).value = ''))} />
+                <button class="icon-btn compose-pics" data-track="thread box: add pictures" disabled={!canAddPic || sending} title="Add pictures" aria-label="Add pictures" onClick={() => file.current?.click()}>
+                  <kit.Icon name="image" size={18} />
+                </button>
+              </>
+            )}
+          </>
+        )}
         {rules.markdown && <span class="compose-hint">Markdown</span>}
         {rules.warning && (
           <button class={`link-btn compose-cw ${warning !== null ? 'on' : ''}`} aria-pressed={warning !== null} title={warning === null ? 'Add a content warning' : 'No content warning'} onClick={() => setWarning(warning === null ? '' : null)} disabled={sending}>
@@ -255,10 +365,43 @@ export function PostComposer({
             Cancel
           </button>
         )}
-        <button class="btn primary compose-send" onClick={send} disabled={!st.sendable || sending} title={`${label} on ${NETWORK_META[network].name} (Ctrl+Enter)`}>
+        <button class="btn primary compose-send" onClick={send} disabled={!sendable || sending} title={`${label} on ${NETWORK_META[network].name} (Ctrl+Enter)`}>
           {sending ? 'Posting…' : label}
         </button>
       </div>
+      {emojiAt && (
+        <EmojiPicker
+          network={network}
+          anchor={emojiAt}
+          onInsert={(t: string) => {
+            const a = area.current;
+            const at = a?.selectionStart ?? text.length;
+            setText(text.slice(0, at) + t + text.slice(a?.selectionEnd ?? at));
+            setTimeout(() => a && (a.focus(), a.setSelectionRange(at + t.length, at + t.length)));
+          }}
+          onClose={() => setEmojiAt(null)}
+        />
+      )}
+    </div>
+  );
+  if (!docked) return box;
+  // At the bottom of the thread, as a chat's box: the line over it, the aim bar, the box.
+  return (
+    <div class="thread-box" data-aimed={docked.onUnaim ? aimedAt?.id : undefined}>
+      <div class="typing-bar with-lead compose-lead">
+        <div class="typing-lead">{docked.lead}</div>
+      </div>
+      {docked.onUnaim && aimedAt && (
+        // As a chat's reply bar: whom it answers, their first words, and ✕.
+        <div class="composer-reply compose-aim">
+          <kit.Icon name={target.quote ? 'quote' : 'reply'} size={13} /> {target.quote ? 'Quoting' : 'Replying to'} <b>@{kit.handle(aimedAt.author ?? null) ?? kit.name(aimedAt.author ?? null)}</b>
+          <span>{aimedAt.text.slice(0, 80)}</span>
+          <button class="icon-btn small" data-track="thread box: take the aim off" onClick={docked.onUnaim} aria-label={target.quote ? 'Cancel quote' : 'Cancel reply'}>
+            <kit.Icon name="x" size={13} />
+          </button>
+        </div>
+      )}
+      {box}
     </div>
   );
 }

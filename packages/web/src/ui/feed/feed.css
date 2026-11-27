@@ -2564,3 +2564,65 @@
     display: none;
   }
 }
+
+/* A thread's one box, at the bottom as a chat's (docs/places.md "The box"): the line over it, the aim bar, the box. */
+.thread-box {
+  flex: none;
+  width: 100%;
+  max-width: 712px;
+  margin: 0 auto;
+  padding: 0 16px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.thread-box .compose-lead {
+  margin-top: 4px;
+  padding-left: 6px;
+}
+.thread-box .compose-aim {
+  margin-top: 2px;
+}
+.post-composer.docked {
+  margin: 0;
+  padding: 6px 12px 8px;
+}
+.compose-aim + .post-composer.docked {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+.post-composer.docked .compose-text {
+  min-height: 24px;
+}
+.post-composer.docked .compose-foot {
+  gap: 6px;
+}
+/* A post's replies as a chat (Comments.tsx ChatReplies): one column by time; what a reply answers over it. */
+.ct-chat {
+  display: flex;
+  flex-direction: column;
+}
+.ct-chat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 4px 4px;
+}
+.ct-chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 34px;
+}
+.ct-chat-row .ct-answers {
+  align-self: flex-start;
+  max-width: 100%;
+  margin-left: 34px;
+}
+@media (max-width: 820px) {
+  .thread-box {
+    padding: 0 8px 8px;
+  }
+  .ct-chat-body {
+    padding-left: 0;
+  }
+}

@@ -183,6 +183,7 @@ const dmConv = boot.conversations.find((c: any) => c.id === bigDm.id);
 const person = dmConv?.peerPersonId ?? boot.persons.find((p: any) => p.id !== boot.selfPersonId)?.id;
 const folder = boot.folders.find((f: any) => f.items.some((i: any) => i.kind === 'conversation'));
 const account = boot.accounts[0];
+const cabin = (boot.mail?.threads ?? []).find((t: any) => /Cabin weekend/.test(t.subject));
 
 interface PageCase {
   name: string;
@@ -215,6 +216,10 @@ const PAGES: PageCase[] = [
   { name: 'the directory', at: '#/directory' },
   { name: 'a mail list', at: '#/inbox?mail=v%3Aupdates%3A*' },
   { name: 'Feed', at: '#/feed' },
+  // A post's thread and a mail thread that branches (docs/places.md "A thread as a chat or a tree"): the switch row,
+  // the replies as a chat and a tree, the box at the bottom with its account. The demo's X post with replies.
+  { name: "a post's thread", at: '#/inbox/c/pst_x_1900000000000104729' },
+  ...(cabin ? [{ name: 'a mail thread that branches', at: `#/inbox/c/${cabin.id}` }] : []),
   { name: 'Notification calibration', at: '#/calibration' },
 ];
 

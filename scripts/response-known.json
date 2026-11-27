@@ -565,6 +565,23 @@
   "a mail list / mail-row.row": [
    "M$1"
   ],
+  "a mail thread that branches / Profile of Jo Park": [
+   "M$1"
+  ],
+  "a mail thread that branches / Profile of Rosa Lind": [
+   "M$1"
+  ],
+  "a mail thread that branches / Profile of Zyan": [
+   "M$1"
+  ],
+  "a mail thread that branches / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a mail thread that branches / hub: a visit counted": [
+   "M$1"
+  ],
   "a person / # people": [
    "AddButton",
    "HoverReactions",
@@ -604,6 +621,14 @@
    "NetGlyph",
    "PersonRow",
    "RowTyping"
+  ],
+  "a post's thread / held: the app's clocks": [
+   "Age",
+   "Ago",
+   "Owed"
+  ],
+  "a post's thread / hub: a visit counted": [
+   "M$1"
   ],
   "the directory / hub: a visit counted": [
    "SpacesEntry"

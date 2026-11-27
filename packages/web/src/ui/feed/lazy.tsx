@@ -18,6 +18,8 @@ import { languageName, needsTranslation } from '@dither-chat/protocol';
 import { Loading } from '../Loader.tsx';
 import { phone } from '../../phone.ts';
 import { uploadFile } from '../../upload.ts';
+import { Menu, PlaceTabs } from '../bits.tsx';
+import { dayLabel, sameDay } from '../../format.ts';
 import { activityVerbs, clip, feedBarLine, feedUnits, namesPhrase, notificationsUrl, opensPost, parsePostKey, postHref, postKey, reactionCounts, reactorsPhrase, reactWords, shortCount } from '../../feed.ts';
 
 type Chunk = typeof import('./FeedView.tsx');
@@ -72,6 +74,11 @@ export const kit = {
   uploadFile,
   // Startup already has these (Settings → Translation): handed over, so the chunk does not split them out.
   translate: { needsTranslation, languageName },
+  /** A thread's switch row (Chat · Thread), the account menu over its box, a chat's day lines (docs/places.md). */
+  PlaceTabs,
+  Menu,
+  dayLabel,
+  sameDay,
 };
 export type Kit = typeof kit;
 

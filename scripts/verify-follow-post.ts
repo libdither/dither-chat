@@ -2,7 +2,8 @@
  * Following a post (docs/feed.md "Following a post"), in a real browser against a demo hub of its own on a fresh data
  * dir: Follow replies on a thread from the Feed page makes the post a chat in the inbox, with a toast whose View opens
  * it; a reply someone writes later (the demo's newReply action) is found by the hub's next check and arrives unread,
- * the row saying what it says; opening the chat shows the post's thread with that reply marked New, and reads the chat;
+ * the row saying what it says; opening the chat shows the post's thread with that reply marked New (as a chat, one New
+ * line over it), and reads the chat;
  * Stop Following from the row's menu stops the checks, the chat staying with a note; a phone keeps the bell, as an
  * icon.
  *
@@ -185,6 +186,18 @@ try {
   await tap('.thread-pane .follow-btn');
   await page.until(`document.querySelector('.thread-pane .follow-btn')?.getAttribute('aria-pressed') === 'true' && !document.querySelector('.thread-pane .follow-note')`, 10000);
   check('the bell follows it again: the note goes', (await json(`/api/posts/x/${post}/follow`)).stopped === null);
+
+  // As a chat (the switch row's Chat): one New line where what came since begins, no tag on each.
+  await tap('.thread-pane [data-tab="chat"]');
+  await page.until(`!!document.querySelector('.thread-pane .ct-chat')`, 5000);
+  const line = await page.eval<any>(`(() => { const sep = document.querySelector('.thread-pane .ct-chat .new-sep'); const next = sep?.nextElementSibling; return { seps: document.querySelectorAll('.thread-pane .ct-chat .new-sep').length, tags: document.querySelectorAll('.thread-pane .ct-chat .post-tag.new').length, next: next?.textContent ?? '', last: [...document.querySelectorAll('.thread-pane .ct-chat-row')].pop()?.textContent ?? '' }; })()`);
+  check('as a chat: one New line, over the reply found since, which is the newest; no tag on each', line.seps === 1 && line.tags === 0 && line.next.includes(said) && line.last.includes(said), line);
+  if (shots) {
+    await page.eval(`document.querySelector('.thread-pane .ct-chat .new-sep').scrollIntoView({ block: 'center' })`);
+    await clearToasts().then(() => page.shot(join(shots, 'follow-chat-new-line.png')));
+  }
+  await tap('.thread-pane [data-tab="thread"]');
+  await page.until(`!!document.querySelector('.thread-pane .post-tag.new')`, 5000);
 
   // ---------------------------------------------------------------- a phone
   await page.size(412, 900);

@@ -16,6 +16,10 @@
  * the one it came from (`trail`), which is named under the header ("Back to Maya's post") and is where Back goes; it
  * comes back as it was left, where it was scrolled to, the reply that was opened lit for a moment.
  *
+ * Two ways to read it, the switch row under the header (docs/places.md "A thread as a chat or a tree"): Thread, the
+ * tree in the reader's style, or Chat, every reply oldest first (Comments.tsx ChatReplies). Either way one box at the
+ * bottom (Composer.tsx `docked`) answers the post, or the reply its Reply aimed it at, as the account its line names.
+ *
  * Also the posts conversation itself (variant 'posts'): what the hub logged, newest first, each opening its thread.
  */
 import { Fragment, h } from 'preact';
@@ -25,10 +29,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { api, db, loadTimeline, openProfile, timelineKey, timelines } from '../../state.ts';
 import { timelineRev } from '../../versions.ts';
 import type { Kit } from './lazy.tsx';
+import type { PlaceTab } from '../bits.tsx';
 import { PostActions, type AnswerCtx } from './Actions.tsx';
-import { Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
+import { ChatReplies, Comments, COMMENT_STYLES, StyleMenu, type CommentStyle } from './Comments.tsx';
 import { PostComposer } from './Composer.tsx';
 import { FollowButton } from './Follow.tsx';
+import { loadSources, sources } from './feedstate.ts';
 import { Counts, Folded, Pics, Place, QuotedIn, Row, Text, Who } from './Post.tsx';
 import { flip, snap } from './Seg.tsx';
 import { heldThread, readThread, seedPost } from './threadcache.ts';
@@ -42,6 +48,72 @@ function readStyle(): CommentStyle {
   } catch {
     return 'tree';
   }
+}
+
+/** Chat or Thread (the switch row), kept on the device; a post's thread opens as a tree until you choose. */
+type ThreadShow = 'chat' | 'thread';
+const SHOW_KEY = 'dither.thread.show';
+const AS_KEY = 'dither.thread.as.';
+const readKey = (k: string): string | null => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const keepKey = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* a private window: the choice lasts while the page is open */
+  }
+};
+const SHOWS: PlaceTab<ThreadShow>[] = [
+  { id: 'chat' as const, label: 'Chat', title: 'Every reply by time, oldest first' },
+  { id: 'thread' as const, label: 'Thread', title: 'Each reply under the one it answers' },
+];
+
+/** Your accounts on a network that can post, for the line over the box. */
+const postersOn = (network: P.Network) => (sources.value?.accounts ?? []).filter((a) => a.network === network && a.publish);
+
+/** The account a thread's box posts as, on the line over it: fixed for one, a toggle for two, a menu for more (as a chat's "via"). */
+function AsToken({ accs, value, pick, kit }: { accs: P.FeedAccountView[]; value: string; pick: (id: string) => void; kit: Kit }) {
+  const name = (a: P.FeedAccountView) => (a.identityId && kit.handle(a.identityId) ? `@${kit.handle(a.identityId)}` : a.label);
+  const face = (a: P.FeedAccountView) => <kit.Avatar id={a.identityId ?? a.accountId} name={kit.name(a.identityId)} url={kit.avatarUrl(a.identityId)} size={16} />;
+  const cur = accs.find((a) => a.accountId === value) ?? accs[0];
+  if (accs.length === 2) {
+    const other = accs.find((a) => a !== cur)!;
+    return (
+      <button class="pair-token" data-track="thread box: post as" title={`Switch to ${name(other)}`} onClick={() => pick(other.accountId)}>
+        {face(cur)}
+        {name(cur)}
+        <kit.Icon name="repeat" size={10} class="pair-token-hint" />
+      </button>
+    );
+  }
+  return (
+    <kit.Menu
+      up
+      trigger={(toggle) => (
+        <button class="pair-token" data-track="thread box: post as" title="Choose" onClick={toggle} aria-haspopup="menu">
+          {face(cur)}
+          {name(cur)}
+          <kit.Icon name="chevronDown" size={10} class="pair-token-hint" />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div class="level-menu pair-menu">
+          {accs.map((a) => (
+            <button class={`menu-item ${a === cur ? 'on' : ''}`} data-track="thread box: post as (choice)" onClick={() => (pick(a.accountId), close())}>
+              {face(a)}
+              {name(a)}
+            </button>
+          ))}
+        </div>
+      )}
+    </kit.Menu>
+  );
 }
 
 type Src = { network: P.Network; post: string } | { message: string };
@@ -144,8 +216,8 @@ function Focal({ p, kit, network, joined, answer, children }: { p: P.PostView; k
           </a>
         )}
       </div>
-      {/* No Reply in its bar: the box under it is where a reply is written. */}
-      <PostActions p={shown} ctx={{ ...answer, onReply: undefined }} big />
+      {/* Reply here goes to the box at the bottom, aimed at the post. */}
+      <PostActions p={shown} ctx={answer} big />
       {children}
     </article>
   );
@@ -185,8 +257,12 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => arrival.kept?.folded ?? new Set());
   const [style, setStyle] = useState<CommentStyle>(readStyle);
   const [failed, setFailed] = useState<ReadonlyMap<string, string>>(new Map());
-  // Answering: the post a reply or quote is being written to, and what you posted here (first in the tree).
+  // Where the box at the bottom is aimed: a reply or a quote; none answers the post. And what you posted here (first in the tree).
   const [answering, setAnswering] = useState<{ mode: 'reply' | 'quote'; post: P.PostFact } | null>(null);
+  // Chat or Thread, and your posts deleted here.
+  const [show, setShow] = useState<ThreadShow>(() => (readKey(SHOW_KEY) === 'chat' ? 'chat' : 'thread'));
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  const pane = useRef<HTMLElement>(null);
   const [mine, setMine] = useState<P.PostView[]>(() => arrival.kept?.mine ?? []);
   const [acted, setActed] = useState<ReadonlyMap<string, { viewer: P.PostViewer; counts: P.PostFact['counts'] }>>(() => arrival.kept?.acted ?? new Map());
   // Checking the network for new replies, and those it brought (marked new).
@@ -289,8 +365,8 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
     const given = t.replies.flat();
     const ids = new Set(given.map((p) => p.id));
     // Yours first, as Reddit puts what you just wrote at the top; then X's order, then what only the log holds.
-    return replyTree((t.focal.repostOf ?? t.focal).id, [...mine, ...given, ...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...extra]);
-  }, [t, extra, mine]);
+    return replyTree((t.focal.repostOf ?? t.focal).id, [...mine, ...given, ...(t.logged ?? []).filter((p) => !ids.has(p.id)), ...extra].filter((p) => !gone.has(p.id)));
+  }, [t, extra, mine, gone]);
   const with_ = (set: ReadonlySet<string>, id: string, on: boolean) => {
     const next = new Set(set);
     if (on) next.add(id);
@@ -455,38 +531,60 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
     kit.openPost(to.network, to.post);
   };
   const back = parent ? () => base.backToPost(parent.network, parent.post) : onBack;
+  // The account answering, liking and reposting here: the one picked on this network last, else the page's, else the first online.
+  useEffect(() => void loadSources(), []);
+  const posters = postersOn(network);
+  const picked = readKey(AS_KEY + network);
+  const as = (posters.find((a) => a.accountId === picked) ?? posters.find((a) => a.accountId === kit.account) ?? posters.find((a) => a.online) ?? posters[0])?.accountId ?? kit.account;
+  const [, setPicked] = useState(0);
+  const pickAs = (id: string) => (keepKey(AS_KEY + network, id), setPicked((n) => n + 1));
+  const asAcc = posters.find((a) => a.accountId === as);
+  /** The box at the bottom, focused, aimed at `p` (null: the post). */
+  const aim = (a: { mode: 'reply' | 'quote'; post: P.PostFact } | null) => {
+    setAnswering(a);
+    setTimeout(() => pane.current?.querySelector<HTMLTextAreaElement>('.post-composer.docked .compose-text')?.focus({ preventScroll: true }));
+  };
+  // Escape takes the box's aim off before it leaves the page (the box's own Escape does the same from inside it).
+  useLayoutEffect(() => {
+    if (!answering) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      e.preventDefault();
+      setAnswering(null);
+    };
+    addEventListener('keydown', key);
+    return () => removeEventListener('keydown', key);
+  }, [!!answering]);
+  const del = async (p: P.PostFact) => {
+    try {
+      await api(`/api/posts/${network}/${p.id}/delete`, { method: 'POST', body: as ? { account: as } : {} });
+      kit.toast({ title: `Deleted from ${NETWORK_META[network].name}`, body: '', kind: 'info' }, 3000);
+      if (focalOf && p.id === focalOf.id) back?.();
+      else setGone((g) => with_(g, p.id, true));
+    } catch (err) {
+      kit.toast({ title: 'Could not delete it', body: (err as Error).message, kind: 'error' });
+    }
+  };
   const posted = (p: P.PostView, mode: 'reply' | 'quote') => {
     setAnswering(null);
     if (mode === 'reply' && p.replyTo) setMine((m) => [p, ...m]);
+    // In the chat it is the newest: brought into view at the end.
+    if (show === 'chat') setTimeout(() => scroller.current?.querySelector(`[data-post="${CSS.escape(p.id)}"]`)?.scrollIntoView({ block: 'nearest' }));
     kit.toast({ title: mode === 'quote' ? 'Quoted' : 'Replied', body: p.text.slice(0, 80), kind: 'info', action: () => kit.openPost(network, p.id), actionLabel: 'View' }, 4000);
   };
   const answer: AnswerCtx = {
     kit,
     network,
-    ...(kit.account ? { account: kit.account } : {}),
-    onReply: (p) => setAnswering({ mode: 'reply', post: p }),
-    onQuote: (p) => setAnswering({ mode: 'quote', post: p }),
+    ...(as ? { account: as } : {}),
+    onReply: (p) => aim(focalOf && p.id === focalOf.id ? null : { mode: 'reply', post: p }),
+    onQuote: (p) => aim({ mode: 'quote', post: p }),
     acted,
     onActed: (id, st) => setActed((m) => new Map(m).set(id, st)),
+    // Yours, from an account that can delete: Delete in its ⋯.
+    ...(asAcc?.unpublish || posters.some((a) => a.unpublish) ? { onDelete: del } : {}),
   };
-  const composerFor = (p: P.PostFact) =>
-    answering && answering.post.id === p.id ? (
-      <PostComposer
-        key={`${answering.mode}:${p.id}`}
-        network={network}
-        target={answering.mode === 'quote' ? { quote: p } : { replyTo: p }}
-        kit={kit}
-        autoFocus
-        onCancel={() => setAnswering(null)}
-        onPosted={(made) => posted(made, answering.mode)}
-      />
-    ) : null;
-  const below = (p: P.PostFact) => (
-    <>
-      <PostActions p={p} ctx={answer} />
-      {composerFor(p)}
-    </>
-  );
+  const below = (p: P.PostFact) => <PostActions p={p} ctx={answer} />;
+  const pickShow = (v: ThreadShow) => (keepKey(SHOW_KEY, v), setShow(v));
   const net = NETWORK_META[network].name;
   const focal = t?.focal;
   // The post: as the thread gave it, else as the page that opened it showed it.
@@ -495,8 +593,26 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   // Every reply X counts under the post is shown: no "Show more replies" unless a page read ahead brought more.
   const counted = (shownFocal?.repostOf ?? shownFocal)?.counts?.replies;
   const allShown = counted !== undefined && nodes.length >= counted;
+  const post = shownFocal ? (shownFocal.repostOf ?? shownFocal) : null;
+  // The box's line: where it goes, and as whom (docs/chats.md "The message box's line").
+  const aimedAt = answering?.post ?? post;
+  const whom = aimedAt ? (kit.isSelf(aimedAt.author ?? null) ? 'yourself' : kit.name(aimedAt.author ?? null)) : '';
+  const lead = (
+    <span class="pair-lead-line">
+      {answering?.mode === 'quote' ? 'Quote ' : 'Reply to '}
+      <span class="pair-token fixed">{answering?.mode === 'quote' ? `${whom === 'yourself' ? 'your' : `${whom}'s`} post` : whom}</span>
+      {` on ${net}`}
+      {posters.length > 1 && as && (
+        <>
+          {' · as '}
+          <AsToken accs={posters} value={as} pick={pickAs} kit={kit} />
+        </>
+      )}
+    </span>
+  );
+  const ctx = { kit, network, op: author, folded, fold, loading, done, failed, ready, load: openUnder, auto, root: scroller, below, fresh, chat: show === 'chat' };
   return (
-    <section class="pane feed-pane thread-pane" aria-label="Post" onClickCapture={onLink}>
+    <section class="pane feed-pane thread-pane" aria-label="Post" onClickCapture={onLink} ref={pane}>
       <header class="conv-head">
         {back && (
           <button class={`icon-btn back ${parent ? 'to-thread' : ''}`} data-track="pager: back button" onClick={back} aria-label={parent ? `Back to ${parent.label}` : 'Back'}>
@@ -525,6 +641,7 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
           <kit.Icon name="back" size={14} /> Back to <b>{parent.label}</b>
         </button>
       )}
+      <kit.PlaceTabs tabs={SHOWS} value={show} onPick={pickShow} label="Show the replies" track="thread view" />
       <div class="feed-scroll thread-scroll" ref={scroller} data-thread={t?.post ?? ''}>
         <div class="feed-list thread-list">
           {top}
@@ -549,24 +666,7 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
               {t?.ancestors.map((p) => (
                 <Row p={p} kit={kit} network={network} line />
               ))}
-              <Focal p={shownFocal} kit={kit} network={network} joined={!!t?.ancestors.length} answer={answer}>
-                {/* The reply box under the post, one line until used, as X shows it; a quote of the post opens in its place. */}
-                {answering && answering.post.id === (shownFocal.repostOf ?? shownFocal).id && answering.mode === 'quote' ? (
-                  <div key="quote">{composerFor(shownFocal.repostOf ?? shownFocal)}</div>
-                ) : (
-                  // Reply under the post opens this box (focused), rather than a second one.
-                  <PostComposer
-                    key="reply"
-                    network={network}
-                    target={{ replyTo: shownFocal.repostOf ?? shownFocal }}
-                    kit={kit}
-                    collapsed={!(answering && answering.post.id === (shownFocal.repostOf ?? shownFocal).id)}
-                    autoFocus={!!(answering && answering.post.id === (shownFocal.repostOf ?? shownFocal).id)}
-                    onCancel={answering ? () => setAnswering(null) : undefined}
-                    onPosted={(made) => posted(made, 'reply')}
-                  />
-                )}
-              </Focal>
+              <Focal p={shownFocal} kit={kit} network={network} joined={!!t?.ancestors.length} answer={answer} />
               {!t && (
                 // Shown from the page that opened it; the replies come under it.
                 <p class="thread-coming" data-pre="loading" role="status">
@@ -583,16 +683,10 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
                       <kit.Icon name="refresh" size={15} />
                     </button>
                   )}
-                  {nodes.length > 0 && <StyleMenu style={style} pick={pickStyle} />}
+                  {nodes.length > 0 && show === 'thread' && <StyleMenu style={style} pick={pickStyle} />}
                 </div>
               )}
-              {t && (
-                <Comments
-                  nodes={nodes}
-                  style={style}
-                  ctx={{ kit, network, op: author, folded, fold, loading, done, failed, ready, load: openUnder, auto, root: scroller, below, fresh }}
-                />
-              )}
+              {t && post && (show === 'chat' ? <ChatReplies nodes={nodes} post={post} ctx={ctx} root={scroller} /> : <Comments nodes={nodes} style={style} ctx={ctx} />)}
               <div ref={end} class="thread-end" aria-hidden="true" />
               {t && !nodes.length && !t.more && <p class="thread-none">{t.stored ? 'No replies logged.' : 'No replies yet.'}</p>}
               {t?.more && (!allShown || nextPage) && (
@@ -608,6 +702,17 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
           )}
         </div>
       </div>
+      {/* One box, at the bottom as a chat's: the post, or the reply or quote it is aimed at. */}
+      {post && t && !error && (
+        <PostComposer
+          network={network}
+          target={answering ? (answering.mode === 'quote' ? { quote: answering.post } : { replyTo: answering.post }) : { replyTo: post }}
+          kit={kit}
+          {...(as ? { account: as } : {})}
+          docked={{ lead, draft: post.id, media: !!asAcc?.media, ...(answering ? { onUnaim: () => setAnswering(null) } : {}) }}
+          onPosted={(made) => posted(made, answering?.mode ?? 'reply')}
+        />
+      )}
     </section>
   );
 }

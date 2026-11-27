@@ -3654,6 +3654,17 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
   }
   if (process.env.DITHER_DEMO_MAIL_PROTON) seedDemoProton(fake, now);
   if (process.env.DITHER_DEMO_MAIL_GMAIL) seedDemoGmail(fake, now);
+  // A thread that branches (docs/places.md "A thread as a chat or a tree"): Rosa asks you and Jo, both answer Rosa's
+  // mail, and Rosa answers yours. Its page offers Chat and Thread.
+  {
+    const rosa = { name: 'Rosa Lind', email: 'rosa@lind.example' };
+    const cabin = (k: string) => id(`cabin-${k}`);
+    const subject = 'Cabin weekend in March';
+    put({ messageId: cabin('1'), from: [rosa], to: [ME, jo], subject, receivedAt: now - 2 * D, text: 'The cabin is free from the 14th to the 16th. Who is in? I can drive two more.\n\nRosa' });
+    put({ mailboxId: 'Sent', messageId: cabin('2'), inReplyTo: cabin('1'), references: [cabin('1')], from: [ME], to: [rosa, jo], subject: `Re: ${subject}`, receivedAt: now - 2 * D + 3 * H, text: 'In! I will bring the board games and something for dinner on Saturday.' });
+    put({ messageId: cabin('3'), inReplyTo: cabin('1'), references: [cabin('1')], from: [jo], to: [rosa, ME], subject: `Re: ${subject}`, receivedAt: now - 2 * D + 5 * H, text: 'Count me in, but I can only come on the 15th. Is there a bus?\n\nJo' });
+    put({ messageId: cabin('4'), inReplyTo: cabin('2'), references: [cabin('1'), cabin('2')], from: [rosa], to: [ME, jo], subject: `Re: ${subject}`, receivedAt: now - 20 * H, flags: { seen: false }, text: 'Perfect, dinner on Saturday is yours. I will get the firewood.' });
+  }
 }
 
 /**
