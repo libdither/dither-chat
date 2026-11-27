@@ -202,6 +202,13 @@ asked for, never copied into the message table.
   lists' rows and search hits (the name over who wrote), and Ctrl+K and search's Jump to, which find it by its
   people's names and addresses too. Every thread has the same grey envelope tile. The header's filing is Archive, with
   Star and Trash in ⋯. In a mail message's menu the thread's trash comes last, under a line of its own.
+- **A thread as a tree** (web `mail/threadtree.ts`, `MailThreadBody` in `ui/Timeline.tsx`; docs/places.md "A thread as
+  a chat or a tree"): a thread's own chat where some mail has two answers or more has a switch row, **Chat · Thread**.
+  Thread puts each mail under the one it answers (its `inReplyTo` to the Message-ID of a mail in the thread): one
+  answer goes on in the same column, two or more step in, each a branch with a rail that folds it to "N more mails".
+  The page reads the rest of the thread in first, up to 200 mails; a longer thread, or one where nobody branched,
+  has no row and reads as Chat. Chat is the default, and the pick is kept on the device (`dither.mailthread.show`).
+  Each mail is the chat's own row, with all it has there.
 - **Events**: `mail.chats` (routes changed, and `removed` route ids) goes out in the flush that sends `mail.threads`,
   for every person on a thread that changed (new mail, a read, a Cc, a merge or a split, which send their threads
   again); `rung` when one is chosen or taken back.

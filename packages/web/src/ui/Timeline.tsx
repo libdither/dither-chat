@@ -75,6 +75,8 @@ import { convById, isMailPlace, isMailThread, loadMailThread, mailThread, refill
 import { openPalette } from './Palette.tsx';
 import { BackBar, ElsewhereRows, MailSends, MailThreadHeader, MailWords, MailThreadLead, ReplySubject, SubjectChip, SubjectTag, answerEveryone, mailMessageMenu, onlyOf, pickSubject, subjectOf, threadPlaceholder } from './MailChat.tsx';
 import { threadRows } from '../mail/elsewhere.ts';
+import { mailTree, type MailTree, type MailTreeRow as MailTreeRowShape } from '../mail/threadtree.ts';
+import './MailTree.css';
 import { openCompose, sendMailFromChat } from './mail/lazy.tsx';
 import { reactionContext } from '../reactions.ts';
 import { openAbout } from '../opening.ts';
@@ -1051,8 +1053,12 @@ let lastShown = '';
  * (Pairs.tsx headNames, over the routes shown); `badge`, whether pictures
  * carry the network's badge; `onFocus`, a route tag's click; `onMissing`, a message linked to (`focus`) that paging
  * back through the chat did not reach. `stream`: a channel's stream (StreamPane), a header where the thread changes.
+ * `only`: a person's timeline showing some of their routes (one network's of several).
+ *
+ * `tree`: a mail thread held whole, each mail under the one it answers (mail/threadtree.ts, docs/places.md "A thread as
+ * a chat or a tree"): a branch steps in, with a rail on its left that folds it.
  */
-export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, chat, stream }: { tkey: string; convIds: string[]; only?: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts }) {
+export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, chat, stream, tree }: { tkey: string; convIds: string[]; only?: string[]; onReply: (m: P.MessageView) => void; firstUnreadTs: number | null; focus?: string; chat?: { badge: boolean; onFocus: (convId: string) => void; onMissing: () => void }; stream?: StreamOpts; tree?: boolean }) {
   if (counting) rendered('Timeline');
   timelineRev(tkey).value;
   const scroller = useRef<HTMLDivElement>(null);
@@ -1112,7 +1118,11 @@ export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, c
   const off = offline.value;
   // Settings → Adversarial features, or the chat's own say: kept deleted and disappeared messages not shown at all.
   const r = retention.value;
-  const all = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
+  const kept = r.adversarial ? msgs.filter((m) => !(m.deleted && m.gone?.kept) || showsGone(r, m.conversationId)) : msgs;
+  // As a tree: in the tree's order, a folded branch's mails after its first left out.
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+  const shape = useMemo(() => (tree ? mailTree(kept) : null), [tree, kept, kept.length]);
+  const all = shape ? unfolded(shape, folded) : kept;
   const at = new Map<string, number>();
   all.forEach((m, i) => at.set(m.id, i));
 
@@ -1146,6 +1156,8 @@ export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, c
   };
   const around = (i: number): [string, string | null] => [all[Math.max(0, i - STEP / 2)].id, i + STEP / 2 >= all.length - 1 ? null : all[i + STEP / 2].id];
   const bounds = () => {
+    // A thread held whole as a tree is drawn whole: it is small (mail/chats.ts holds it).
+    if (shape) return { start: 0, end: all.length };
     const d = drawn.current;
     const toAt = d.to ? at.get(d.to) : undefined;
     const end = toAt === undefined ? all.length : toAt + 1;
@@ -1466,7 +1478,7 @@ export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, c
       prev = m;
       continue;
     }
-    const grouped = groups(above, m);
+    const grouped = !shape && groups(above, m);
     const subject = !!m.mail && !ownThread && m.mail.threadId !== lastThread;
     if (m.mail) lastThread = m.mail.threadId;
     const target = m.replyToId ? (byId.get(m.replyToId) ?? quoted.get(m.replyToId) ?? null) : null;
@@ -1474,7 +1486,7 @@ export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, c
     // All chats together: where the route changes, grouping breaks (above) and the head line says which route.
     const tag = !!chat && convIds.length > 1 && !grouped && (!prev || prev.conversationId !== m.conversationId);
     const head = heads && m.authorId ? heads.get(m.authorId) : undefined;
-    items.push(
+    const item = (
       <MessageItem
         key={m.id}
         m={m}
@@ -1495,8 +1507,10 @@ export function Timeline({ tkey, convIds, only, onReply, firstUnreadTs, focus, c
         chipRun={run && !chipped.has(run) ? (chipped.add(run), run) : undefined}
         subject={subject}
         quoteAbove={!!m.mail?.inReplyTo && prev?.mail?.messageId === m.mail.inReplyTo}
-      />,
+      />
     );
+    const row = shape?.rows.get(m.id);
+    items.push(row ? <MailTreeRow key={m.id} row={row} id={m.id} name={authorName(m.authorId)} folded={folded} fold={(id) => setFolded((f) => (f.has(id) ? new Set([...f].filter((x) => x !== id)) : new Set(f).add(id)))}>{item}</MailTreeRow> : item);
     prev = above = m;
   }
   if (elsewhere.length && end === all.length) elsewhereUpTo(Infinity);
@@ -2362,6 +2376,45 @@ export function ConversationPane({ convId, onBack, focus }: { convId: string; on
   return <PlainPane convId={convId} onBack={onBack} focus={focus} />;
 }
 
+/** Longer than this, a mail thread is not offered as a tree: it would have to be held whole. */
+const MAIL_TREE_MAX = 200;
+const MAIL_SHOW = 'dither.mailthread.show';
+
+/**
+ * A mail thread's body: its chat, or (the switch row's Thread, offered when some mail has two answers or more) the
+ * mails under the one each answers. The choice is kept on the device; a thread opens as a chat until you choose.
+ */
+function MailThreadBody({ c, onReply, unreadAt, focus }: { c: P.ConversationView; onReply: (m: P.MessageView) => void; unreadAt: number | null; focus?: string }) {
+  const tkey = timelineKey('c', c.id);
+  timelineRev(tkey).value;
+  const [show, setShow] = useState(() => {
+    try {
+      return localStorage.getItem(MAIL_SHOW) === 'thread' ? 'thread' : 'chat';
+    } catch {
+      return 'chat';
+    }
+  });
+  const tl = timelines.get(tkey);
+  const n = tl?.messages.length ?? 0;
+  // Held whole to be drawn as a tree: the rest paged in first, while it is small enough.
+  useEffect(() => void (tl?.hasMore && !tl.loading && n <= MAIL_TREE_MAX && loadTimeline(tkey, true)), [tkey, n, tl?.hasMore, tl?.loading]);
+  const branched = useMemo(() => !!tl && !tl.hasMore && n <= MAIL_TREE_MAX && mailTree(tl.messages).branched, [tl, n, tl?.hasMore]);
+  const pick = (v: string) => {
+    setShow(v);
+    try {
+      localStorage.setItem(MAIL_SHOW, v);
+    } catch {
+      /* a private window: the choice lasts while the page is open */
+    }
+  };
+  return (
+    <>
+      {branched && <PlaceTabs tabs={[{ id: 'chat', label: 'Chat', title: 'Every mail by time' }, { id: 'thread', label: 'Thread', title: 'Each mail under the one it answers' }]} value={show} onPick={pick} label="Show the mails" track="mail thread view" />}
+      <Timeline tkey={tkey} convIds={[c.id]} onReply={onReply} firstUnreadTs={unreadAt} focus={focus} tree={branched && show === 'thread'} />
+    </>
+  );
+}
+
 function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => void; focus?: string }) {
   rev.value;
   const c = convById(convId);
@@ -2376,7 +2429,7 @@ function PlainPane({ convId, onBack, focus }: { convId: string; onBack?: () => v
       <section class="pane mail-thread-pane">
         <MailThreadHeader c={c} onBack={onBack} />
         <BackBar place={c.id} />
-        <Timeline tkey={timelineKey('c', c.id)} convIds={[c.id]} onReply={setReply} firstUnreadTs={unreadAt} focus={focus} />
+        <MailThreadBody c={c} onReply={setReply} unreadAt={unreadAt} focus={focus} />
         <TypingBar convIds={[c.id]} tkey={timelineKey('c', c.id)} lead={<MailThreadLead c={c} tkey={timelineKey('c', c.id)} />} />
         <Composer targets={{ convId: c.id }} placeholder={threadPlaceholder(c.id)} reply={reply} clearReply={() => setReply(null)} disabledReason={composerBlocker(c)} post={mailPost(c.id, timelineKey('c', c.id), reply)} />
       </section>
@@ -2517,6 +2570,39 @@ export function ViewSwitch({ c, shows }: { c: P.ConversationView; shows: Channel
   if (!vs) return null;
   const many = threadWords(c).many;
   return <PlaceTabs tabs={vs.map((v) => ({ id: v, label: viewLabel(c, v, many), title: `${viewLabel(c, v, many)} (${TAB_KEYS} move between tabs)` }))} value={shows} onPick={(v) => setChannelView(c.id, v)} label="Show" track="channel view" />;
+}
+
+/** A tree's mails in order, those in a folded branch after its first left out (a branch is one run of the order). */
+function unfolded(t: MailTree, folded: ReadonlySet<string>): P.MessageView[] {
+  const out: P.MessageView[] = [];
+  let skip: { depth: number; head: string } | null = null;
+  for (const m of t.order) {
+    const r = t.rows.get(m.id)!;
+    if (skip && (r.depth > skip.depth || r.branch === skip.head)) continue;
+    skip = null;
+    out.push(m);
+    if (r.branch === m.id && folded.has(m.id)) skip = { depth: r.depth, head: m.id };
+  }
+  return out;
+}
+
+/** A mail in a thread drawn as a tree: stepped in by its depth, its branch's rail on the left (a click folds it). */
+function MailTreeRow({ row, id, name, folded, fold, children }: { row: MailTreeRowShape; id: string; name: string; folded: ReadonlySet<string>; fold: (id: string) => void; children: ComponentChildren }) {
+  const head = row.branch === id;
+  const shut = head && folded.has(id);
+  return (
+    <div class={`mail-tree-row ${head ? 'head' : ''}`} style={{ '--depth': row.depth }} data-depth={row.depth}>
+      {row.branch && (
+        <button class="mail-tree-rail" data-track="mail thread: fold a branch" onClick={() => fold(row.branch!)} aria-expanded={!folded.has(row.branch)} aria-label={`${folded.has(row.branch) ? 'Unfold' : 'Fold'} the answers from ${name}'s mail on`} title={folded.has(row.branch) ? 'Unfold' : 'Fold'} />
+      )}
+      {children}
+      {shut && row.size > 0 && (
+        <button class="mail-tree-more" data-track="mail thread: unfold a branch" onClick={() => fold(id)}>
+          {row.size} more {row.size === 1 ? 'mail' : 'mails'}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** A person's page: the chat with them. One conversation is that conversation's page; several are one chat over them. */

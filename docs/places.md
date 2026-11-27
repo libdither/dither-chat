@@ -68,8 +68,56 @@ one function, `personTabs` in `chattabs.ts`, which takes tabs to add after the n
 
 ## A thread as a chat or a tree
 
-*(Written with the thread views: `ui/feed/Thread.tsx`, `ui/feed/Comments.tsx`.)*
+A post's thread (X, Reddit, Mastodon and the rest) and a mail thread are read two ways, picked in the switch row:
+**Chat**, everything by time as in any chat, and **Thread**, each message under the one it answers. The pick is kept
+on the device, one for posts and one for mail (`dither.thread.show`, `dither.mailthread.show`): a post's thread opens
+as Thread until you pick Chat, a mail thread as Chat until you pick Thread. Switching keeps the address, Back and what
+is in the box.
+
+**A post's thread as Chat** (`ChatReplies`, `ui/feed/Comments.tsx`): the post first, then every reply the thread
+holds at any depth, oldest first, with a day line where the day changes. A reply that answers another reply, not the
+post, has a line above it in the look of a quoted message (`reply-quote`): who it answers and their first words. A
+click on that line scrolls to the reply it answers and lights it for a moment. Each reply keeps what it has in the
+tree: its actions, its time as a link to the network, "N more replies" under it and Show more replies at the end,
+read-ahead and translation. In a followed post's chat the new replies are under one "New" line, as in a chat, instead
+of a "new" tag on each.
+
+**A post's thread as Thread** is the tree as before, in its four styles (Tree, Compact, Flat, Chains:
+docs/feed.md "Looks"). The style menu shows only here.
+
+**A mail thread as Thread** (`mail/threadtree.ts`, `MailThreadBody` in `ui/Timeline.tsx`): each mail under the one it
+answers, by its In-Reply-To and the Message-ID it names. It follows the rule a post's replies follow (`runOf`,
+`ui/feed/tree.ts`): a mail with one answer goes on in the same column, and only a mail with two answers or more steps
+in, each answer a branch with a rail beside it. A click on the rail folds the branch to "N more mails"; a click there
+opens it again. The mails are the chat's own rows (`MessageItem`), so a mail keeps everything it has in the chat: its
+letter, quotes behind …, files, reactions, its menu. A mail whose parent is not in the thread starts at the top.
+
+The switch row shows on a mail thread only when it branches: a thread where every mail answers the one before reads
+the same both ways. To know, the page reads the rest of the thread in first, up to 200 mails; a longer thread is
+offered as Chat only, since a tree has to be held whole to be drawn. Day lines stay in Thread, so under a branch a day
+can come after a later one.
 
 ## The box
 
-*(Written with the box: `ui/feed/Composer.tsx`.)*
+A post's thread has one box, at the bottom of the page under the replies, as a chat has (`PostComposer` with
+`docked`, `ui/feed/Composer.tsx`; the mail thread's box is the chat's own). The line over it says where a post goes and
+as whom: "Reply to Alice Chen on X · as @you". The account is a pill:
+
+- one account on the network that can post: no pill;
+- two: the pill swaps between them;
+- more: the pill opens a menu of them.
+
+The pick is kept per network (`dither.thread.as.<network>`); with none kept, the box posts as the account that read
+the thread, else the first that is online. Likes and reposts in the thread go as that account too.
+
+The post's Reply puts you in the box. Reply on a reply aims the box at it: a bar over the box says "Replying to @handle"
+with their first words and a ✕, and the line over it names them. Quote aims it the same way ("Quoting"). Escape takes
+the aim off first, from the box or from anywhere on the page; the next Escape in an empty box leaves the box, and the
+one after leaves the page (docs/desktop.md "Escape and back"). The draft is the thread's, kept as you go and while you
+aim it elsewhere.
+
+What you post shows at once: at the end in Chat, in its place under what it answers in Thread. Everything the
+network counts holds as before (`POST_RULES`, docs/feed.md "The composer, as each network counts"): the ring that
+counts down to the limit, a content warning where the network has one, Ctrl+Enter to post. The box has the emoji
+button (the network's custom emoji with the rest) and, where the network takes them, pictures, which go to the hub
+first and are sent with the reply. Your own post or reply has Delete in its ⋯.

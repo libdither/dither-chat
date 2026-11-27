@@ -14,6 +14,9 @@
  *   first, saying whom each answers.
  * - **Chains** (as X): each reply and the answers under it as a chain joined by its pictures.
  *
+ * Or as a **chat** (`ChatReplies`, the switch row's Chat): every reply known, at any depth, in one column oldest first,
+ * with day lines; one that answers a reply rather than the post says so in a line over it, as a chat's reply quote.
+ *
  * "N more replies" (the network counts more under a reply than are known) loads by itself as it comes near the screen
  * (ctx.auto, a few at a time); its button stays for when that is used up or fails.
  */
@@ -78,6 +81,8 @@ interface CommentCtx {
   below?: (p: P.PostFact) => ComponentChildren;
   /** Replies that came with the last check for new ones: marked new. */
   fresh?: ReadonlySet<string>;
+  /** Drawn as a chat: what is new starts under one New line, not a tag on each. */
+  chat?: boolean;
 }
 
 /** New here: came with the last check for new replies, or (a followed post's chat, fresh.ts) since you last read it. */
@@ -129,7 +134,7 @@ function Head({ p, ctx, avatar, folded, size }: { p: P.PostView; ctx: CommentCtx
       )}
       <Who id={who} kit={kit} />
       {who && who === ctx.op && <span class="post-tag op" title="Wrote the post">OP</span>}
-      {isNew(ctx, p.id) && <span class="post-tag new" title="Came since you last looked">new</span>}
+      {!ctx.chat && isNew(ctx, p.id) && <span class="post-tag new" title="Came since you last looked">new</span>}
       <a class="post-handle ct-time" href={kit.feed.postHref(ctx.network, p.id)} title={`${kit.fullTime(p.ts)}: open as a thread`}>
         · {kit.ago(p.ts)}
       </a>
@@ -283,6 +288,58 @@ function FlatBranch({ n, ctx }: { n: TreeNode; ctx: CommentCtx }) {
       <MoreUnder n={n} ctx={ctx} />
     </div>
   );
+}
+
+/** A reply's first words, for the line that says what a reply answers. */
+const firstWords = (p: P.PostFact) => (p.text || (p.media?.length ? 'Picture' : '')).replace(/\s+/g, ' ').slice(0, 80);
+
+/**
+ * The replies as a chat: every one known, at any depth, oldest first, day lines between days. One that answers a reply
+ * says which in a line over it (who, and their first words), as a chat's reply quote does; a press brings that reply
+ * into view, lit. A branch read ("N more replies") goes to its place by time. `post` is the thread's post: what a
+ * reply to it answers needs no line.
+ */
+export function ChatReplies({ nodes, post, ctx, root }: { nodes: TreeNode[]; post: P.PostFact; ctx: CommentCtx; root: { current: HTMLElement | null } }) {
+  const all: TreeNode[] = [];
+  const walk = (x: TreeNode) => (all.push(x), x.children.forEach(walk));
+  nodes.forEach(walk);
+  all.sort((a, b) => a.post.ts - b.post.ts);
+  const byId = new Map(all.map((x) => [x.post.id, x.post]));
+  const firstNew = all.findIndex((x) => isNew(ctx, x.post.id));
+  const go = (id: string) => {
+    const el = root.current?.querySelector<HTMLElement>(`[data-post="${CSS.escape(id)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.remove('ct-lit');
+    requestAnimationFrame(() => el.classList.add('ct-lit'));
+    setTimeout(() => el.classList.remove('ct-lit'), 2200);
+  };
+  const out: ComponentChildren[] = [];
+  let day = post.ts;
+  all.forEach((n, i) => {
+    const p = n.post;
+    if (!ctx.kit.sameDay(day, p.ts)) out.push(<div class="day-sep" key={`d${p.ts}`}><span>{ctx.kit.dayLabel(p.ts)}</span></div>);
+    day = p.ts;
+    if (i === firstNew) out.push(<div class="new-sep" key="new"><span>New</span></div>);
+    const to = p.replyTo?.id && p.replyTo.id !== post.id ? byId.get(p.replyTo.id) : undefined;
+    out.push(
+      <div class="ct-chat-row" key={p.id} data-post={p.id}>
+        {to && (
+          <button class="reply-quote ct-answers" data-track="thread chat: go to the reply it answers" title={firstWords(to)} onClick={() => go(to.id)}>
+            <ctx.kit.Icon name="reply" size={12} />
+            <b>{ctx.kit.isSelf(to.author ?? null) ? 'You' : ctx.kit.name(to.author ?? null)}</b>
+            <span>{firstWords(to)}</span>
+          </button>
+        )}
+        <Head p={p} ctx={ctx} avatar={28} folded={false} size={0} />
+        <div class="ct-chat-body">
+          <Body p={p} ctx={ctx} />
+          <MoreUnder n={n} ctx={ctx} under />
+        </div>
+      </div>,
+    );
+  });
+  return <div class="ct ct-chat">{out}</div>;
 }
 
 /** The replies, in the reader's style. */

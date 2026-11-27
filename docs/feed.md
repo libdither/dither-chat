@@ -362,9 +362,12 @@ names and Open on X inside a card keep doing what they do. A quoted post is not 
 the post's own can, and a press that ends a selection opens nothing.
 
 **The page** (`ui/feed/Thread.tsx`, in the feed's chunk): what the post answers, oldest first, each joined to the next
-by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies** as a
-comment section; **Show more replies** while X has more, and not once every reply X counts under the post is shown
-(a page read ahead that brings nothing new ends it at once). The header says whose post it is.
+by a line from its picture; the post itself, large, with its full time, its counts and Open on X; then **Replies**;
+**Show more replies** while X has more, and not once every reply X counts under the post is shown (a page read ahead
+that brings nothing new ends it at once); and at the bottom one box to answer in (below, "Answering"). The header says
+whose post it is. Under it a switch row picks **Chat** or **Thread** (docs/places.md "A thread as a chat or a tree"):
+Chat is every reply by time with day lines, a reply to a reply with a quoted line over it naming the one it answers;
+Thread is the tree below. A post's thread opens as Thread until you pick Chat, and the pick is kept on the device.
 
 **Check for new replies** (↻ beside Replies) asks X again: what came goes in its place marked **new**, and a toast
 says how many ("2 new replies", "No new replies").
@@ -392,7 +395,7 @@ answers: X's chains (a reply and the first answers under it), the branches the h
 and the branches opened since. Siblings keep the order they first came in, X's order: the author's own continuation
 first, then what X ranks highest. Where X counts more replies under a post than are known, **N more replies** reads
 that post's thread and puts its replies in place, as Reddit's "load more comments". Four ways to draw it, chosen from
-four small pictures beside Replies, the one in use named (`Seg.tsx`, [Looks](#looks)), and kept on the device; on a
+four small pictures beside Replies (in Thread only), the one in use named (`Seg.tsx`, [Looks](#looks)), and kept on the device; on a
 change the replies slide to their new places:
 
 - **Tree** (the default, as Reddit, with LessWrong's thin lines): each reply's picture (small, by the name), name, OP
@@ -435,12 +438,16 @@ bar X has**: Reply, Repost, Like, and the views X counts. Code: `protocol/src/co
   one more; if the network says no they go back, with a toast saying why. The logged post follows: `extra.post.viewer`
   says what you did, its count changes by one only when the state does (pressing Like on a liked post counts nothing).
   Repost asks first, as X does: **Repost** (or Undo repost) or **Quote**.
-- **Reply and Quote open a composer** where you are: under the post a thread is about there is always a one-line "Post
-  your reply" box (X's), so the post itself has no Reply in its bar; Reply under any reply opens one under it, focused,
-  "Replying to @handle". Quote opens one with the post quoted under it. What you post goes first in the tree, marked
-  OP, and a toast offers View. **Cancel** (or Escape) closes a box, and what was written in it goes; the toast's
-  **Undo** brings it back.
-  `POST /api/posts/:network/publish` (`{ text, replyTo?, quote?, key }`, the `publish` command, capability `publish`)
+- **Reply and Quote** in a thread go to **the one box at the bottom** (docs/places.md "The box"): the post's Reply
+  puts you in it, Reply on a reply aims it there ("Replying to @handle", their first words, ✕), Quote aims it at the
+  post to quote. Escape takes the aim off before it leaves anything. The line over the box says as whom it posts, a
+  pill to change account where the network has more than one that can post (kept per network); likes and reposts in
+  the thread go as that account too. What you post shows at once, at the end in Chat and under what it answers in
+  Thread, and a toast offers View. The box has the emoji button and, where the network takes them, pictures (sent as
+  `media`, the hub's upload ids). Your own post or reply has **Delete** in its ⋯
+  (`POST /api/posts/:network/:post/delete`). In the feed's list, Reply on a card still opens a box under the card, and
+  **Cancel** (or Escape) there closes it, the toast's **Undo** bringing back what was written.
+  `POST /api/posts/:network/publish` (`{ text, replyTo?, quote?, media?, key }`, the `publish` command, capability `publish`)
   (`title`, `place` and `warning` too, above) checks the text with the same count the page shows, and posts once per `key` (a composer's own id): a double press or
   a retried request within ten minutes is answered with the first post. Too long or empty is refused (422) before
   anything is sent.
@@ -653,7 +660,8 @@ count X's own.
 - `scripts/verify-follow-post.ts`: in a real browser on a fresh demo hub: the bell on a thread from the Feed page,
   the toast and its View, the chat in the inbox, a reply written later found and unread with its row saying so,
   opening it with the reply marked New and the chat read, Stop Following from the row's menu (no Index there), the
-  note, Follow again, and the bell as an icon on a phone. `--shots <dir>` keeps screenshots.
+  note, Follow again, the chat as Chat with one New line over the new reply and no tags, and the bell as an icon on a
+  phone. `--shots <dir>` keeps screenshots.
 - `packages/hub/test/posts.test.ts` also checks `GET /api/posts/:network/:post/activity`, and the branches logged
   before coming back with a thread (also from the two-minute read).
 - `packages/protocol/test/compose.test.ts`: X's count (CJK, emoji sequences, links), its counter (the ring, 20 left,
@@ -664,8 +672,16 @@ count X's own.
   else's post's likers (X: the author's only), without X the notifications' list; the routes refusing bad input.
 - `scripts/verify-x-answer.ts`: in a real browser, desktop and phone: the bar, who liked on hover (ranked, more,
   opening a profile), like and repost reaching the demo X once each, Repost asking Repost or Quote, the counter at 100,
-  15 left, 6 over (marked), CJK and links, a reply to the top of the tree, a reply to a reply, Escape, a quote with
-  Ctrl+Enter, the style pictures, a long press on a phone showing a sheet, and X getting exactly the presses made.
+  15 left, 6 over (marked), CJK and links, all in the one box at the bottom: a reply to the top of the tree, Reply on
+  a reply aiming the box (its bar, the line over the box) and the reply going under it, Escape taking the aim off
+  before anything else, a quote with Ctrl+Enter, the account pill sending a like and a reply as the second account
+  and kept through a reload, Delete in your own reply's ⋯, the style pictures, a long press on a phone showing a
+  sheet, and X getting exactly the presses made.
+- `scripts/verify-thread-views.ts`: in a real browser on a fresh demo hub: a post's thread as Chat (every reply, deep
+  ones too, oldest first, the line over a reply to a reply and its click lighting that reply, day lines as the data
+  has them), the pick kept through a reload, a reply from the box at the end, Delete, Escape's order, no sideways
+  overflow on a phone; a straight mail thread with no switch row, a branching one with it, Chat first, Thread nesting
+  it, the rail folding a branch and opening it, the pick kept, and the tree on a phone.
 - `packages/hub/test/feed-networks.test.ts`: the six demo accounts of Mastodon, Reddit, Lemmy, Substack, Bluesky and
   LessWrong:
   sources, Following and Discover with titles, places, a content warning, a boost and reasons; Reddit's comment tree
