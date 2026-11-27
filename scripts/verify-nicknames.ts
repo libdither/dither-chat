@@ -47,7 +47,6 @@ const click = async (sel: string, pick = '', button: 'left' | 'right' = 'left') 
   for (const type of ['mousePressed', 'mouseReleased']) await p.send('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button, clickCount: 1 });
 };
 const menu = () => p.eval<string[]>(`[...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent.trim())`);
-const pickItem = (label: string) => p.eval(`[...document.querySelectorAll('[role="menuitem"]')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
 /** Opens an account row's Edit (its menu's entries as buttons) and lists them. */
 const editRow = async (handle: string) => {
   await p.eval(`[...document.querySelectorAll('.pf-acct')].find((e) => e.innerText.includes(${JSON.stringify(handle)})).querySelector('.pf-acct-edit-btn').click()`);
