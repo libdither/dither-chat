@@ -68,13 +68,17 @@ channels added since the last run.
   passes, the page is in.
 - Only then is the page recorded in `history_span` as a stretch known to be whole: from the page's oldest message to
   where it started, or to the chat's start (`from_ts` 0) when the reply says `done`. Spans that touch are merged.
-  Where the page ended is the reply's `oldest`; for an adapter that leaves it out (Telegram, WhatsApp, X, Meta, Google
-  Messages), the `count`-th newest of the page's own messages, so those networks get spans too.
+  Where the page ended is the reply's `oldest`; for an adapter that leaves it out (Telegram, X, Meta), the
+  `count`-th newest of the page's own messages, so those networks get spans too.
+- A reply's `count` is the messages it sent for that very chat, not everything it read: a reaction, an edit, a deleted
+  row or a thread reply kept in its thread is not one. A page that read only such things says `count: 0` with the
+  `oldest` it reached and not `done`: that stretch is recorded whole (there was nothing in it to miss) and the walk
+  goes on below it.
 - A page whose messages did not come with its answer (an adapter that answers first, or a database locked past two
   minutes) records nothing, and is asked again 30 s later, three times; then the task fails, saying so. A crash, or an
   answer that comes early, can no longer leave a stretch marked whole that the hub does not hold. (Spans recorded the
   old way that hold no message at all were forgotten once, by a migration: a walk reads them again.)
-- An empty page that does not say `done` ends the walk with nothing recorded, and so does a `done` page with nothing
+- An empty page with no `oldest` that does not say `done` ends the walk with nothing recorded, and so does a `done` page with nothing
   in it below messages the hub holds (a network that could not read the chat).
 - Before each request, the walk jumps over any span the cursor is in. A span that reaches the start ends the walk.
 - So a channel already walked costs one page on the next run: its newest page meets the old span, and the walk stops.
