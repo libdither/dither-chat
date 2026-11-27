@@ -53,7 +53,7 @@ export interface ShownSend {
 }
 
 /** A message of yours in the loaded timeline, as far as matching a send to it goes. */
-export interface OwnMessage {
+interface OwnMessage {
   id: string;
   conversationId: string;
   body: string;
