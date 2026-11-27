@@ -10,7 +10,8 @@ import type * as P from '@dither-chat/protocol';
 import { asBand, bandOf, LOUD_BANDS } from '@dither-chat/protocol';
 import type { Facts } from '../src/learn.ts';
 import { BAND_DECISION, emptyAttnModel, loudness, momentKeys, trainAttn, type AttnExample, type LoudInput, type Moment } from '../src/loudness.ts';
-import { behaviourLabel, LoudLearner, routed } from '../src/loudlearn.ts';
+import { behaviourLabel, LoudLearner, markRouted, routed } from '../src/loudlearn.ts';
+import type { Example } from '../src/learn.ts';
 import { Store, type AccountRow } from '../src/store.ts';
 import { dayBounds, dayOf, loudnessScores } from '../src/scorecard.ts';
 import { Triage } from '../src/triage.ts';
@@ -275,23 +276,36 @@ describe('through the hub', () => {
     expect(store.one<{ less_mark: number }>('SELECT less_mark FROM triage WHERE message_id = ?', b)!.less_mark).toBe(1);
   });
 
-  test('a mark taken back on the old route takes back its answer', async () => {
+  /** A mark as the route keeps it: on the tiers (votes.ts), then on the scale. */
+  const mark = (id: string, marks: P.TriageMarks) => {
+    votes.mark(id, marks);
+    loud.fromMark(id, marks);
+  };
+  const marksOn = (id: string) => store.raw<{ id: string; answer: string; source: string }>('SELECT id, answer, source FROM attn_answer WHERE message_id = ? ORDER BY id', id);
+
+  test('each old mark is kept as the answer it is; a mark taken back takes it back', async () => {
     const T = Date.now();
     const a = post('dm', 'ann', T - 18 * MIN);
     await decide(a, T - 18 * MIN);
-    loud.fromMark(a, { alert: true });
-    expect(store.raw('SELECT 1 FROM attn_answer WHERE message_id = ?', a).length).toBe(1);
-    loud.fromMark(a, { alert: null });
-    expect(store.raw('SELECT 1 FROM attn_answer WHERE message_id = ?', a).length).toBe(0);
+    mark(a, { alert: true });
+    expect(marksOn(a)).toEqual([{ id: `mk_a_${a}`, answer: 'should_alert', source: 'mark' }]);
+    mark(a, { alert: false, less: true });
+    expect(marksOn(a).map((x) => x.answer)).toEqual(['alert_wrong', 'less']);
+    mark(a, { alert: null, less: false });
+    expect(marksOn(a)).toEqual([]);
   });
 
-  test('the old marks are aliases of Louder / Quieter', () => {
-    const before = store.one<{ n: number }>('SELECT COUNT(*) AS n FROM attn_answer')!.n;
-    const id = store.one<{ message_id: string }>(`SELECT message_id FROM triage WHERE decision != 'silent' LIMIT 1`)!.message_id;
-    loud.fromMark(id, { alert: true } satisfies P.TriageMarks);
-    expect(store.one<{ answer: string }>('SELECT answer FROM attn_answer ORDER BY at DESC, rowid DESC LIMIT 1')!.answer).toBe('louder');
-    expect(store.one<{ n: number }>('SELECT COUNT(*) AS n FROM attn_answer')!.n).toBe(before + 1);
+  test('a mark an answer stands for is not kept twice', async () => {
+    const T = Date.now();
+    const a = post('dm', 'ann', T - 17 * MIN);
+    await decide(a, T - 17 * MIN);
+    // Louder from a notification sets the mark itself; reading the marks again adds nothing.
+    loud.answer({ messageId: a, answer: 'louder', source: 'notification' });
+    expect(store.one<{ alert_mark: number }>('SELECT alert_mark FROM triage WHERE message_id = ?', a)!.alert_mark).toBe(1);
+    expect(loud.syncMarks()).toBe(0);
+    expect(marksOn(a).map((x) => x.source)).toEqual(['notification']);
   });
+
 
   test('the scorecard weighs the random half back by each question\'s chance, and leaves the least-sure half out', () => {
     const day = dayOf(new Date(2031, 2, 3, 12).getTime());
@@ -313,5 +327,147 @@ describe('through the hub', () => {
     expect(by['attn.missed']).toMatchObject({ value: 1, n: 1 });
     expect(by['attn.asked']).toMatchObject({ value: 4, extra: { answered: 4, skipped: 0 } });
     expect(by['foryou.worth'].value).toBeNull();
+  });
+});
+
+describe('what you said in place teaches the scale', () => {
+  let dir: string;
+  let store: Store;
+  let acc: AccountRow;
+  let triage: Triage;
+  let votes: TriageVotes;
+  let n = 0;
+  const post = (conversation: string, author: string, ts: number, body: string) => {
+    const nativeId = `w${++n}`;
+    store.ingest(acc, { t: 'message', message: { nativeId, conversation, author, ts, body }, live: true });
+    return store.one<{ id: string }>('SELECT id FROM message WHERE native_id = ?', nativeId)!.id;
+  };
+  const decide = async (id: string, now: number) => {
+    const d = (await triage.decide(id, now))!;
+    store.setTriage(id, d, d.facts);
+    return d;
+  };
+  const fresh = (l: LoudLearner) => {
+    l.mark = (id, marks) => void votes.mark(id, marks);
+    return l;
+  };
+
+  beforeAll(() => {
+    dir = memTempDir('dither-loud-marks-');
+    store = new Store(join(dir, 'hub.sqlite'), (raw) => raw ?? null);
+    acc = store.createAccount({ network: 'signal', label: 's', color: '#000', adapter: 'signal' });
+    store.ingest(acc, { t: 'status', status: 'online', self: { nativeId: 'me', isSelf: true, displayName: 'Me' } });
+    acc = store.accounts().find((x) => x.id === acc.id)!;
+    for (const who of ['ann', 'bo', 'cy']) store.ingest(acc, { t: 'identity', identity: { nativeId: who, displayName: who, contact: true } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'g', shape: 'group', name: 'Club', participants: ['ann', 'bo', 'cy', 'me'] } });
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId: 'h', shape: 'group', name: 'Photos', participants: ['ann', 'bo', 'cy', 'me'] } });
+    triage = new Triage(store);
+    triage.judge = async () => 0.05;
+    votes = new TriageVotes(store, triage);
+    // Decisions keep their loudness and what it was worked out from (a learner of its own, as main.ts has).
+    triage.loud = new LoudLearner(store, 'shadow');
+    triage.momentOf = () => ({ desk: false, sinceSound: null });
+  });
+  afterAll(() => {
+    store.db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('marks from before the scale are read at start, once, and learned at the first round', async () => {
+    const T = Date.now();
+    // Marks kept before the scale learned from them: a hub that has them and a model that never saw them.
+    const loudish = [] as string[];
+    const quiet = [] as string[];
+    for (let i = 0; i < 6; i++) {
+      const a = post('g', 'bo', T - (60 - i) * MIN, 'the server is down again');
+      await decide(a, T - (60 - i) * MIN);
+      store.triageMark(a, { alert: true }, T - 50 * MIN);
+      loudish.push(a);
+      const b = post('h', 'cy', T - (40 - i) * MIN, 'weekly photo dump');
+      await decide(b, T - (40 - i) * MIN);
+      store.triageMark(b, { less: true }, T - 30 * MIN);
+      quiet.push(b);
+    }
+    // An old vote from before the tiers, at half weight.
+    store.db.query(`UPDATE triage SET feedback = 'digest', feedback_at = ? WHERE message_id = ?`).run(T - 20 * DAY, quiet[0]);
+    const was = { up: new LoudLearner(store, 'shadow').loudNow(loudish[0])!, down: new LoudLearner(store, 'shadow').loudNow(quiet[0])! };
+    store.db.exec(`DELETE FROM attn_answer`);
+    store.db.exec(`DELETE FROM meta WHERE key = 'attn_model'`);
+    const l = fresh(new LoudLearner(store, 'shadow'));
+    const kept = store.raw<{ answer: string; n: number }>(`SELECT answer, COUNT(*) AS n FROM attn_answer WHERE source = 'mark' GROUP BY answer ORDER BY answer`);
+    expect(kept).toEqual([
+      { answer: 'less', n: 6 },
+      { answer: 'should_alert', n: 6 },
+    ]);
+    // Again: nothing changes (each mark has its own answer id).
+    expect(l.syncMarks()).toBe(0);
+    expect(fresh(new LoudLearner(store, 'shadow')).syncMarks()).toBe(0);
+    // The first round learns them: the marked server issues louder, the photo dumps quieter.
+    l.daily(T);
+    expect(l.loudNow(loudish[0])!).toBeGreaterThan(was.up);
+    expect(l.loudNow(quiet[0])!).toBeLessThan(was.down);
+    expect(l.signals(T)).toBe(12);
+    // A model that has learned the marks does not need a round of its own after the next start.
+    l.daily(T + MIN);
+    const learnedAt = l.model.learnedAt;
+    const again = fresh(new LoudLearner(store, 'shadow'));
+    again.daily(T + 2 * MIN);
+    expect(again.model.learnedAt).toBe(learnedAt);
+  });
+
+  test('each mark moves the scale its own way, at full weight; an old vote at half', () => {
+    const facts = { network: 'signal', shape: 'group', conversation: 'c1', spaces: [], author: 'p1', bot: false, urgent: false, media: false, base: 'drop' } as never;
+    const base: AttnExample = { facts, words: ['lunch'], why: [], importance: 0.4, alert: 0.1, weight: 0, at: 0 };
+    const e = (x: Partial<AttnExample>): AttnExample => ({ ...base, ...x, weight: 1, at: 0 });
+    const m0 = emptyAttnModel();
+    const at = (rows: AttnExample[]) => loudness({ facts, words: ['lunch'], importance: 0.4, alert: 0.1, why: [], moment: free }, trainAttn(rows, new Set(), 0)).loudness;
+    const start = loudness({ facts, words: ['lunch'], importance: 0.4, alert: 0.1, why: [], moment: free }, m0).loudness;
+    const times = (k: number, x: AttnExample[]) => Array.from({ length: k }, () => x).flat();
+    expect(at(times(5, markRouted('should_alert', e)))).toBeGreaterThan(start);
+    expect(at(times(5, markRouted('less', e)))).toBeLessThan(start);
+    // Alert was wrong says it could wait minutes, not that it was unwanted.
+    const wrong = markRouted('alert_wrong', e);
+    expect(wrong).toHaveLength(1);
+    expect(wrong[0].want).toBeUndefined();
+    expect(wrong[0].wait?.[0]).toBe(0);
+    expect(markRouted('sound', e)[0]).toMatchObject({ want: 1, wait: [1, 1, 1] });
+    expect(markRouted('nonsense', e)).toEqual([]);
+  });
+
+  test("a notification's buttons reach the scale, and count as signals given in place", async () => {
+    const T = Date.now();
+    const l = fresh(new LoudLearner(store, 'shadow'));
+    const a = post('g', 'ann', T - 9 * MIN, 'are we still on for tonight?');
+    await decide(a, T - 9 * MIN);
+    const signals = l.signals(T);
+    const was = l.loudNow(a)!;
+    for (const source of ['notification', 'notification', 'notification'] as const) l.answer({ messageId: a, answer: 'sooner', source }, T);
+    expect(l.signals(T)).toBe(signals + 3);
+    expect(l.loudNow(a)!).toBeGreaterThan(was);
+    expect(l.answerExamples(T).filter((x) => x.at === T).length).toBe(3);
+  });
+
+  test("notices' and mail's marks teach it too, from where they are kept, and the old route takes them", async () => {
+    const T = Date.now();
+    const l = fresh(new LoudLearner(store, 'shadow'));
+    const facts = { network: 'email', shape: 'direct', conversation: 'mail-thread', spaces: [], author: 'sender', bot: false, urgent: false, media: false, base: 'drop' } as never;
+    const others: Example[] = [
+      { facts, words: ['newsletter'], y: { important: 0 }, weight: 1, vote: true, at: T - HOUR },
+      { facts, words: ['newsletter'], y: { alert: 0 }, weight: 1, vote: true, at: T - HOUR },
+      { facts, words: ['newsletter'], label: 'drop', weight: 0.5, vote: true, at: T - DAY },
+    ];
+    l.others = () => others;
+    const before = l.signals(T);
+    const ex = l.otherExamples(T, true);
+    expect(ex.map((x) => [x.want, x.wait?.[0], x.weight])).toEqual([
+      [0, 0, 1],
+      [undefined, 0, 1],
+      [0, 0, 0.5],
+    ]);
+    expect(l.answerExamples(T).filter((x) => x.facts.conversation === 'mail-thread')).toHaveLength(3);
+    expect(before).toBeGreaterThanOrEqual(3);
+    // A notice's or mail's id on the old route: nothing of a chat message to keep, and no error.
+    expect(() => l.fromMark('ntc_none', { less: true }, T)).not.toThrow();
+    expect(l.model.want['conv:mail-thread'] ?? 0).toBeLessThan(0);
   });
 });

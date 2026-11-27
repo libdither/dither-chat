@@ -7,25 +7,12 @@
 .cal-phone {
   padding: 8px 10px 24px;
 }
-.cal-desk {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) 1fr;
-}
-.cal-side {
-  overflow-y: auto;
-  border-right: 1px solid var(--border-soft);
-  padding: 4px 0 16px;
-}
-.cal-main {
+.cal-wide {
   background: var(--bg-center);
   padding: 18px 20px 28px;
 }
-.cal-main > * {
+.cal-wide > * {
   max-width: 520px;
-  margin-left: auto;
-  margin-right: auto;
 }
 .cal-key {
   display: flex;
@@ -69,6 +56,9 @@
     transform 0.18s,
     opacity 0.18s;
 }
+.cal-card.cal-sel {
+  border-color: color-mix(in oklab, var(--accent) 55%, var(--border-soft));
+}
 .cal-card.cal-past {
   border-style: dashed;
   border-color: var(--border);
@@ -96,6 +86,48 @@
 .cal-card-desk:hover .cal-x,
 .cal-card-desk .cal-x:focus-visible {
   opacity: 1;
+}
+/* What the mistake may have cost: a bell struck through, a ringing bell, a quiet row; the bar, how dear. */
+.cal-cost {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 30px 6px 2px;
+  color: var(--text-faint);
+}
+.cal-cost-missed {
+  color: var(--danger);
+}
+.cal-cost-unwanted {
+  color: var(--warn);
+}
+.cal-cost-bar {
+  flex: 0 0 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in oklab, currentColor 18%, transparent);
+  overflow: hidden;
+}
+.cal-cost-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+}
+/* How far it has learned from your marks, before it asks anything. */
+.cal-fit {
+  display: block;
+  width: 160px;
+  height: 6px;
+  margin: 12px auto 0;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+.cal-fit i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
 }
 .cal-past-say {
   font-size: 12px;
@@ -287,7 +319,6 @@ button.cal-act:hover {
 }
 .cal-drill summary,
 .cal-det summary,
-.cal-sure summary,
 .cal-how summary {
   cursor: pointer;
   list-style: none;
@@ -297,7 +328,6 @@ button.cal-act:hover {
 }
 .cal-drill summary::-webkit-details-marker,
 .cal-det summary::-webkit-details-marker,
-.cal-sure summary::-webkit-details-marker,
 .cal-how summary::-webkit-details-marker {
   display: none;
 }
@@ -406,107 +436,7 @@ button.cal-act:hover {
   border-color: var(--accent);
 }
 
-/* A row: who, the text, the three chances small. */
-.cal-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: 22px 1fr 46px;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 10px;
-  border-top: 1px solid var(--border-soft);
-  cursor: pointer;
-  touch-action: pan-y;
-  transition:
-    transform 0.18s,
-    opacity 0.18s;
-}
-.cal-phone .cal-row {
-  grid-template-columns: 22px 1fr 46px 22px;
-  padding-right: 0;
-}
-.cal-row:hover {
-  background: color-mix(in oklab, var(--text) 5%, transparent);
-}
-.cal-row.cal-sel {
-  background: color-mix(in oklab, var(--accent) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-.cal-row.cal-asks .cal-row-who::after {
-  content: ' •';
-  color: var(--accent);
-}
-.cal-row.cal-done {
-  opacity: 0.6;
-}
-.cal-row .cal-x {
-  position: static;
-  font-size: 16px;
-  padding: 2px 4px;
-}
-.cal-row-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.cal-row-who {
-  font-weight: 600;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cal-row-text {
-  color: var(--text-dim);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cal-mini {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 3px;
-  height: 20px;
-  align-items: end;
-  margin-bottom: 6px;
-}
-.cal-mini i {
-  position: relative;
-  display: block;
-  border-radius: 1px;
-  background: var(--text);
-  opacity: 0.75;
-}
-.cal-mini i.cal-f {
-  opacity: 0.3;
-}
-.cal-mini i.cal-y::after {
-  content: '▲';
-  position: absolute;
-  bottom: -10px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 7px;
-  font-style: normal;
-  color: var(--text);
-}
-
-/* The ones it was sure of, and how it works. */
-.cal-sure {
-  margin-top: 4px;
-  border-top: 1px solid var(--border-soft);
-}
-.cal-sure summary {
-  padding: 10px;
-}
-.cal-sure summary::after {
-  content: ' ▾';
-}
-.cal-sure[open] summary::after {
-  content: ' ▴';
-}
+/* How it works. */
 .cal-how {
   margin-top: 18px;
   font-size: 13px;
@@ -524,6 +454,6 @@ button.cal-act:hover {
   padding: 8px 10px;
   overflow-x: auto;
 }
-.cal-main .cal-formula {
+.cal-wide .cal-formula {
   background: var(--bg-raised);
 }

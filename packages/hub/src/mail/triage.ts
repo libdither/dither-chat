@@ -854,7 +854,11 @@ export const triageRoutes: MailRouter = (hub) => {
         if (less === undefined) return bad('Say less: true or false');
         const votes = t.votes;
         try {
-          if (votes) return ok(votes.mark(params[0], { less }));
+          if (votes) {
+            const r = votes.mark(params[0], { less });
+            votes.onMark?.(params[0], { less });
+            return ok(r);
+          }
           return ok({ marks: t.mark(params[0], { less }) ?? {} });
         } catch (e) {
           return bad((e as Error).message, 409);

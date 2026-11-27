@@ -1,29 +1,32 @@
 /**
- * The calibration feed (docs/notifications.md, "The calibration feed"): recent notifications, each as it looked, with
- * the three answers you'd tap in one (Sound / Show / Inbox) and what the model gave each. Nothing here pushes: the
- * feed waits on the Notification calibration page until you get to it.
+ * The calibration feed (docs/notifications.md, "The calibration feed"): the one or two notifications a day most worth
+ * asking about, each as it looked, with the three answers you'd tap in one (Sound / Show / Inbox) and what the model
+ * gave each. Nothing here pushes: the cards wait on the Notification calibration page until you get to it.
  *
- * Every message that reached you (or would have: loudness 10 or more) is put on it once what you did with it is known
+ * Only notifications that reached a device, and sounds the model would have made but did not, are considered: a
+ * message that only ever sat in the inbox is not asked about. Each is put on it once what you did with it is known
  * (SETTLE), and scored:
  *
- *   p          = the model's chance of each answer: its loudness, blurred by how few answers it has about the
- *                person or chat (sigmaOf), cut at the bands (inbox below 30, sound from 80)
- *   you        = what you did: opened or answered within 10 minutes is Sound, within 3 hours Show, else Inbox
- *   surprise   = −log2 p(you), at most 5 bits
- *   unsure     = how spread p is (its entropy, 0 to 1) × how few answers are behind it
- *   worth      = (0.6 · surprise / 5 + 0.4 · unsure) × ½^(age / 3 days)
+ *   p        = the model's chance of each answer: its loudness, blurred by how few answers it has about the person or
+ *              chat (sigmaOf), cut at the bands (inbox below 30, sound from 80)
+ *   said     = the band the model gave it
+ *   you      = what you did, from strong signals only: an answer or mark of yours on it, a tap on its notification
+ *              (within 10 minutes Sound, later Show), a reply in its chat within 5 minutes (Sound), a swipe away
+ *              unopened (Inbox). Opening the chat later says nothing about one message: with none of these, null.
+ *   regret   = COST[said][you] · (1 − p(you)); with `you` unknown, half the model's own expected cost Σ p(a)·COST[said][a]
+ *   worth    = regret × ½^(age / 1 day)
  *
- * Those worth asking over 0.5 may open as cards, about three a day (your setting): each is drawn at random in
- * proportion to its worth, and the chance it had is stored, so what is learned from it can be weighted back by it
- * (ipsWeight). The rest are compact rows. A past answer comes back once, a day later, when the model had given it
- * under 20%.
+ * COST: a sound you needed and did not get costs most (1), a sound you did not want next (0.5, 0.6), a silent mix-up
+ * (shown when the inbox would do, or the other way) barely (0.1, 0.15).
  *
- * Hidden as sure, very conservatively: only when p(you) ≥ 95%, there are 30 or more answers about that person or that
- * chat, none of them against what the model did in the last 30 days, and it is not a sound that was held back. Even
- * then one in twenty is shown, at random.
+ * No cards at all until the model has enough in-place signals to be sure of anything (FITTED_AT, from answers and
+ * marks given in place); then at most CARDS_A_DAY in any 24 hours, the most worth asking, over CARD_OVER. Every other
+ * item is kept as a row that is never shown, so it is scored once and may still be picked later while it is fresh. A
+ * past answer comes back once, a day later, when the model had given it under 20%.
  */
 import type { Database } from 'bun:sqlite';
 import type * as P from '@dither-chat/protocol';
+import { bandOf, calAnswerOf } from '@dither-chat/protocol';
 import { carrier, seenContext } from './seen.ts';
 
 type Row = Record<string, any>;
@@ -35,38 +38,39 @@ const DAY = 24 * HOUR;
 /** A fresh id: `fd_…` for feed items, `ans_…` for answers. */
 export const newId = (prefix: string) => `${prefix}_${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64url')}`;
 
-/** What you did, by how soon you opened or answered it: Sound within this… */
-const SOUND_WITHIN = 10 * MIN;
-/** …Show within this, Inbox after it or never. A message goes on the feed once this has passed, or once you opened it. */
+/** A tap on its notification within this is Sound, later Show. */
+export const TAP_SOUND_WITHIN = 10 * MIN;
+/** A reply of yours in its chat within this is Sound. */
+export const REPLY_WITHIN = 5 * MIN;
+/** A message goes on the feed once this has passed, or once a strong signal is known. */
 const SETTLE = 3 * HOUR;
-/** Worth asking halves every this long. */
-const HALF_LIFE = 3 * DAY;
-/** Surprise is counted up to this many bits. */
+/** Worth asking halves every this long: you remember the moment less each day. */
+export const HALF_LIFE = DAY;
+/** Surprise is counted up to this many bits (shown, not ranked by). */
 const MAX_BITS = 5;
-/** Cards are drawn from those worth asking over this. */
-const CARD_OVER = 0.5;
-/** Cards a day, by your setting (Settings: how often it asks). */
-const CARDS_A_DAY: Record<P.AttentionPrefs['ask'], number> = { never: 0, rarely: 1, often: 3 };
-/** Hidden as sure: the model gave what you did at least this… */
-const SURE_P = 0.95;
-/** …with at least this many answers about the person or the chat… */
-export const SURE_ANSWERS = 30;
-/** …none against it in this long… */
-const SURE_CLEAN = 30 * DAY;
-/** …and even then this share is shown, at random. */
-export const SURE_SHOWN = 1 / 20;
+/** Cards are picked among those worth asking over this: a silent mix-up (0.15 at most) never is. */
+export const CARD_OVER = 0.3;
+/** Cards in any 24 hours, by your setting (Settings: how often it asks). */
+export const CARDS_A_DAY: Record<P.AttentionPrefs['ask'], number> = { never: 0, rarely: 1, often: 2 };
+/**
+ * In-place signals (answers and marks given on a message, a notification, a notice or mail; not the feed's own) the
+ * model needs before any card: at 20, a rate it learns is known to within ±0.22 (95%, the worst case p = ½), enough to
+ * tell "mostly wanted" (75%) from "mostly not" (25%); below it the feed would only ask what the model cannot yet use.
+ */
+export const FITTED_AT = 20;
+/** A card waits this long after it was picked; then it goes (you would hardly remember the moment). */
+const CARD_FOR = 2 * DAY;
+/** With nothing you did known, an item counts this share of its expected regret. */
+export const UNKNOWN_SHARE = 0.5;
 /** A past answer comes back once when the model had given it under this, this long after. */
 const RETURN_UNDER = 0.2;
 export const RETURN_AFTER = DAY;
-/** Nothing older than this is on the feed: you would hardly remember the moment. */
+/** Nothing older than this is learned in full (lateWeight); answered items are kept twice this for the scorecard. */
 export const EXPIRE_AFTER = 14 * DAY;
 /** Messages are put on the feed within this long of coming, at most POOL at a time, at most once an hour. */
 const WINDOW = 3 * DAY;
 const POOL = 400;
 const FILL_EVERY = HOUR;
-/** Rows listed, by worth asking now; sure ones listed under their fold. */
-const ROWS_SHOWN = 40;
-const SURE_LISTED = 30;
 /** An answer this late (after the message came) or sooner counts in full; then down to LATE_FLOOR at EXPIRE_AFTER. */
 const FRESH_FOR = DAY;
 export const LATE_FLOOR = 0.5;
@@ -81,8 +85,8 @@ export function lateWeight(delay: number): number {
 }
 
 /**
- * The weight an answer gets for how it was drawn: a card drawn with chance c counts 0.5/c (a sure one shown one time
- * in twenty counts most), between 1 and 3 so no single answer runs away with the model.
+ * The weight an answer gets for how it was drawn: a card drawn with chance c counts 0.5/c, between 1 and 3. Cards are
+ * picked outright now (chance 1, weight 1); cards drawn at random before keep theirs.
  */
 export function ipsWeight(chance: number | null | undefined): number {
   if (typeof chance !== 'number' || !(chance > 0)) return 1;
@@ -99,6 +103,7 @@ const erf = (x: number) => {
 };
 const normal = (z: number) => 0.5 * (1 + erf(z / Math.SQRT2));
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
+const ANSWERS: readonly P.CalAnswer[] = ['sound', 'show', 'inbox'];
 const ANSWER_I: Record<P.CalAnswer, number> = { sound: 0, show: 1, inbox: 2 };
 
 /** How few answers are behind it, 1 with none, a half at 5, a seventh at 30. */
@@ -126,30 +131,98 @@ function spread(p: Trio): number {
 /** −log2 of the chance it gave what you did, at most MAX_BITS. */
 export const surpriseOf = (p: Trio, you: P.CalAnswer) => r3(Math.min(MAX_BITS, -Math.log2(Math.max(2 ** -MAX_BITS, p[ANSWER_I[you]]))));
 export const unsureOf = (p: Trio, n: number) => r3(spread(p) * fewOf(n));
-/** Worth asking: surprise and unsure mixed, fading by half every HALF_LIFE. */
-export const worthAsking = (surprise: number, unsure: number, age: number) => r3((0.6 * (surprise / MAX_BITS) + 0.4 * unsure) * 0.5 ** (Math.max(0, age) / HALF_LIFE));
 
 /**
- * The chance a message opens as a card: none at CARD_OVER or below; else in proportion to its worth, so that about
- * `perDay` open over a day whose worth (over CARD_OVER) adds up to `dayWorth`.
+ * What a wrong band costs, by what the model said (rows) and what you needed (columns): a sound you needed and did
+ * not get most, a sound you did not want next, a silent mix-up barely.
  */
-export function cardChance(worth: number, perDay: number, dayWorth: number): number {
-  if (!(worth > CARD_OVER) || perDay <= 0) return 0;
-  return r3(Math.min(1, (perDay * worth) / Math.max(dayWorth, worth)));
+export const COST: Record<P.CalAnswer, Record<P.CalAnswer, number>> = {
+  sound: { sound: 0, show: 0.5, inbox: 0.6 },
+  show: { sound: 1, show: 0, inbox: 0.1 },
+  inbox: { sound: 1, show: 0.15, inbox: 0 },
+};
+
+/** Which kind of mistake it was: a sound missed, a sound not wanted, a silent mix-up, or none. */
+export function costKind(said: P.CalAnswer, you: P.CalAnswer | null): P.CalCost {
+  if (!you || said === you) return null;
+  if (you === 'sound') return 'missed';
+  if (said === 'sound') return 'unwanted';
+  return 'mixup';
 }
 
-/** Hidden as sure: every condition, conservatively (above). */
-export function isSure(x: { p: Trio; you: P.CalAnswer; answers: number; against: boolean; held: boolean }): boolean {
-  return x.p[ANSWER_I[x.you]] >= SURE_P && x.answers >= SURE_ANSWERS && !x.against && !x.held;
+/** Cost-weighted regret (above): the cost of the model's band against what you did, by how little it expected it. */
+export function regretOf(p: Trio, said: P.CalAnswer, you: P.CalAnswer | null): number {
+  if (you) return r3(COST[said][you] * (1 - p[ANSWER_I[you]]));
+  return r3(UNKNOWN_SHARE * ANSWERS.reduce((t, a) => t + p[ANSWER_I[a]] * COST[said][a], 0));
 }
 
-/** What you did, from how soon you opened or answered it (null: not yet known). */
-export function youOf(delay: number | null, age: number): P.CalAnswer | null {
-  if (delay !== null) return delay <= SOUND_WITHIN ? 'sound' : delay <= SETTLE ? 'show' : 'inbox';
-  return age >= SETTLE ? 'inbox' : null;
+/** Worth asking: the regret, fading by half every HALF_LIFE. */
+export const worthAsking = (regret: number, age: number) => r3(regret * 0.5 ** (Math.max(0, age) / HALF_LIFE));
+
+/** The strong signals about one message: each a delay after it came, or null. */
+interface Signals {
+  /** An answer or mark of yours on it, as the band it asks for. */
+  said?: P.CalAnswer | null;
+  tapped: number | null;
+  dismissed: number | null;
+  replied: number | null;
+}
+
+/** What you did, from strong signals only (above); null when none says. */
+export function youOf(s: Signals): P.CalAnswer | null {
+  if (s.said) return s.said;
+  if (s.tapped !== null) return s.tapped <= TAP_SOUND_WITHIN ? 'sound' : 'show';
+  if (s.replied !== null && s.replied <= REPLY_WITHIN) return 'sound';
+  if (s.dismissed !== null) return 'inbox';
+  return null;
+}
+
+/** One band louder or quieter than `b`. */
+const step = (b: P.CalAnswer, by: 1 | -1): P.CalAnswer => ANSWERS[Math.max(0, Math.min(2, ANSWER_I[b] - by))];
+
+/** An answer or mark given in place, as the band it asks for, given what was done (`did`). */
+export function saidOf(answer: string, did: P.CalAnswer): P.CalAnswer | null {
+  switch (answer) {
+    case 'worth':
+    case 'fine':
+      return did;
+    case 'sooner':
+    case 'should_alert':
+      return 'sound';
+    case 'could_wait':
+    case 'alert_wrong':
+      return did === 'inbox' ? 'inbox' : 'show';
+    case 'shouldnt':
+    case 'less':
+      return 'inbox';
+    case 'louder':
+      return step(did, 1);
+    case 'quieter':
+      return step(did, -1);
+    // An old vote kept as a mark: its band.
+    case 'sound':
+    case 'show':
+    case 'inbox':
+      return answer;
+    default:
+      return null;
+  }
 }
 
 const ago = (ms: number) => (ms < MIN ? `${Math.max(1, Math.round(ms / 1000))} s` : ms < HOUR ? `${Math.round(ms / MIN)} min` : ms < DAY ? `${Math.round(ms / HOUR)} h` : `${Math.round(ms / DAY)} d`);
+
+const SAID_WORDS: Record<string, string> = {
+  worth: 'Worth it',
+  fine: 'Fine where it was',
+  sooner: "Wish I'd known sooner",
+  could_wait: 'Could have waited',
+  shouldnt: "Shouldn't have reached me",
+  louder: 'Louder',
+  quieter: 'Quieter',
+  should_alert: 'Should have alerted',
+  alert_wrong: 'Alert was wrong',
+  less: 'Less like this',
+};
 
 // ------------------------------------------------------------------ the feed
 
@@ -157,6 +230,8 @@ const ago = (ms: number) => (ms < MIN ? `${Math.max(1, Math.round(ms / 1000))} s
 interface FeedModel {
   loudNow(messageId: string): number | null;
   points(messageId: string): Record<'person' | 'chat' | 'topic' | 'wait' | 'moment', number> | null;
+  /** In-place signals the model has learned from (FITTED_AT). */
+  signals(now: number): number;
 }
 
 interface Described {
@@ -169,14 +244,14 @@ interface Described {
   chat: string | null;
 }
 
-/** What happened to a message: what the model did, what you did, and what the answers say of its person and chat. */
+/** What happened to a message: what was done, whether it reached a device, what you did, the answers about its person and chat. */
 interface Situation {
   did: P.CalAnswer;
+  reached: boolean;
   held: boolean;
   you: P.CalAnswer | null;
   youWhat: string;
   answers: number;
-  against: boolean;
 }
 
 interface Scored {
@@ -185,14 +260,14 @@ interface Scored {
   p: Trio;
   surprise: number;
   unsure: number;
-  worth: number;
+  regret: number;
 }
 
 const SELF = `(SELECT self_identity FROM account WHERE self_identity IS NOT NULL)`;
+/** Answers given in place: everything but the feed's own. */
+export const IN_PLACE = `source != 'feed'`;
 
 export class CalibrationFeed {
-  /** Random numbers, for the draws (tests and the demo set their own). */
-  random: () => number = Math.random;
   private lastFill: number | null = null;
 
   constructor(
@@ -206,49 +281,55 @@ export class CalibrationFeed {
     const db = this.db;
     const n = carrier(db, messageId, conv, ts);
     const did: P.CalAnswer = !n ? 'inbox' : n.alert === 1 ? 'sound' : 'show';
-    const at = (event: string) => (n ? ((db.query('SELECT MIN(at) AS at FROM notification_event WHERE notification_id = ? AND event = ?').get(n.id, event) as Row)?.at ?? null) : null) as number | null;
-    const opened = (db.query('SELECT MIN(start_at) AS at FROM visit WHERE conversation_id = ? AND start_at >= ?').get(conv, ts) as Row)?.at as number | null;
-    const tapped = at('tapped');
-    const dismissed = at('dismissed');
-    const replied = (db.query(`SELECT MIN(ts) AS at FROM message WHERE conversation_id = ? AND ts > ? AND author_id IN ${SELF}`).get(conv, ts) as Row)?.at as number | null;
-    const seen = [opened, tapped].filter((x): x is number => typeof x === 'number');
-    const first = seen.length ? Math.min(...seen) : null;
-    const acted = [first, replied].filter((x): x is number => typeof x === 'number');
-    const delay = acted.length ? Math.min(...acted) - ts : null;
-    const you = youOf(delay, now - ts);
-    const lead = dismissed && (!first || dismissed < first) ? `Dismissed in ${ago(dismissed - ts)}, ` : '';
-    const when = (d: number) => (d <= SOUND_WITHIN ? `in ${ago(d)}` : `${ago(d)} later`);
+    const ev = (event: string) => (n ? ((db.query('SELECT MIN(at) AS at FROM notification_event WHERE notification_id = ? AND event = ?').get(n.id, event) as Row)?.at ?? null) : null) as number | null;
+    const first = (...xs: (number | null | undefined)[]) => {
+      const ok = xs.filter((x): x is number => typeof x === 'number');
+      return ok.length ? Math.min(...ok) : null;
+    };
+    const reached = !!n && (n.accepted > 0 || n.delivered_at != null || n.shown_at != null || n.tapped_at != null || !!db.query(`SELECT 1 FROM notification_event WHERE notification_id = ? AND event IN ('delivered', 'shown', 'tapped', 'inapp') LIMIT 1`).get(n.id) || !!db.query('SELECT 1 FROM notification_device WHERE notification_id = ? AND ok = 1 LIMIT 1').get(n.id));
+    const tapped = first(n?.tapped_at, ev('tapped'));
+    const dismissed = first(n?.dismissed_at, ev('dismissed'));
+    const ownReply = (db.query(`SELECT MIN(ts) AS at FROM message WHERE conversation_id = ? AND ts > ? AND ts <= ? AND author_id IN ${SELF}`).get(conv, ts, ts + REPLY_WITHIN) as Row)?.at as number | null;
+    const replied = first(n?.replied_at, ownReply);
+    // The latest answer or mark you gave on it in place (the feed's own aside).
+    const a = db.query(`SELECT answer, at FROM attn_answer WHERE message_id = ? AND ${IN_PLACE} ORDER BY at DESC LIMIT 1`).get(messageId) as Row | null;
+    const said = a ? saidOf(a.answer, did) : null;
+    const d = (x: number | null) => (x === null ? null : Math.max(0, x - ts));
+    const you = youOf({ said, tapped: d(tapped), dismissed: d(dismissed), replied: d(replied) });
     const youWhat =
-      replied !== null && (first === null || replied <= first) ? `${lead}answered ${when(replied - ts)}`
-      : first !== null ? `${lead}opened ${when(first - ts)}`
-      : dismissed ? `Dismissed in ${ago(dismissed - ts)}, not opened`
-      : 'Not opened';
+      said ? `${SAID_WORDS[a!.answer] ?? 'Answered'}, you said`
+      : tapped !== null ? `Tapped ${tapped - ts <= TAP_SOUND_WITHIN ? 'in' : 'after'} ${ago(tapped - ts)}`
+      : replied !== null && replied - ts <= REPLY_WITHIN ? `Replied in ${ago(replied - ts)}`
+      : dismissed !== null ? `Swiped away in ${ago(dismissed - ts)}`
+      : 'Nothing you did says';
     const count = (col: string, v: string | null) => (v ? ((db.query(`SELECT COUNT(*) AS n FROM attn_answer WHERE ${col} = ?`).get(v) as Row).n as number) : 0);
     const answers = Math.max(count('author', author), count('conversation_id', conv));
-    // Against what the model did: Louder, Quieter and the old answers that said so, or a feed answer not its band.
-    const against = !!db
-      .query(
-        `SELECT 1 FROM attn_answer WHERE (author = ? OR conversation_id = ?) AND at > ? AND (answer IN ('louder', 'quieter', 'could_wait', 'shouldnt', 'sooner')
-           OR (answer IN ('sound', 'show', 'inbox') AND band IS NOT NULL AND answer != CASE band WHEN 'sound' THEN 'sound' WHEN 'show' THEN 'show' ELSE 'inbox' END)) LIMIT 1`,
-      )
-      .get(author ?? '', conv, now - SURE_CLEAN);
-    return { did, held: loud >= 80 && did !== 'sound', you, youWhat: youWhat[0].toUpperCase() + youWhat.slice(1), answers, against };
+    return { did, reached, held: loud >= 80 && did !== 'sound', you, youWhat, answers };
+  }
+
+  /** Enough in-place signals for the model to be sure of anything (FITTED_AT). */
+  fitted(now = Date.now()): { signals: number; need: number } {
+    return { signals: this.model.signals(now), need: FITTED_AT };
   }
 
   /**
-   * Put what came in the last days on the feed, once what you did with it is known: scored, and drawn as a card, a
-   * row, or hidden as sure. At most once an hour (`force`: now). Called when the page asks and on the hub's round.
+   * Put what came in the last days on the feed, once what you did with it is known, and pick the cards: the most
+   * worth asking, at most CARDS_A_DAY in 24 hours, none before the model is fitted. At most once an hour (`force`:
+   * now). Called when the page asks and on the hub's round.
    */
   fill(prefs: P.AttentionPrefs, now = Date.now(), force = false): number {
     if (!force && this.lastFill !== null && now - this.lastFill < FILL_EVERY && now >= this.lastFill) return 0;
     this.lastFill = now;
     const db = this.db;
+    // Those that may have reached a device (a notification of it, or a later one of its chat), or that the model
+    // would have sounded.
     const rows = db
       .query(
         `SELECT t.message_id, t.loud, m.ts, m.conversation_id, COALESCE(i.person_id, m.author_id) AS author
          FROM triage t INDEXED BY triage_created JOIN message m ON m.id = t.message_id LEFT JOIN identity i ON i.id = m.author_id
          WHERE t.created_at > ? AND m.ts > ? AND t.decision != 'silent' AND t.loud IS NOT NULL
-           AND (t.loud >= 10 OR EXISTS (SELECT 1 FROM notification n WHERE n.message_id = t.message_id))
+           AND (t.loud >= 80 OR EXISTS (SELECT 1 FROM notification n WHERE n.message_id = t.message_id)
+             OR EXISTS (SELECT 1 FROM notification n WHERE n.conversation_id = m.conversation_id AND n.sent_at >= m.ts AND n.sent_at < m.ts + ${HOUR}))
            AND (m.author_id IS NULL OR m.author_id NOT IN ${SELF})
            AND NOT EXISTS (SELECT 1 FROM cal_item f WHERE f.message_id = t.message_id)
            AND NOT EXISTS (SELECT 1 FROM visit v WHERE v.conversation_id = m.conversation_id AND v.start_at < m.ts AND v.end_at >= m.ts)
@@ -256,63 +337,65 @@ export class CalibrationFeed {
       )
       .all(now - WINDOW, now - WINDOW, POOL) as Row[];
     const batch = rows.map((r) => this.scored(r, now)).filter((b): b is Scored => !!b);
-    if (!batch.length) return 0;
-    const perDay = CARDS_A_DAY[prefs.ask] ?? 0;
-    const drawnDay = (db.query(`SELECT COALESCE(SUM(score), 0) AS s FROM cal_item WHERE drawn_at > ? AND score > ?`).get(now - DAY, CARD_OVER) as Row).s as number;
-    const dayWorth = drawnDay + batch.filter((b) => b.worth > CARD_OVER).reduce((t, b) => t + b.worth, 0);
     db.transaction(() => {
-      for (const b of batch) {
-        if (isSure({ p: b.p, you: b.s.you!, answers: b.s.answers, against: b.s.against, held: b.s.held })) {
-          // One in twenty shown anyway, as a row.
-          const shown = this.random() < SURE_SHOWN;
-          this.insert(b, shown ? 'row' : 'sure', shown ? SURE_SHOWN : 1 - SURE_SHOWN, shown, now);
-        } else {
-          const c = cardChance(b.worth, perDay, dayWorth);
-          const card = c > 0 && this.random() < c;
-          this.insert(b, card ? 'card' : 'row', card ? c : r3(1 - c), false, now);
-        }
-      }
+      for (const b of batch) this.insert(b, 'row', now);
+      this.pick(prefs, now);
       // Unanswered ones long past the feed go; answered ones stay for the scorecard.
       db.query('DELETE FROM cal_item WHERE answer IS NULL AND message_ts < ?').run(now - 2 * EXPIRE_AFTER);
     })();
     return batch.length;
   }
 
-  /** A message's place on the feed worked out: what happened, the chances, how surprised and unsure, worth asking. */
-  private scored(r: Row, now: number): Scored | null {
-    const s = this.situation(r.message_id, r.conversation_id, r.ts, r.author, r.loud, now);
-    if (!s.you) return null;
-    const p = chances(r.loud, s.answers);
-    const surprise = surpriseOf(p, s.you);
-    const unsure = unsureOf(p, s.answers);
-    return { r, s, p, surprise, unsure, worth: worthAsking(surprise, unsure, now - r.ts) };
+  /** The cards: among the rows still fresh, the most worth asking now over CARD_OVER, up to the day's few. */
+  private pick(prefs: P.AttentionPrefs, now: number) {
+    if (this.fitted(now).signals < FITTED_AT) return;
+    const db = this.db;
+    const room = (CARDS_A_DAY[prefs.ask] ?? 0) - ((db.query(`SELECT COUNT(*) AS n FROM cal_item WHERE kind = 'card' AND drawn_at > ?`).get(now - DAY) as Row).n as number);
+    if (room <= 0) return;
+    const fresh = db.query(`SELECT id, score, message_ts FROM cal_item WHERE kind = 'row' AND answer IS NULL AND skipped = 0 AND message_ts > ?`).all(now - CARD_FOR) as Row[];
+    const best = fresh
+      .map((r) => ({ id: r.id as string, w: worthAsking(r.score, now - r.message_ts) }))
+      .filter((r) => r.w > CARD_OVER)
+      .sort((a, b) => b.w - a.w)
+      .slice(0, room);
+    const up = db.query(`UPDATE cal_item SET kind = 'card', chance = 1, drawn_at = ? WHERE id = ?`);
+    for (const r of best) up.run(now, r.id);
   }
 
-  private insert(b: Scored, kind: 'card' | 'row' | 'sure', chance: number, shown: boolean, now: number): string {
+  /** A message's place on the feed worked out: what happened, the chances, the regret. Null: not one to ask about. */
+  private scored(r: Row, now: number, anyway = false): Scored | null {
+    const s = this.situation(r.message_id, r.conversation_id, r.ts, r.author, r.loud, now);
+    if (!anyway && !s.reached && !s.held) return null;
+    // Not settled yet: no strong signal, and too soon to say there will be none.
+    if (!anyway && !s.you && now - r.ts < SETTLE) return null;
+    const p = chances(r.loud, s.answers);
+    const said = calAnswerOf(bandOf(r.loud));
+    return { r, s, p, surprise: s.you ? surpriseOf(p, s.you) : 0, unsure: unsureOf(p, s.answers), regret: regretOf(p, said, s.you) };
+  }
+
+  private insert(b: Scored, kind: 'card' | 'row', now: number): string {
     const id = newId('fd');
     this.db
       .query(
         `INSERT OR IGNORE INTO cal_item (id, message_id, conversation_id, author, kind, sure_shown, chance, score, surprise, unsure, p, u, loud, did, you, you_what, held, answers, drawn_at, message_ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, b.r.message_id, b.r.conversation_id, b.r.author, kind, +shown, chance, b.worth, b.surprise, b.unsure, JSON.stringify(b.p), JSON.stringify(spreadsOf(b.p, b.s.answers)), b.r.loud, b.s.did, b.s.you, b.s.youWhat, +b.s.held, b.s.answers, now, b.r.ts);
+      .run(id, b.r.message_id, b.r.conversation_id, b.r.author, kind, b.regret, b.surprise, b.unsure, JSON.stringify(b.p), JSON.stringify(spreadsOf(b.p, b.s.answers)), b.r.loud, b.s.did, b.s.you, b.s.youWhat, +b.s.held, b.s.answers, now, b.r.ts);
     return id;
   }
 
   /**
-   * A demo world's feed (demo-calibration.ts): a message put on it as a given kind, whatever its draw would have been,
-   * in place of any earlier place it had. `sure` is put as a sure one shown at random when it is not sure after all.
+   * A demo world's feed (demo-calibration.ts): a message put on it as a given kind, whatever its score or the model's
+   * fit, in place of any earlier place it had.
    */
-  place(messageId: string, kind: 'card' | 'row' | 'sure', now = Date.now()): string | null {
+  place(messageId: string, kind: 'card' | 'row', now = Date.now()): string | null {
     const r = this.db
       .query(`SELECT t.message_id, t.loud, m.ts, m.conversation_id, COALESCE(i.person_id, m.author_id) AS author FROM triage t JOIN message m ON m.id = t.message_id LEFT JOIN identity i ON i.id = m.author_id WHERE t.message_id = ? AND t.loud IS NOT NULL`)
       .get(messageId) as Row | null;
-    const b = r && this.scored(r, now);
+    const b = r && this.scored(r, now, true);
     if (!b) return null;
     this.db.query('DELETE FROM cal_item WHERE message_id = ?').run(messageId);
-    const sure = kind === 'sure' && isSure({ p: b.p, you: b.s.you!, answers: b.s.answers, against: b.s.against, held: b.s.held });
-    if (kind === 'sure') return this.insert(b, sure ? 'sure' : 'row', sure ? 1 - SURE_SHOWN : SURE_SHOWN, !sure, now);
-    return this.insert(b, kind, kind === 'card' ? Math.max(cardChance(b.worth, 3, b.worth), 0.5) : 1, false, now);
+    return this.insert(b, kind, now);
   }
 
   get(id: string): Row | null {
@@ -323,8 +406,8 @@ export class CalibrationFeed {
   pendingCount(now = Date.now()): number {
     return (
       this.db
-        .query(`SELECT COUNT(*) AS n FROM cal_item WHERE skipped = 0 AND message_ts > ? AND ((kind = 'card' AND answer IS NULL) OR (answer IS NOT NULL AND returns_at <= ? AND settled IS NULL))`)
-        .get(now - EXPIRE_AFTER, now) as Row
+        .query(`SELECT COUNT(*) AS n FROM cal_item WHERE skipped = 0 AND ((kind = 'card' AND answer IS NULL AND drawn_at > ?) OR (answer IS NOT NULL AND returns_at <= ? AND settled IS NULL AND message_ts > ?))`)
+        .get(now - CARD_FOR, now, now - EXPIRE_AFTER) as Row
     ).n;
   }
 
@@ -340,20 +423,18 @@ export class CalibrationFeed {
     return (this.db.query(`SELECT COUNT(*) AS n FROM cal_item WHERE answered_at >= ?`).get(this.dayStart(now)) as Row).n;
   }
 
-  /** Fill, then the feed: cards and past answers by worth asking now, then rows, then the sure ones apart. */
+  /** Fill, then the feed: the cards and past answers, most worth asking now first; and how fitted the model is. */
   view(prefs: P.AttentionPrefs, now = Date.now()): P.CalFeedView {
     this.fill(prefs, now);
     const db = this.db;
-    const since = now - EXPIRE_AFTER;
-    const cards = db.query(`SELECT * FROM cal_item WHERE kind = 'card' AND answer IS NULL AND skipped = 0 AND message_ts > ?`).all(since) as Row[];
-    const past = db.query(`SELECT * FROM cal_item WHERE answer IS NOT NULL AND returns_at <= ? AND settled IS NULL AND skipped = 0 AND message_ts > ?`).all(now, since) as Row[];
-    const rows = db.query(`SELECT * FROM cal_item WHERE kind = 'row' AND answer IS NULL AND skipped = 0 AND message_ts > ? ORDER BY score DESC LIMIT 200`).all(since) as Row[];
-    const sure = db.query(`SELECT * FROM cal_item WHERE kind = 'sure' AND answer IS NULL AND skipped = 0 AND message_ts > ? ORDER BY message_ts DESC LIMIT ?`).all(now - WINDOW, SURE_LISTED) as Row[];
-    const now_ = (r: Row) => worthAsking(r.surprise, r.unsure, now - r.message_ts);
-    const top = [...cards, ...past].sort((a, b) => now_(b) - now_(a));
-    const rest = rows.sort((a, b) => now_(b) - now_(a)).slice(0, ROWS_SHOWN);
-    const items = [...top, ...rest].map((r) => this.itemView(r, now)).filter((v): v is P.CalItem => !!v);
-    return { items, sure: sure.map((r) => this.itemView(r, now)).filter((v): v is P.CalItem => !!v) };
+    const cards = db.query(`SELECT * FROM cal_item WHERE kind = 'card' AND answer IS NULL AND skipped = 0 AND drawn_at > ?`).all(now - CARD_FOR) as Row[];
+    const past = db.query(`SELECT * FROM cal_item WHERE answer IS NOT NULL AND returns_at <= ? AND settled IS NULL AND skipped = 0 AND message_ts > ?`).all(now, now - EXPIRE_AFTER) as Row[];
+    const now_ = (r: Row) => worthAsking(r.score, now - r.message_ts);
+    const items = [...cards, ...past]
+      .sort((a, b) => now_(b) - now_(a))
+      .map((r) => this.itemView(r, now))
+      .filter((v): v is P.CalItem => !!v);
+    return { items, fitted: this.fitted(now) };
   }
 
   /** The model's chances now for an answered item: its loudness moved by what was learned since (loud_base). */
@@ -392,9 +473,10 @@ export class CalibrationFeed {
     const answered = r.answer && r.settled === null;
     const after = answered ? (r.after ? (JSON.parse(r.after) as Trio) : null) : null;
     const afterNow = answered && r.returns_at !== null && r.returns_at <= now ? (this.afterOf(r) ?? after) : after;
+    const said = calAnswerOf(bandOf(r.loud));
     return {
       id: r.id,
-      kind: answered && r.returns_at !== null && r.returns_at <= now ? 'past' : (r.kind as P.CalItem['kind']),
+      kind: answered && r.returns_at !== null && r.returns_at <= now ? 'past' : 'card',
       messageId: r.message_id,
       conversationId: d.conversationId,
       network: s?.network ?? d.network,
@@ -406,11 +488,14 @@ export class CalibrationFeed {
       p: JSON.parse(r.p),
       u: JSON.parse(r.u),
       did: r.did,
+      said,
       you: r.you,
-      youWhat: r.you_what + (r.sure_shown ? ' · one it was sure of, shown at random' : ''),
+      youWhat: r.you_what,
       surprise: r.surprise,
       unsure: r.unsure,
-      score: worthAsking(r.surprise, r.unsure, now - r.message_ts),
+      regret: r.score,
+      cost: costKind(said, r.you),
+      score: worthAsking(r.score, now - r.message_ts),
       chance: r.chance,
       ...(r.held ? { held: true } : {}),
       ...(r.answer ? { answer: r.answer } : {}),
@@ -472,4 +557,3 @@ function contextLine(ctx: P.SeenContext, dev: P.SeenDevice | null, held: boolean
   if (held) bits.push('a sound held back');
   return bits.join(' · ');
 }
-

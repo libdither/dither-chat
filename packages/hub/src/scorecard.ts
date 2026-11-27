@@ -435,8 +435,8 @@ function* foryou(c: DayContext): Generator<number, ScoreRow[]> {
  * loudness compares with the tiers on the same messages while it runs in shadow. Before 2026-11 the answers were the
  * check-ins' (only their random half counts); since, the calibration feed's cards and the sure ones it shows at
  * random, read as the check-ins were: Sound on one that sounded is "worth it", Show or Inbox "could have waited";
- * Sound on one that did not is "should have sounded". The feed's cards are drawn among those worth asking, so these
- * rates are of those, not of every notification.
+ * Sound on one that did not is "should have sounded". The feed's cards are the few most worth asking (picked outright
+ * since 2026-11-27, chance 1), so these rates are of those, not of every notification.
  */
 export function* loudnessScores(c: DayContext): Generator<number, ScoreRow[]> {
   const keys = ['attn.worth', 'attn.worth_shadow', 'attn.could_wait', 'attn.shouldnt', 'attn.missed', 'attn.asked', 'foryou.worth', 'shadow.sounds', 'shadow.agree', 'shadow.quick_show', 'shadow.quick_show_live'];

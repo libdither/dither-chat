@@ -1,15 +1,16 @@
 /**
- * Notification calibration (docs/notifications.md, "The calibration feed"): one feed of notifications as they looked,
- * each with three answers, Sound, Show and Inbox. Under each answer a bar: its fill is the chance the model gave it, the
- * whisker how unsure it was, ▲ what you did, and the underlined answer what the model did. Answering draws the chances
- * again, after the answer, over a dashed line at the old one; "What was it wrong about?" routes the answer to parts of
- * it (the person, the chat, the topic, how long it could wait, the moment, the delivery).
+ * Notification calibration (docs/notifications.md, "The calibration feed"): the one or two notifications a day most
+ * worth asking about, each as it looked, with three answers, Sound, Show and Inbox. Under each answer a bar: its fill is
+ * the chance the model gave it, the whisker how unsure it was, ▲ what you did, and the underlined answer what was done.
+ * Each card carries a small picture of what the mistake may have cost (a sound missed, a sound not wanted, a silent
+ * mix-up; the longer, the dearer). Answering draws the chances again, after the answer, over a dashed line at the old
+ * one; "What was it wrong about?" routes the answer to parts of it (the person, the chat, the topic, how long it could
+ * wait, the moment, the delivery). A past answer that surprised the model comes back once (Keep, Only that once, Undo).
+ * Until the model has learned from enough answers and marks given in place, there is nothing to ask, and it says how far
+ * along it is.
  *
- * The few worth asking open as cards; the rest are rows that open in place. A past answer that surprised the model
- * comes back once (Keep, Only that once, Undo). The ones it was sure of sit folded at the end.
- *
- * On a phone: one column, × or a swipe skips (Undo on the toast). On a computer: the list on the left, the chosen one
- * open on the right, 1–3 answer, x skips, j and k move, w opens what it was wrong about.
+ * One column of cards, on a phone and a computer. × or a swipe skips (Undo on the toast). On a computer: 1–3 answer
+ * the chosen card, x skips it, j and k move, w opens what it was wrong about.
  */
 import { signal } from '@preact/signals';
 import type * as P from '@dither-chat/protocol';
@@ -41,9 +42,7 @@ const NONE: Local = { parts: [], drill: false };
 
 const local = signal<ReadonlyMap<string, Local>>(new Map());
 const skipped = signal<ReadonlySet<string>>(new Set());
-/** Rows opened in place (phone). */
-const opened = signal<ReadonlySet<string>>(new Set());
-/** The one open on the right (computer). */
+/** The card the keys act on (computer). */
 const chosen = signal<string | null>(null);
 
 const stOf = (id: string) => local.value.get(id) ?? NONE;
@@ -102,15 +101,9 @@ async function settle(it: P.CalItem, how: P.CalSettle) {
   await settleFeed(it, how);
 }
 
-/** A row: on a phone it opens where it is; on a computer it is the one shown on the right. */
-function pick(it: P.CalItem) {
-  if (phone.value) opened.value = new Set([...opened.value, it.id]);
-  else chosen.value = it.id;
-}
-
 const setDrill = (it: P.CalItem, open: boolean) => stOf(it.id).drill !== open && setSt(it.id, (s) => ({ ...s, drill: open }));
 
-/** The items on the page, in their order: cards and past answers, then the rows (the sure ones apart). */
+/** The cards on the page, in their order: most worth asking first. */
 function shownItems(v: P.CalFeedView | null): P.CalItem[] {
   if (!v) return [];
   return v.items.filter((i) => !skipped.value.has(i.id) && !stOf(i.id).settled);
@@ -134,10 +127,9 @@ export function CalibrationPane({ onBack }: { onBack?: () => void }) {
   }, []);
   const v = calFeed.value;
   const items = shownItems(v);
-  const sure = (v?.sure ?? []).filter((i) => !skipped.value.has(i.id));
-  const ask = items.filter((i) => (i.kind === 'card' || i.kind === 'past') && !stOf(i.id).answer).length;
+  const ask = items.filter((i) => !stOf(i.id).answer).length;
   const onPhone = phone.value;
-  const cur = onPhone ? null : ([...items, ...sure].find((i) => i.id === chosen.value) ?? items[0] ?? null);
+  const cur = onPhone ? null : (items.find((i) => i.id === chosen.value) ?? items[0] ?? null);
 
   // 1–3 answer, x skips, j and k move, w opens what it was wrong about; never while typing or under a menu.
   useLayoutEffect(() => {
@@ -147,7 +139,7 @@ export function CalibrationPane({ onBack }: { onBack?: () => void }) {
       const el = e.target as HTMLElement | null;
       if (el?.closest?.('input, textarea, select, [contenteditable], .cm, .sheet-layer, .modal-backdrop, .switcher-back')) return;
       if (document.querySelector('.cm, .sheet-layer, .modal-backdrop, .switcher-back, .viewer')) return;
-      const all = [...shownItems(calFeed.value), ...(calFeed.value?.sure ?? []).filter((i) => !skipped.value.has(i.id))];
+      const all = shownItems(calFeed.value);
       const it = all.find((i) => i.id === chosen.value) ?? all[0];
       if (!it) return;
       const at = all.indexOf(it);
@@ -159,7 +151,7 @@ export function CalibrationPane({ onBack }: { onBack?: () => void }) {
         const to = all[Math.max(0, Math.min(all.length - 1, at + (e.key === 'j' ? 1 : -1)))];
         if (!to) return;
         chosen.value = to.id;
-        requestAnimationFrame(() => document.querySelector(`.cal-side [data-cal-id="${CSS.escape(to.id)}"]`)?.scrollIntoView({ block: 'nearest' }));
+        requestAnimationFrame(() => document.querySelector(`.cal-scroll [data-cal-id="${CSS.escape(to.id)}"]`)?.scrollIntoView({ block: 'nearest' }));
       } else if (e.key === 'w') {
         if (!stOf(it.id).answer) return;
         setDrill(it, !stOf(it.id).drill);
@@ -192,30 +184,18 @@ export function CalibrationPane({ onBack }: { onBack?: () => void }) {
       </header>
       {v === null ? (
         <Loading label="Loading…" />
-      ) : !items.length && !sure.length ? (
+      ) : !items.length ? (
         <div class="requests-scroll cal-scroll">
-          <Empty icon="bell" title="Nothing here yet">
-            Notifications from the last few days land here, the ones worth asking about open with their answers. Your answers teach it what to sound for.
-          </Empty>
-        </div>
-      ) : onPhone ? (
-        <div class="requests-scroll cal-scroll cal-phone">
-          <Legend />
-          {items.map((it) => (it.kind === 'row' && !opened.value.has(it.id) ? <Row key={it.id} it={it} sel={false} done={!!local.value.get(it.id)?.answer} /> : <Card key={it.id} it={it} st={local.value.get(it.id) ?? NONE} desk={false} />))}
-          <Sure items={sure} desk={false} />
+          <Waiting fitted={v.fitted} />
           <How />
         </div>
       ) : (
-        <div class="cal-desk">
-          <div class="cal-side" aria-label="The feed">
-            {items.map((it) => (
-              <Row key={it.id} it={it} sel={it.id === cur?.id} done={!!local.value.get(it.id)?.answer} />
-            ))}
-            <Sure items={sure} desk sel={cur?.id ?? null} />
-          </div>
-          <div class="requests-scroll cal-main">
-            <Legend />
-            {cur && <Card key={cur.id} it={cur} st={local.value.get(cur.id) ?? NONE} desk />}
+        <div class={`requests-scroll cal-scroll${onPhone ? ' cal-phone' : ' cal-wide'}`}>
+          <Legend />
+          {items.map((it) => (
+            <Card key={it.id} it={it} st={local.value.get(it.id) ?? NONE} desk={!onPhone} sel={it.id === cur?.id} />
+          ))}
+          {!onPhone && (
             <div class="cal-hints" aria-hidden="true">
               <span>
                 <kbd>1</kbd>–<kbd>3</kbd> answer
@@ -230,8 +210,8 @@ export function CalibrationPane({ onBack }: { onBack?: () => void }) {
                 <kbd>w</kbd> what it was wrong about
               </span>
             </div>
-            <How />
-          </div>
+          )}
+          <How />
         </div>
       )}
     </section>
@@ -250,39 +230,44 @@ function Legend() {
       </span>
       <span>▲ what you did</span>
       <span>
-        <u>Show</u> what it did
+        <u>Show</u> what was done
       </span>
       <span>- - - its guess before</span>
     </div>
   );
 }
 
-/** The ones it was sure of, folded. */
-function Sure({ items, desk, sel }: { items: P.CalItem[]; desk: boolean; sel?: string | null }) {
-  if (!items.length) return null;
+/** Nothing to ask: still learning from what you say in place, or nothing that cost you anything lately. */
+function Waiting({ fitted }: { fitted: P.CalFeedView['fitted'] }) {
+  const learning = fitted.signals < fitted.need;
   return (
-    <details class="cal-sure">
-      <summary data-track="calibration sure fold">{items.length} it was sure of</summary>
-      {items.map((it) => (!desk && opened.value.has(it.id) ? <Card key={it.id} it={it} st={local.value.get(it.id) ?? NONE} desk={false} /> : <Row key={it.id} it={it} sel={sel === it.id} done={!!local.value.get(it.id)?.answer} />))}
-    </details>
+    <Empty icon="bell" title={learning ? 'Learning from your marks first' : 'Nothing to ask'}>
+      {learning ? (
+        <>
+          It asks here once it has learned from {fitted.need} answers and marks given where you saw a message: Louder, Quieter, Less like this, Should have alerted, a notification's buttons.
+          <span class="cal-fit" role="img" aria-label={`${fitted.signals} of ${fitted.need}`}>
+            <i style={{ width: `${Math.round((100 * Math.min(fitted.signals, fitted.need)) / fitted.need)}%` }} />
+          </span>
+        </>
+      ) : (
+        <>At most two a day, and only a notification that likely cost you something: a sound you needed and did not get, or one you did not want.</>
+      )}
+    </Empty>
   );
 }
 
 function How() {
   return (
     <details class="cal-how">
-      <summary data-track="calibration how">How the order and the hiding work</summary>
-      <p>Each notification gets a worth asking score: how surprised the model is by what you did, mixed with how unsure it was, fading by half every 3 days.</p>
+      <summary data-track="calibration how">How it picks what to ask</summary>
+      <p>Only notifications that reached a device, and sounds it held back. What you did: a tap (within 10 minutes Sound, later Show), a reply within 5 minutes (Sound), a swipe (Inbox), or your answer or mark. Opening the chat later does not count.</p>
       <div class="cal-formula">
-        surprise = −log₂ P(what you did), capped at 5 bits
+        regret = cost(what it said, what you did) × (1 − its chance of what you did)
         <br />
-        unsure = how spread its guess was × how few answers are behind it
-        <br />
-        worth asking = (0.6 · surprise/5 + 0.4 · unsure) × fading(age)
+        worth asking = regret, halving every day
       </div>
-      <p>The few over 0.5 (about 3 a day) open with their answers; the rest are rows, tap one to open it. Open ones are drawn at random in proportion to the score, and that chance is kept so the scorecard can weight answers back.</p>
-      <p>A past answer comes back once if it surprised the model (it gave it under 20%), with its guess before and after.</p>
-      <p>Hidden as sure only when all hold: it gave what you did 95% or more, 30 or more answers about that person or chat, none against it in 30 days, and not a sound it held back. 1 in 20 of those still shows, at random.</p>
+      <p>A missed sound costs 1, an unwanted one 0.5–0.6, a silent mix-up 0.1–0.15.</p>
+      <p>Nothing until it has learned from 20 of your answers and marks; then at most two a day over 0.3. A surprising answer comes back once.</p>
     </details>
   );
 }
@@ -345,61 +330,6 @@ function useSwipe(it: P.CalItem, on: boolean) {
   }, [it, on]);
   return ref;
 }
-
-// ------------------------------------------------------------------ one row
-
-const Row = memo(function Row({ it, sel, done }: { it: P.CalItem; sel: boolean; done: boolean }) {
-  const ref = useSwipe(it, phone.value);
-  const mx = Math.max(...it.p, 0.01);
-  return (
-    <div
-      ref={ref}
-      class={`cal-row${sel ? ' cal-sel' : ''}${it.kind === 'card' ? ' cal-asks' : ''}${done ? ' cal-done' : ''}`}
-      data-cal-id={it.id}
-      data-kind={it.kind}
-      role="button"
-      tabIndex={0}
-      data-track={`calibration row ${it.kind}`}
-      onClick={(e) => {
-        if ((e.currentTarget as HTMLElement).dataset.swiped) return;
-        pick(it);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          pick(it);
-        }
-      }}
-    >
-      <Pic it={it} size={22} />
-      <span class="cal-row-main">
-        <span class="cal-row-who">{it.who}</span>
-        <span class="cal-row-text">
-          {it.kind === 'past' ? '↺ ' : ''}
-          {it.text}
-        </span>
-      </span>
-      <span class="cal-mini" aria-label={`It gave ${CAL_ANSWERS.map((a, i) => `${CAL_ANSWER_NAME[a]} ${Math.round(it.p[i] * 100)}%`).join(', ')}`}>
-        {it.p.map((v, i) => (
-          <i class={`${CAL_ANSWERS[i] === it.you ? 'cal-y' : ''}${CAL_ANSWERS[i] !== it.did ? ' cal-f' : ''}`} style={{ height: `${Math.max(2, (v / mx) * 18)}px` }} />
-        ))}
-      </span>
-      {phone.value && (
-        <button
-          class="cal-x"
-          aria-label="Skip"
-          data-track="calibration skip"
-          onClick={(e) => {
-            e.stopPropagation();
-            skip(it);
-          }}
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-});
 
 // ------------------------------------------------------------------ one card
 
@@ -500,14 +430,49 @@ function Notice({ it, st, past }: { it: P.CalItem; st: Local; past: boolean }) {
 
 const sign = (n: number) => (n > 0 ? `+${Math.round(n)}` : n < 0 ? `−${Math.round(-n)}` : '0');
 
-const Card = memo(function Card({ it, st, desk }: { it: P.CalItem; st: Local; desk: boolean }) {
+/** What the mistake may have cost, as a picture: a bell struck through (a sound missed), a ringing bell (a sound not wanted), a quiet row (a silent mix-up); the bar, how dear. */
+function Cost({ it }: { it: P.CalItem }) {
+  if (!it.cost) return null;
+  const w = Math.round(Math.max(0.06, Math.min(1, it.regret)) * 100);
+  const say = { missed: 'A sound you needed', unwanted: 'A sound you did not want', mixup: 'A silent mix-up' }[it.cost];
+  return (
+    <span class={`cal-cost cal-cost-${it.cost}`} role="img" aria-label={`${say}: cost ${Math.round(it.regret * 100)} of 100`} data-cost={it.cost}>
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        {it.cost === 'mixup' ? (
+          <rect x="2" y="5" width="12" height="6" rx="2" fill="none" stroke="currentColor" stroke-width="1.5" />
+        ) : (
+          <>
+            <path d="M4.5 11V7.5a3.5 3.5 0 0 1 7 0V11l1.2 1.2H3.3z" fill="currentColor" />
+            <circle cx="8" cy="13.6" r="1.2" fill="currentColor" />
+            {it.cost === 'missed' ? <path d="M2 2l12 12" stroke="var(--bg-raised)" stroke-width="3" /> : <path d="M2.2 5.5a6 6 0 0 1 1.6-3M13.8 5.5a6 6 0 0 0-1.6-3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />}
+            {it.cost === 'missed' && <path d="M2 2l12 12" stroke="currentColor" stroke-width="1.5" />}
+          </>
+        )}
+      </svg>
+      <span class="cal-cost-bar">
+        <i style={{ width: `${w}%` }} />
+      </span>
+    </span>
+  );
+}
+
+const Card = memo(function Card({ it, st, desk, sel }: { it: P.CalItem; st: Local; desk: boolean; sel?: boolean }) {
   const ref = useSwipe(it, !desk);
   const past = it.kind === 'past';
   return (
-    <article ref={ref} class={`cal-card${past ? ' cal-past' : ''}${desk ? ' cal-card-desk' : ''}`} data-cal-id={it.id} data-kind={it.kind} aria-label={`${it.who}: ${it.text}`}>
-      <button class="cal-x" aria-label="Skip" data-track="calibration skip" onClick={() => skip(it)}>
+    <article
+      ref={ref}
+      class={`cal-card${past ? ' cal-past' : ''}${desk ? ' cal-card-desk' : ''}${desk && sel ? ' cal-sel' : ''}`}
+      data-cal-id={it.id}
+      data-kind={it.kind}
+      aria-label={`${it.who}: ${it.text}`}
+      data-track={desk ? 'calibration choose card' : undefined}
+      onClick={desk ? () => chosen.value !== it.id && (chosen.value = it.id) : undefined}
+    >
+      <button class="cal-x" aria-label="Skip" data-track="calibration skip" onClick={(e) => (e.stopPropagation(), skip(it))}>
         ×
       </button>
+      <Cost it={it} />
       {past && <div class="cal-past-say">You said {CAL_ANSWER_NAME[it.answer ?? 'show']}; it had given that {Math.round(it.p[idx(it.answer ?? 'show')] * 100)}%. Its guess now:</div>}
       <Notice it={it} st={st} past={past} />
       {past ? (

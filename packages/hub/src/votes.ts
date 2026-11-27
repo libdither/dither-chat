@@ -71,6 +71,8 @@ export class TriageVotes {
   private previewCache: { at: number; rows: P.TriagePolicyView['preview'] } | null = null;
   /** Mail's marks (mail/triage.ts). */
   readonly others: OtherVotes[] = [];
+  /** Told of a mark taken by a route of its own (mail's vote), so the loudness scale learns it too (main.ts). */
+  onMark: ((messageId: string, marks: P.TriageMarks) => void) | null = null;
 
   constructor(
     private store: Store,

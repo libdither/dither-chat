@@ -30,14 +30,14 @@ export async function loadCheckinCount() {
   } catch {}
 }
 
-/** The feed's cards, rows and the sure ones. */
+/** The feed's cards and past answers, and how far the model is fitted. */
 export async function loadFeed() {
   try {
     const v = await api<P.CalFeedView>('/api/loudness/feed');
     calFeed.value = v;
     checkinCount.value = v.items.filter((i) => (i.kind === 'card' && !i.answer) || i.kind === 'past').length;
   } catch (e) {
-    if (!calFeed.value) calFeed.value = { items: [], sure: [] };
+    if (!calFeed.value) calFeed.value = { items: [], fitted: { signals: 0, need: 0 } };
     failed('Could not load the feed')(e as Error);
   }
 }
