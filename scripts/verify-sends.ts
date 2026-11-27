@@ -1,14 +1,14 @@
 /**
- * Sends that are kept and matched by id (packages/web/src/outbox.ts, docs/sync.md), in a real browser against a demo
- * hub:
+ * Sends kept on the device until the hub has them, then shown from the hub's send queue (packages/web/src/outbox.ts,
+ * sendrows.ts, docs/sync.md "The send queue"), in a real browser against a demo hub:
  *
- *   - a send shows one pending copy, and then exactly one message: the hub's answer names it (messageId), and the
- *     copy goes when that message is here, not when some message with the same text is;
- *   - two identical sends in a row are two messages, each copy replaced by its own;
- *   - on a slow link (the answer to a send held back here, the socket not), the message comes first and the copy
- *     gives way to it at once: never two on screen, by the hub's `sent` event and, with that event dropped, by the
- *     page's own match; two identical quick sends likewise; and a send whose answer is a 504 but whose message came
- *     shows no failed copy, and none comes back after a reload;
+ *   - a send shows one pending row, and then exactly one message: the hub's row names it (messageId), and the row goes
+ *     when that message is here, not when some message with the same text is;
+ *   - two identical sends in a row are two messages, each row replaced by its own;
+ *   - on a slow link (the answer to a send held back here, the socket not), the hub's row comes on the socket and the
+ *     message after it: never two on screen; two identical quick sends likewise (the second goes to the hub after the
+ *     first's answer, so the hub keeps their order); and a send whose answer is a 504 but
+ *     which the hub has shows no failed copy, and none comes back after a reload;
  *   - with the hub stopped, a send waits; it survives a reload (the app comes from its cache), and goes out once
  *     when the hub is back; a reload after that does not bring it back.
  *
@@ -39,36 +39,18 @@ const sh = (cmd: string) => Bun.spawnSync(['sh', '-c', cmd], { stdout: 'inherit'
 
 const boot = await hub('/api/bootstrap');
 if (!boot.accounts.every((a: any) => a.demo)) throw new Error('not a demo hub');
-// A direct conversation one of the demo accounts can send in; the demo answers each message there.
+// A group one of the demo accounts can send in. Not a direct chat: the demo answers each message there a few seconds
+// later, and an answer that came in after what the page showed holds the next send (docs/sync.md "The send queue"),
+// which verify-link.ts covers.
 const sender = new Set(boot.accounts.filter((a: any) => a.status === 'online' && a.capabilities.includes('send')).map((a: any) => a.id));
-const conv = boot.conversations.find((c: any) => c.shape === 'direct' && c.vantages.some((v: any) => sender.has(v.accountId)));
-if (!conv) throw new Error('no direct conversation to send in');
+const conv = boot.conversations.find((c: any) => c.shape === 'group' && c.vantages.some((v: any) => sender.has(v.accountId)));
+if (!conv) throw new Error('no group to send in');
 const stored = async (body: string) => (await hub(`/api/conversations/${conv.id}/messages?limit=60`)).messages.filter((m: any) => m.body === body).length;
 
 const { page, close } = await launch();
 await page.size(1200, 800);
 
-// A slow link, made here: the answer to a send is held back (or turned into a 504) while the socket is not. And with
-// `__dropSent` the hub's `sent` events are taken out of the socket's frames, so the page matches by itself.
-await page.send('Page.addScriptToEvaluateOnNewDocument', {
-  source: `(() => {
-    const d = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
-    window.__sentSeen = 0;
-    Object.defineProperty(WebSocket.prototype, 'onmessage', {
-      configurable: true,
-      get() { return d.get.call(this); },
-      set(fn) {
-        d.set.call(this, fn && function (e) {
-          if (typeof e.data !== 'string' || e.data[0] !== '[') return fn.call(this, e);
-          const f = JSON.parse(e.data);
-          window.__sentSeen += f.filter((x) => x.t === 'sent').length;
-          if (!window.__dropSent) return fn.call(this, e);
-          return fn.call(this, new MessageEvent('message', { data: JSON.stringify(f.filter((x) => x.t !== 'sent')) }));
-        });
-      },
-    });
-  })()`,
-});
+// A slow link, made here: the answer to a send is held back (or turned into a 504) while the socket is not.
 let hold: { ms: number; status?: number } | null = null;
 page.on('Fetch.requestPaused', async (p) => {
   const h = hold;
@@ -138,8 +120,10 @@ try {
   check('…then exactly one message, and no copy', last.real === 1 && last.pending === 0, last);
   check('…never two of it at once', seen.every((c) => c.real + c.pending <= 1), shown(seen));
   const answer = answers.find((a) => a?.ok);
+  check('the hub answers at once that it has it (one tick)', answer?.queued === true && !!answer.row, answer);
   const msgId = await page.eval<string | null>(`[...document.querySelectorAll('.timeline-scroll .msg:not(.pending)')].find(e => e.querySelector('.msg-body')?.textContent.trim() === ${JSON.stringify(one)})?.id?.replace(/^m-/, '') ?? null`);
-  check("the hub's answer names the message it became", !!answer?.messageId && answer.messageId === msgId, { answer: answer?.messageId, shown: msgId });
+  const row = ((await hub('/api/bootstrap')).sends?.rows ?? []).find((r: any) => r.clientId === answer?.row?.clientId);
+  check("the hub's row names the message it became (two ticks)", row?.state === 'sent' && row.messageId === msgId, { row: row && { state: row.state, messageId: row.messageId }, shown: msgId });
   check('…stored once', (await stored(one)) === 1);
 
   // ------------------------------------------------------------------ the same text twice
@@ -166,23 +150,19 @@ try {
 
   await page.send('Fetch.enable', { patterns: [{ urlPattern: '*/api/conversations/*/send', requestStage: 'Response' }] });
   const HELD = 3000;
-  for (const by of ['the hub\'s sent event', 'the page alone'] as const) {
-    await page.eval(`window.__dropSent = ${by === 'the page alone'}, window.__sentSeen = 0`);
+  {
     hold = { ms: HELD };
-    const slow = `slow link ${by === 'the page alone' ? 'page' : 'hub'} ${Date.now().toString(36)}`;
+    const slow = `slow link ${Date.now().toString(36)}`;
     await typeAndSend(slow);
     const w = await watch(slow, HELD + 2500);
     const early = w.find((c) => c.real === 1 && c.pending === 0);
-    check(`slow answer, by ${by}: never two on screen`, w.every((c) => c.real + c.pending <= 1), shown(w));
-    check('…the message replaces the copy before the answer comes', !!early && early.at < HELD - 500, early?.at ?? shown(w));
+    check('slow answer: never two on screen', w.every((c) => c.real + c.pending <= 1), shown(w));
+    check("…the hub's row, then the message, replace the copy before the answer comes", !!early && early.at < HELD - 500, early?.at ?? shown(w));
     check('…and stays one after it', w.at(-1)!.real === 1 && w.at(-1)!.pending === 0, w.at(-1));
     check('…stored once', (await stored(slow)) === 1);
-    const told = await page.eval<number>('window.__sentSeen');
-    if (by === 'the hub\'s sent event') check('…the hub said which message it became, on the socket', told > 0, told);
   }
 
-  // Two identical quick sends, matched by the page alone: one message each, never three on screen.
-  await page.eval(`window.__dropSent = true`);
+  // Two identical quick sends: one message each, never three on screen.
   hold = { ms: HELD };
   const okok = `ok ${Date.now().toString(36)}`;
   await typeAndSend(okok);
@@ -190,7 +170,8 @@ try {
   const w2 = await watch(okok, HELD + 3000);
   const from2 = w2.findIndex((c) => c.real + c.pending === 2);
   check('two identical quick sends on a slow link: two on screen all along, never three', from2 >= 0 && w2.slice(from2).every((c) => c.real + c.pending === 2), shown(w2));
-  check('…both messages before the answers come', w2.some((c) => c.at < HELD - 500 && c.real === 2 && c.pending === 0), shown(w2));
+  // A chat's sends go to the hub one after another, so that it keeps their order: the second waits for the first's answer.
+  check('…the first message before its answer comes', w2.some((c) => c.at < HELD - 500 && c.real >= 1), shown(w2));
   check('…two messages, no copies, stored twice', w2.at(-1)!.real === 2 && w2.at(-1)!.pending === 0 && (await stored(okok)) === 2, w2.at(-1));
 
   // The answer is a 504 ("it may have been sent") but the message came: no failed copy beside it.
@@ -201,7 +182,6 @@ try {
   check('a 504 whose message came: never a failed copy, never two', w3.every((c) => c.failed === 0 && c.real + c.pending <= 1), w3.map((c) => `${c.real}${c.pending}${c.failed}`).join(' '));
   check('…one message at the end, stored once', w3.at(-1)!.real === 1 && w3.at(-1)!.pending === 0 && (await stored(unsure)) === 1, w3.at(-1));
   hold = null;
-  await page.eval(`window.__dropSent = false`);
   await page.send('Fetch.disable');
 
   // ------------------------------------------------------------------ the hub stopped: kept across a reload

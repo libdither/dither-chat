@@ -307,7 +307,8 @@ describe('the server', () => {
   let url = '';
   let hub: HubServer;
   let store: Store;
-  let answer: 'ok' | 'timeout' = 'ok';
+  /** What the next send's command does: answer, or fail with this error. */
+  let answer: 'ok' | Error = 'ok';
   const sent: unknown[] = [];
 
   beforeAll(() => {
@@ -317,7 +318,7 @@ describe('the server', () => {
       online: () => true,
       command: async (_id: string, c: any) => {
         sent.push(c);
-        if (answer === 'timeout') throw new Error('adapter timed out on send');
+        if (answer !== 'ok') throw answer;
         return { nativeId: 'n' };
       },
       created: async () => {},
@@ -345,10 +346,17 @@ describe('the server', () => {
     expect(store.accounts().length).toBe(1);
   });
 
+  /** A conversation of its own for each test: an earlier test's send in doubt holds up the ones behind it (sendqueue.ts). */
+  const convOf = (nativeId: string) => {
+    const acc = store.accounts()[0];
+    store.ingest(acc, { t: 'conversation', conversation: { nativeId, shape: 'group', name: nativeId } });
+    return store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = ?`, nativeId)!.id;
+  };
+
   test('a send whose answer never came is not sent again by a retry', async () => {
-    const conv = store.one<{ id: string }>(`SELECT id FROM conversation WHERE native_id = 'c'`)!.id;
+    const conv = convOf('c-lost');
     const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'once', clientId: 'tmp-1' }) });
-    answer = 'timeout';
+    answer = new Error('adapter timed out on send');
     const first = await send();
     expect(first.status).toBe(504);
     expect((await first.json()).unknown).toBe(true);
@@ -356,6 +364,70 @@ describe('the server', () => {
     const retry = await send();
     expect(retry.status).toBe(504);
     expect(sent.filter((c: any) => c.body === 'once').length).toBe(1);
+  });
+
+  // As the accounts manager's client and the manager fail a call (dither-accounts client CallFailed: a code and a
+  // message): each may have been carried out.
+  const lost = (code: string, message: string) => Object.assign(new Error(message), { code });
+  const inDoubt: [string, Error][] = [
+    ["the manager's client gave up waiting (its call timer)", lost('timeout', 'the manager did not answer')],
+    ['the connection to the manager dropped mid-call', lost('unsure', 'the connection to the manager dropped while this was under way: it may or may not have gone through, and it was not sent again')],
+    ["the manager's client was closed with the call waiting", lost('offline', 'closed')],
+    ['the manager gave up on the account', lost('timeout', 'no answer to send in 120 s')],
+    ["the account's connection was lost while it had the call", lost('offline', 'the account was lost while it had this call (closed): it may or may not have happened, and it was not sent again')],
+    ['an adapter of the hub dropped mid-send', new Error('adapter disconnected mid-command')],
+  ];
+  for (const [n, [what, err]] of inDoubt.entries()) {
+    test(`in doubt when ${what}: 504 unsure, a repeat under the same clientId is not sent again, Send again is`, async () => {
+      const conv = convOf(`c-doubt${n}`);
+      const body = `doubt ${what}`;
+      const send = (clientId: string) => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body, clientId }) });
+      answer = err;
+      const first = await send(`tmp-doubt${n}`);
+      expect(first.status).toBe(504);
+      expect(await first.json()).toMatchObject({ unknown: true, code: 'unsure' } satisfies Partial<P.SendUnsure>);
+      answer = 'ok';
+      const repeat = await send(`tmp-doubt${n}`);
+      expect(repeat.status).toBe(504);
+      expect((await repeat.json()).code).toBe('unsure');
+      expect(sent.filter((c: any) => c.body === body).length).toBe(1);
+      // A new send waits behind the one in doubt (the chat's order): the hub has it, nothing goes.
+      const behind = await send(`tmp-doubt${n}-next`);
+      expect(behind.status).toBe(202);
+      expect(sent.filter((c: any) => c.body === body).length).toBe(1);
+      // Send again is the person's call: the same row goes, then the one behind it.
+      const again = await fetch(`${url}/api/sends/tmp-doubt${n}`, { method: 'POST', body: JSON.stringify({ action: 'send' }) });
+      expect(again.status).toBe(200);
+      await hub.queue.settled(`tmp-doubt${n}-next`);
+      expect(hub.queue.get(`tmp-doubt${n}`)!.state).toBe('sent');
+      expect(hub.queue.get(`tmp-doubt${n}-next`)!.state).toBe('sent');
+      expect(sent.filter((c: any) => c.body === body).length).toBe(3);
+    });
+  }
+
+  test('a refusal is not in doubt; a repeat of its clientId is answered with the refusal, and Try again sends it', async () => {
+    const conv = convOf('c-refused');
+    const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'refused first', clientId: 'tmp-refused' }) });
+    answer = lost('offline', 'the account is not connected');
+    const first = await send();
+    expect(first.status).toBe(500);
+    answer = 'ok';
+    // Never again by itself: an error the hub cannot read may hide one that went out.
+    expect((await send()).status).toBe(500);
+    expect(sent.filter((c: any) => c.body === 'refused first').length).toBe(1);
+    expect((await fetch(`${url}/api/sends/tmp-refused`, { method: 'POST', body: JSON.stringify({ action: 'send' }) })).status).toBe(200);
+    await hub.queue.settled('tmp-refused');
+    expect(hub.queue.get('tmp-refused')!.state).toBe('sent');
+    expect(sent.filter((c: any) => c.body === 'refused first').length).toBe(2);
+  });
+
+  test('without a clientId, a send in doubt still answers 504 unsure (the hub made it an id)', async () => {
+    const conv = convOf('c-noid');
+    answer = lost('timeout', 'the manager did not answer');
+    const res = await fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'no id' }) });
+    answer = 'ok';
+    expect(res.status).toBe(504);
+    expect((await res.json()).code).toBe('unsure');
   });
 
   test('media from a private address is refused', async () => {

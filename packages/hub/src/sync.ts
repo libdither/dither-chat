@@ -13,6 +13,7 @@ import type { Store } from './store.ts';
 import type { UsageStore } from './usage.ts';
 import type { Devices } from './devices.ts';
 import type { MailHub } from './mail/index.ts';
+import type { SendQueue } from './sendqueue.ts';
 import { requestViews } from './add.ts';
 
 type Row = Record<string, any>;
@@ -31,6 +32,7 @@ interface SyncContext {
   devices?: Devices;
   mail?: MailHub;
   boot: string;
+  sends?: SendQueue;
   build?: string;
 }
 
@@ -120,6 +122,11 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
   if (list('rules')) out.push({ t: 'rules', rules: store.rules() });
   if (list('devices') && ctx.devices) out.push({ t: 'devices', devices: ctx.devices.list() });
   if (list('requests')) out.push({ t: 'requests', requests: requestViews(store) });
+  // Whenever there are any, changed or not: a page back after a restart (whose rows left mid-send are now in doubt), or
+  // opened from its kept copy, has the hub's sends as they are now, though nothing journaled a change since its
+  // position. With none and no change, nothing: an empty catch-up stays empty.
+  const sends = ctx.sends?.event();
+  if (sends && (list('sends') || sends.rows.length)) out.push(sends);
 
   if (attention && list('attention')) {
     const xs = of('attention');

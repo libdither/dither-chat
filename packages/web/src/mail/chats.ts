@@ -155,7 +155,8 @@ export const chatSends = new Map<string, { place: string; text: string; subject:
  * Words a chat send's Undo gives back to the box of their place (an email route or a thread): the box takes them when
  * it is empty (ui/Timeline.tsx Composer), as the network's own Undo leaves what you wrote.
  */
-export const refill = signal<{ place: string; text: string; seq: number } | null>(null);
+/** `append`: put after what the box holds rather than only into an empty box (a held send's Edit, PendingNote.tsx). */
+export const refill = signal<{ place: string; text: string; seq: number; append?: true } | null>(null);
 
 /**
  * The places whose chat is drawn now, with its sends under its messages (ui/MailChat.tsx MailSends): their Undo is

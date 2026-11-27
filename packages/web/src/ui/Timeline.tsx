@@ -42,6 +42,8 @@ import {
   loadTimeline,
   markRead,
   pending,
+  hubSends,
+  sentHere,
   toast,
   pref,
   quoted,
@@ -54,11 +56,9 @@ import {
   canDelete,
   canEdit,
   deleteMessage,
-  discardSend,
   editDrafts,
   editMessage,
   editing,
-  retrySend,
   jumpInChat,
   jumpTo,
   startEditing,
@@ -103,6 +103,8 @@ import { heldByPictures, PictureChip } from './PictureSwitch.tsx';
 import { isPicture, onlyPictures, pictureRuns, picturesOf } from '../pictures.ts';
 import { pictureLayout } from '../arrange.ts';
 import { AttachedFiles, PendingUpload, useAttached } from './ComposerFiles.tsx';
+import { PendingNote } from './PendingNote.tsx';
+import { shownSends } from '../sendrows.ts';
 import { TypingBar } from './Typing.tsx';
 import { HeadOrb, offline } from './Offline.tsx';
 import { DisappearsMark, TimerLabel } from './Disappearing.tsx';
@@ -752,7 +754,7 @@ function TriageNote({ m }: { m: P.MessageView }) {
  * draws them; `run`, the messages whose pictures this one draws after its own, when it ends a run of them; `absorbed`,
  * a message of a run whose pictures the run's last message draws.
  */
-const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun, subject, quoteAbove }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[]; subject?: boolean; quoteAbove?: boolean }) {
+const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, highlight, target, thread, who, whoIdent, net, tag, onTag, pictures, run, absorbed, chipRun, subject, quoteAbove, cameSince }: { m: P.MessageView; grouped: boolean; onReply: (m: P.MessageView) => void; onQuote: (id: string) => void; highlight: boolean; target: P.MessageView | null; thread: P.ConversationView | null; who?: string; whoIdent?: string; net?: boolean; tag?: boolean; onTag?: (convId: string) => void; pictures: PictureLayout; run?: P.MessageView[]; absorbed?: boolean; chipRun?: P.MessageView[]; subject?: boolean; quoteAbove?: boolean; cameSince?: boolean }) {
   if (counting) rendered('MessageItem');
   metaRev.value;
   // On a touch screen the action bar (it shows on hover) and the tooltips are not drawn: a long-press opens the same
@@ -818,7 +820,7 @@ const MessageItem = memo(function MessageItem({ m, grouped, onReply, onQuote, hi
   const gif = !m.deleted && !m.forward && !m.poll ? gifLinkOf(m) : null;
   return (
     <div
-      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${m.blast ? 'blast' : ''}`}
+      class={`msg ${grouped ? 'grouped' : target || m.quote ? '' : 'head'} ${m.mentionsSelf ? 'mentioned' : ''} ${highlight ? 'flash' : ''} ${m.blast ? 'blast' : ''} ${cameSince ? 'came-since' : ''}`}
       id={`m-${m.id}`}
       ref={(el) => void (el && swipeReply.set(el, () => onReply(m)))}
       {...menuProps}
@@ -1282,8 +1284,21 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     }
   });
 
-  // A copy whose message came before the hub's answer is not shown: the message is (outbox.ts).
-  const mine = pending.value.filter((p) => convIds.includes(p.conversationId) && !p.echoed);
+  // Sends not yet here as messages: this device's copies until the hub has them, then the hub's rows (sendrows.ts).
+  // A sent one goes once its message is here.
+  // Asked only of sent rows, of which there are few.
+  const here = (id: string) => msgs.some((x) => x.id === id);
+  const sendNow = Date.now() + hubSends.value.offset;
+  const open = hubSends.value.rows.some((r) => r.state === 'sending' || (r.state === 'sent' && !r.messageId));
+  const own = open ? msgs.filter((x) => isSelfIdentity(x.authorId)).map((x) => ({ id: x.id, conversationId: x.conversationId, body: x.body ?? '', ts: x.ts })) : [];
+  const mine = shownSends(convIds, pending.value, hubSends.value.rows, here, sendNow, own);
+  // A sent one whose message never came goes after a while: drawn again then, since nothing else may change.
+  const goneAt = Math.min(...mine.map((x) => x.goneAt ?? Infinity));
+  useEffect(() => {
+    if (!Number.isFinite(goneAt)) return;
+    const t = setTimeout(() => redraw((n) => n + 1), Math.max(0, goneAt - (Date.now() + hubSends.value.offset)) + 50);
+    return () => clearTimeout(t);
+  }, [goneAt]);
   useLayoutEffect(() => {
     const a = anchor.current;
     if (!a || t?.loading || (a.edge === 'first' ? first?.id : last?.id) === a.id) return;
@@ -1373,10 +1388,11 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
     ro.observe(el);
     return () => ro.disconnect();
   }, [tkey]);
-  // A message of your own just sent goes to the newest end, from wherever the view was (Discord does the same).
+  // A message of your own just sent goes to the newest end, from wherever the view was (Discord does the same). Only
+  // one sent from this device: the hub's rows show every device's sends, and one from the phone moves no other view.
   const sent = useRef(0);
   useLayoutEffect(() => {
-    const n = mine.length;
+    const n = mine.filter((p) => sentHere.has(p.key)).length;
     const grew = n > sent.current;
     sent.current = n;
     const el = scroller.current;
@@ -1398,6 +1414,8 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   const items: any[] = [];
   let prev: P.MessageView | null = null;
   const byId = new Map(msgs.map((x) => [x.id, x]));
+  // What came in after what you saw, for a send held by it: marked where it is.
+  const cameSince = new Set(mine.flatMap((x) => x.hold?.ids ?? []));
   // A person's chat: how each account in it is named (the routes shown; a bot in a DM is not among them).
   const heads = chat ? headNames(convIds) : null;
   const unreadFrom = stream
@@ -1494,6 +1512,7 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         chipRun={run && !chipped.has(run) ? (chipped.add(run), run) : undefined}
         subject={subject}
         quoteAbove={!!m.mail?.inReplyTo && prev?.mail?.messageId === m.mail.inReplyTo}
+        cameSince={cameSince.has(m.id)}
       />,
     );
     prev = above = m;
@@ -1537,27 +1556,17 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
         {/* Not yet sent: after the newest, so only while the newest is drawn. */}
         {end === all.length &&
           mine.map((p) => (
-            <div key={p.tempId} class={`msg pending ${p.failed ? 'failed' : ''} ${p.queued ? 'queued' : ''}`} data-temp-id={p.tempId}>
+            <div key={p.key} class={`msg pending ${p.mark}${p.queued ? ' queued' : ''}${p.behind ? ' behind' : ''}`} data-temp-id={p.key}>
               <div class="msg-gutter" />
               <div class="msg-main">
                 <div class="msg-body">{p.body}</div>
-                {p.files?.map((name, i) => (
+                {p.files.map((name, i) => (
                   <div key={i} class="pending-file">
                     <Icon name="paperclip" size={12} /> {name}
-                    {p.uploading && <PendingUpload tempId={p.tempId} index={i} />}
+                    {p.uploading && <PendingUpload tempId={p.key} index={i} />}
                   </div>
                 ))}
-                <span class="pending-note">{p.failed ? `Failed: ${p.failed}` : p.queued ? 'Waiting for the hub, sends when it is back' : p.uploading ? 'Uploading…' : 'Sending…'}</span>
-                {p.failed && (
-                  <span class="pending-actions">
-                    <button class="btn ghost small" onClick={() => retrySend(p.tempId)}>
-                      Try again
-                    </button>
-                    <button class="btn ghost small" onClick={() => discardSend(p.tempId)}>
-                      Discard
-                    </button>
-                  </span>
-                )}
+                <PendingNote s={p} />
               </div>
             </div>
           ))}
@@ -1625,8 +1634,10 @@ const loadPanels = () =>
     },
   ));
 
-export function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed, draft, post }: {
+export function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed, draft, post, also }: {
   targets: { convId: string; accountId?: string };
+  /** The other chats shown above the box (a person's routes, a stream's threads): Edit on a held send of one of them puts its text here. */
+  also?: string[];
   placeholder: string;
   /** Where the half-written message is kept, when not by its conversation: a stream's, whichever thread it goes to. */
   draft?: string;
@@ -1739,9 +1750,9 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   // A mail sent from this box and undone comes back to it (mail/chats.ts refill), unless you have started another.
   const back = refill.value;
   useEffect(() => {
-    if (!back || (back.place !== targets.convId && back.place !== draft) || textNow.current.trim()) return;
+    if (!back || (back.place !== targets.convId && back.place !== draft && !also?.includes(back.place)) || (!back.append && textNow.current.trim())) return;
     refill.value = null;
-    type(back.text);
+    type(back.append && textNow.current.trim() ? `${textNow.current}\n${back.text}` : back.text);
     ta.current?.focus();
   }, [back?.seq]);
   const cancelEdit = () => {
@@ -2605,6 +2616,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       ) : (
         <Composer
           targets={{ convId: focus.id }}
+          also={shown.map((d) => d.id)}
           placeholder={focus.network === 'email' ? `Email ${person.name}` : `Message ${person.name}`}
           reply={reply}
           clearReply={() => setReply(null)}

@@ -78,11 +78,12 @@ try {
     // A message in the middle of the view: where it is drawn says whether what is being read moved.
     const seen = await p.eval<{ id: string; y: number }>(`(() => { const s = document.querySelector('.timeline-scroll').getBoundingClientRect(); const m = [...document.querySelectorAll('.timeline-scroll .msg[id]')].find((x) => { const r = x.getBoundingClientRect(); return r.top > s.top && r.bottom < s.bottom; }); return { id: m.id, y: m.getBoundingClientRect().top }; })()`);
     if (!(await send(body, replyTo))) throw new Error('the demo hub refused the send');
-    await p.until(`[...document.querySelectorAll('.timeline-scroll .msg')].some((m) => m.textContent.includes(${JSON.stringify(body)}))`, 8000);
+    // The message itself, not the hub's row for the send that shows while it goes out (sendrows.ts).
+    await p.until(`[...document.querySelectorAll('.timeline-scroll .msg:not(.pending)')].some((m) => m.textContent.includes(${JSON.stringify(body)}))`, 8000);
     // Two frames: what the browser and the timeline do about it is done.
     return p.eval<{ before: number; after: number; below: number; moved: number }>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => {
       const s = document.querySelector('.timeline-scroll');
-      const m = [...s.querySelectorAll('.msg')].find((x) => x.textContent.includes(${JSON.stringify(body)}));
+      const m = [...s.querySelectorAll('.msg:not(.pending)')].find((x) => x.textContent.includes(${JSON.stringify(body)}));
       r({ before: ${before}, after: s.scrollTop, below: Math.round(m.getBoundingClientRect().bottom - s.getBoundingClientRect().bottom), moved: document.getElementById(${JSON.stringify(seen.id)}).getBoundingClientRect().top - ${seen.y} });
     })))`);
   };
@@ -127,12 +128,25 @@ try {
   })`);
   check(above.moved === 0, 'far up, a row above the view growing does not move what is being read', above);
 
+  // A message sent from this page's own box, far up, takes the view to the newest end; one sent elsewhere (the hub's
+  // send above, as from another device) does not, though the hub's row for it shows here too (sendrows.ts).
+  const ownBody = `own far up ${Date.now()}`;
+  await p.eval(`(async () => { const s = document.querySelector('.timeline-scroll'); s.scrollTop = -400; s.dispatchEvent(new Event('scroll')); await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); })()`);
+  await p.eval(`document.querySelector('.composer textarea').focus()`);
+  await p.send('Input.insertText', { text: ownBody });
+  await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
+  await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await p.until(`[...document.querySelectorAll('.timeline-scroll .msg')].some((m) => m.textContent.includes(${JSON.stringify(ownBody)}))`, 8000);
+  const ownTop = await p.eval<number>(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(document.querySelector('.timeline-scroll').scrollTop))))`);
+  check(ownTop === 0, 'far up, a message sent from this page goes to the newest end', { after: ownTop });
+  await p.until(`[...document.querySelectorAll('.timeline-scroll .msg:not(.pending)')].some((m) => m.textContent.includes(${JSON.stringify(ownBody)}))`, 8000);
+
   // A reply to a message far up: its quote line points there.
   // Forty rows up: more than a screen and a half, with messages above it to be centred among.
   const quotedMsg = { id: await p.eval<string>(`(() => { const ms = [...document.querySelectorAll('.timeline-scroll .msg[id^="m-"]')]; return ms[ms.length - 40].id.slice(2); })()`) };
   const replyBody = `a reply far up ${Date.now()}`;
   await arrive(0, replyBody, quotedMsg.id);
-  const q = `[...document.querySelectorAll('.timeline-scroll .msg')].find((m) => m.textContent.includes(${JSON.stringify(replyBody)})).querySelector('.reply-quote')`;
+  const q = `[...document.querySelectorAll('.timeline-scroll .msg:not(.pending)')].find((m) => m.textContent.includes(${JSON.stringify(replyBody)})).querySelector('.reply-quote')`;
   check(await p.eval(`!!${q}`), 'the reply has a quote line');
   const target = `document.getElementById(${JSON.stringify(`m-${quotedMsg.id}`)})`;
   const drawnTarget = await p.eval<boolean>(`!!${target}`);
@@ -155,7 +169,7 @@ try {
   const nearId = await p.eval<string>(`(() => { const ms = [...document.querySelectorAll('.timeline-scroll .msg[id^="m-"]')]; return ms[ms.length - 2].id.slice(2); })()`);
   const nearText = `near ${Date.now()}`;
   await arrive(0, nearText, nearId);
-  const nearQuote = `[...document.querySelectorAll('.timeline-scroll .msg')].find((m) => m.textContent.includes(${JSON.stringify(nearText)})).querySelector('.reply-quote')`;
+  const nearQuote = `[...document.querySelectorAll('.timeline-scroll .msg:not(.pending)')].find((m) => m.textContent.includes(${JSON.stringify(nearText)})).querySelector('.reply-quote')`;
   const nearTarget = `document.getElementById(${JSON.stringify(`m-${nearId}`)})`;
   check(await p.eval(`!!${nearQuote}`), 'a reply to a message near the end has a quote line');
   if (shots) {

@@ -3,7 +3,7 @@
   "hub": {
     "bootstrap.bytes": { "measured": 384404, "budget": 392093 },
     "bootstrap.zstd": { "measured": 41583, "budget": 42415 },
-    "bootstrap.fields": { "measured": 17488, "budget": 17488, "reason": "The demo world's formatted mail (Alice's trip notes, hub demo.ts seedDemoMail): one more mail thread, and its fields" },
+    "bootstrap.fields": { "measured": 17491, "budget": 17491, "reason": "The demo world's formatted mail (Alice's trip notes, hub demo.ts seedDemoMail): one more mail thread, and its fields; and the send queue: the bootstrap carries the open sends (sends: rows and the hub clock), so every device shows the same ticks and held sends" },
     "bootstrap.conversations": { "measured": 574, "budget": 574 },
     "bootstrap.identities": { "measured": 146, "budget": 146 },
     "bootstrap.persons": { "measured": 51, "budget": 51 },
@@ -36,8 +36,8 @@
     "sync.missed.events": { "measured": 3, "budget": 3, "reason": "Three tiers: the perf world's decisions follow them (every decision has its importance), and a server channel is an inbox row while it holds an unread message on the list" }
   },
   "web": {
-    "startup.bytes": { "measured": 982206, "budget": 1001074, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
-    "startup.gzip": { "measured": 294138, "budget": 300021, "reason": "Choosing a person's name from their profile (docs/profile.md \"Choosing from the hero\", #366): the hero name's copy button, also line, pencil field and its list of names are styled in styles.css, which the first screen loads" },
+    "startup.bytes": { "measured": 983814, "budget": 1001074, "reason": "The check for missing messages (docs/catch-up.md \"Asking\"): Check for Missing Messages in a chat's and a person's menus and the small catchupask.ts it calls, which the first screen's menus carry" },
+    "startup.gzip": { "measured": 295355, "budget": 300021, "reason": "Choosing a person's name from their profile (docs/profile.md \"Choosing from the hero\", #366): the hero name's copy button, also line, pencil field and its list of names are styled in styles.css, which the first screen loads" },
     "startup.files": { "measured": 4, "budget": 4 },
     "html/index.html.bytes": { "measured": 8020, "budget": 8181, "reason": "index.html's socket asks from the snapshot's journal position (read from localStorage), so the hub's catch-up comes as the socket's first frame (docs/sync.md, On the socket)" },
     "html/index.html.gzip": { "measured": 3149, "budget": 3208 },
@@ -265,8 +265,8 @@
     "js/src/ui/SendLists.tsx.gzip": { "measured": 2485, "budget": 2526 },
     "js/src/ui/ServerParts.tsx.bytes": { "measured": 10779, "budget": 10926 },
     "js/src/ui/ServerParts.tsx.gzip": { "measured": 4219, "budget": 4253 },
-    "js/src/ui/Settings.tsx.bytes": { "measured": 65990, "budget": 67276 },
-    "js/src/ui/Settings.tsx.gzip": { "measured": 20412, "budget": 20804 },
+    "js/src/ui/Settings.tsx.bytes": { "measured": 67712, "budget": 69066, "reason": "Settings gained a Sending section (docs/sync.md \"The send queue\"): the countdown's choice list and its help, beside the Catching up section (docs/catch-up.md)" },
+    "js/src/ui/Settings.tsx.gzip": { "measured": 20954, "budget": 21373, "reason": "Settings gained a Sending section (docs/sync.md \"The send queue\"): the countdown's choice list and its help, beside the Catching up section (docs/catch-up.md)" },
     "js/src/ui/SignalPeople.tsx.bytes": { "measured": 6766, "budget": 6869 },
     "js/src/ui/SignalPeople.tsx.gzip": { "measured": 2641, "budget": 2657 },
     "js/src/ui/Stream.tsx.bytes": { "measured": 5805, "budget": 5885 },
