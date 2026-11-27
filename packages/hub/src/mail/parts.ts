@@ -245,10 +245,7 @@ class Parts {
       // Its words with their formatting (blocks.ts), when they say more than the text part: formatting of their own,
       // no text part of its own, or HTML that is not plain (the words without the logo, not the mail framed).
       const tree = this.blocksOf(san);
-      if ('blocks' in tree && (!san.plain || !ownText || carriesMore(tree.blocks))) {
-        out.blocks = tree.blocks;
-        if (san.plain) out.blocksWhole = true;
-      }
+      if ('blocks' in tree && (!san.plain || !ownText || carriesMore(tree.blocks))) out.blocks = tree.blocks;
     }
     out.attachments = parts
       .filter((a) => !(a.inline && a.contentId && cids.has(contentId(a.contentId))))

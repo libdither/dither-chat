@@ -21,7 +21,7 @@
 import { hostsDiffer, linkIsAddress, shownHost } from '@dither-chat/protocol';
 
 /** Bump when the output changes: cached copies made by an older pass are made again. */
-export const SANITIZE_VERSION = 4;
+export const SANITIZE_VERSION = 5;
 
 export interface SanitizeOpts {
   /**
@@ -309,7 +309,8 @@ function placeholder(width: string | null, height: string | null, alt: string | 
   const h = px(height);
   const size = w && h ? `width:${w}px;aspect-ratio:${w}/${h}` : w ? `width:${w}px;height:${Math.min(w, 48)}px` : h ? `width:${h}px;height:${h}px` : 'width:48px;height:32px';
   const label = alt?.trim() ? ` aria-label="${escapeHtml(alt.trim().slice(0, 200))}" title="${escapeHtml(alt.trim().slice(0, 200))}"` : '';
-  return `<span class="dc-img-blocked" role="img"${label} style="${size}"></span>`;
+  // A picture of no known size says so (blocks.ts reads it as one that is not small).
+  return `<span class="dc-img-blocked${w || h ? '' : ' dc-img-unsized'}" role="img"${label} style="${size}"></span>`;
 }
 
 /** A px length in a style ("1px", "0"), or null. */

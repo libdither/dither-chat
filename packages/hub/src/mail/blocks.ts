@@ -44,9 +44,9 @@ const MARKS: Record<string, 'b' | 'i' | 'u' | 's' | 'code'> = {
 };
 /** Elements that are a line of their own, as mail editors write lines. */
 const LINES = new Set('div section article header footer main aside nav center address figure figcaption details summary dl dt dd'.split(' '));
-const DESIGNED = new Set('table thead tbody tfoot tr td th caption col colgroup style'.split(' '));
+const DESIGNED = new Set('table thead tbody tfoot tr td th caption col colgroup'.split(' '));
 /** Never in the sanitiser's output; should one come, its text is not words. */
-const SKIP = new Set('script template textarea title noscript noembed noframes xmp iframe object svg math select option head'.split(' '));
+const SKIP = new Set('style script template textarea title noscript noembed noframes xmp iframe object svg math select option head'.split(' '));
 
 class GiveUp extends Error {
   constructor(readonly why: 'designed' | 'size') {
@@ -197,6 +197,7 @@ export function mailBlocks(html: string): BlocksOf {
       // A picture: a small one (a logo) is left out of the words; any other makes the mail one to show as sent.
       if (tag === 'img' || cls.includes(' dc-img-blocked ')) {
         if (pre) return;
+        if (cls.includes(' dc-img-unsized ')) throw new GiveUp('designed');
         const w = px(el.getAttribute('width')) ?? px(style.match(/(?:^|;)\s*width\s*:\s*([\d.]+px)/i)?.[1]);
         const ratio = style.match(/aspect-ratio\s*:\s*([\d.]+)\s*\/\s*([\d.]+)/i);
         const h = px(el.getAttribute('height')) ?? px(style.match(/(?:^|;)\s*height\s*:\s*([\d.]+px)/i)?.[1]) ?? (w !== null && ratio ? (w * Number(ratio[2])) / Number(ratio[1]) : null);
@@ -343,6 +344,9 @@ export function mailBlocks(html: string): BlocksOf {
         closeTo(entry);
       });
     },
+  });
+  // Text at the document's level too (a mail of bare text and <br>s is in no element).
+  rw.onDocument({
     text(t) {
       pending += t.text;
       if (t.lastInTextNode) flush();

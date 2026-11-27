@@ -165,9 +165,8 @@ function mailViews(hub: MailHub, places: MailPlaces, chat: Store, rows: Row[], p
       flagged: !!r.flagged,
       hasAttachments: !!r.has_attachments,
       bodyState: body ? 'cached' : 'none',
-      // As the reader's BODY_RENDERERS decide: HTML that is not plain, or plain but formatted; not when its words'
-      // tree shows all of it (blocksWhole).
-      rich: !!html && (!html.plain || !!html.formatted) && !body?.blocksWhole,
+      // As the reader's BODY_RENDERERS decide: HTML that is not plain, or plain but formatted.
+      rich: !!html && (!html.plain || !!html.formatted),
       quoted: !!above?.quoted,
       opens: first.get(r.thread_id) === r.id,
     };

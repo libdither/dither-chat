@@ -18,7 +18,7 @@
   white-space: pre-line;
   min-width: 0;
 }
-.mail-blocks > * + *,
+.mail-words.mail-blocks > * + *,
 .mail-blocks li > * + *,
 .mail-bq > * + * {
   margin-top: 8px;

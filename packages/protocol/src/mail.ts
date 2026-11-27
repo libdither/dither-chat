@@ -253,8 +253,6 @@ export interface MailBodyView {
    * colours) and one past the size cap.
    */
   blocks?: MailBlock[];
-  /** `blocks` show all the HTML shows above its quote: "Show as sent" would add nothing. */
-  blocksWhole?: true;
   bcc: MailAddressView[];
   replyTo: MailAddressView[];
   /** Slice 3. */
