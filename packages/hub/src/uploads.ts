@@ -9,12 +9,15 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { chmodSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, truncateSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
-import { attachmentKind, MAX_UPLOAD } from '@dither-chat/protocol';
+import { attachmentKind, jpegCut, MAX_UPLOAD } from '@dither-chat/protocol';
 import { toCommon, type JxlTools } from './jxl.ts';
 import { isJxl } from './jxlformat.ts';
+
+/** The end marker a cut picture is closed with (sendqueue.ts, files still coming). */
+const JPEG_END = new Uint8Array([0xff, 0xd9]);
 
 /** How long an upload waits unused. */
 export const KEEP = 60 * 60_000;
@@ -27,6 +30,8 @@ interface Meta {
   size: number;
   /** Made, or last written or sent. */
   at: number;
+  /** Cut after its last whole layer by a send whose phone stopped (sendqueue.ts): `size` is the cut's, this what the phone had begun. */
+  cut?: { from: number; quality: P.CutQuality };
 }
 
 /** A name for humans and for the network. Never part of a path here. `decode`: it came URI-encoded (a header). */
@@ -165,6 +170,7 @@ export class Uploads {
    */
   async write(id: string, offset: number, body: ReadableStream<Uint8Array> | null, now = Date.now()): Promise<P.UploadState> {
     const meta = this.items.get(id);
+    if (this.sentAlready(id)) throw refuse('it was sent as far as it had come', 410, { sent: true });
     if (!meta) throw refuse('no such upload: it may have expired', 404);
     const have = this.received(id);
     if (this.writing.has(id)) throw refuse('another piece is still being written', 409, { received: have });
@@ -188,7 +194,64 @@ export class Uploads {
     }
     const st = this.state(id);
     if (!st) throw refuse('that upload was cancelled', 404);
+    if (st.received === st.size) this.onWhole?.(id);
     return st;
+  }
+
+  /**
+   * Sent already with a held send, cut as far as it had come or gone with it (sendqueue.ts, files still coming): a phone asking after it
+   * or sending more of it is told so (410 `sent`), and stops, rather than beginning it again.
+   */
+  sentAlready(id: string): boolean {
+    const meta = this.items.get(id);
+    return !!meta?.cut || (!meta && !!this.sent?.(id));
+  }
+
+  /** Told when an upload has all of its bytes (a send waiting on it goes, sendqueue.ts). */
+  onWhole: ((id: string) => void) | null = null;
+  /** Whether an upload no longer here went with a send (sendqueue.ts, files still coming): its next piece is 410, not 404. */
+  sent: ((id: string) => boolean) | null = null;
+
+  /** How long since this upload was last written to (or made, or sent). */
+  idle(id: string, now = Date.now()): number {
+    const m = this.items.get(id);
+    return m ? now - m.at : Infinity;
+  }
+
+  private cuts = new Map<string, { received: number; cut: ReturnType<typeof jpegCut> }>();
+  /** Where what has come of this upload could be cut (a progressive JPEG after its last whole layer), worked out once per size. */
+  private cutOf(id: string) {
+    const m = this.items.get(id);
+    if (!m || this.writing.has(id)) return null;
+    const received = this.received(id);
+    const kept = this.cuts.get(id);
+    if (kept?.received === received) return kept.cut;
+    let cut: ReturnType<typeof jpegCut> = null;
+    if (m.mime === 'image/jpeg' && received > 0 && received < m.size) {
+      try {
+        cut = jpegCut(new Uint8Array(readFileSync(this.path(id))), m.size);
+      } catch {}
+    }
+    this.cuts.set(id, { received, cut });
+    return cut;
+  }
+
+  /** How good this upload would be if cut now; null when it cannot be (not a progressive JPEG, or not even its first picture). */
+  cuttable(id: string): P.CutQuality | null {
+    return this.cutOf(id)?.quality ?? null;
+  }
+
+  /** Cut it after its last whole layer, with an end marker: a whole JPEG from now on, which goes as the file. */
+  cut(id: string, now = Date.now()): boolean {
+    const m = this.items.get(id);
+    const c = this.cutOf(id);
+    if (!m || !c) return false;
+    // In place: what came stays up to the cut, and the end marker goes after it.
+    truncateSync(this.path(id), c.keep);
+    appendFileSync(this.path(id), JPEG_END);
+    this.save(id, { ...m, size: c.keep + JPEG_END.length, at: now, cut: { from: m.size, quality: c.quality } });
+    this.cuts.delete(id);
+    return true;
   }
 
   state(id: string): P.UploadState | null {
@@ -228,6 +291,7 @@ export class Uploads {
 
   remove(ids: string[]) {
     for (const id of ids) {
+      this.cuts.delete(id);
       if (!this.items.delete(id)) continue;
       rmSync(this.path(id), { force: true });
       rmSync(join(this.dir, `${id}.json`), { force: true });
@@ -261,7 +325,7 @@ export class Uploads {
     );
   }
 
-  /** Uploads something else still waits to send (a message to send later, sendlater.ts): the sweep leaves them. */
+  /** Uploads something else still waits to send (a message to send later, sendlater.ts; a send whose files are still coming, sendqueue.ts): the sweep leaves them. */
   held: (() => Set<string>) | null = null;
 
   sweep(now = Date.now()) {

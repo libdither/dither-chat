@@ -239,8 +239,13 @@ export function showsInline(mime: string | null | undefined): boolean {
  * (Discord's as base64), so this stays where every network's limit below is.
  */
 export const MAX_UPLOAD = 25 * 1024 * 1024;
-/** The largest piece of an upload in one request: small enough that a dropped connection on a phone loses little. */
+/** The largest piece of an upload the hub takes in one request (pages from older builds send pieces this big). */
 export const UPLOAD_CHUNK = 2 * 1024 * 1024;
+/**
+ * The piece the app sends (docs/uploads.md): small, so its progress, which counts only what the hub has, moves often
+ * on a slow link, and a dropped connection loses little.
+ */
+export const UPLOAD_PIECE = 256 * 1024;
 /** What each network takes, as far as we can tell without asking. Discord's is the limit without Nitro. */
 export const ATTACHMENT_LIMITS: Record<Network, { bytes: number; files: number }> = {
   discord: { bytes: 10 * 1024 * 1024, files: 10 },

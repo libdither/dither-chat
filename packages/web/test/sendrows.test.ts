@@ -20,6 +20,8 @@ const row = (clientId: string, x: Partial<P.SendRow> = {}): P.SendRow => ({
   hold: null,
   holdUntil: null,
   seq: ++seq,
+  filesComing: false,
+  cut: null,
   ...x,
 });
 const nothingHere = () => false;
@@ -110,4 +112,16 @@ test('what you could see: the newest message across the timelines that show the 
   expect(seenUpTo('cnv_a', [tl('p:ann', [['m1', 10, 'cnv_a'], ['m3', 30, 'cnv_b']])])).toEqual({ id: 'm3', ts: 30 });
   expect(seenUpTo('cnv_a', [tl('c:cnv_b', [['m9', 90, 'cnv_b']])])).toBeNull();
   expect(seenUpTo('cnv_a', [tl('c:cnv_a', [])])).toBeNull();
+});
+
+test('one waiting for its files says so, holds the sends behind it, and one sent cut says how far it came', () => {
+  const shown = shownSends(['cnv_a'], [], [row('p1', { files: ['a.jpg'], filesComing: true }), row('t2', { body: 'after' })], nothingHere, 5000);
+  expect(shown.map((s) => [s.key, s.mark, s.behind ?? null])).toEqual([
+    ['p1', 'hub', null],
+    ['t2', 'hub', 'p1'],
+  ]);
+  expect(sendNote(shown[0], 5000)).toBe('The hub has it, and sends it once the files are in');
+  expect(sendNote(shown[1], 5000)).toBe('The hub has it · waiting on the message above');
+  const [cut] = shownSends(['cnv_a'], [], [row('p1', { state: 'sent', messageId: 'msg_1', files: ['a.jpg'], cut: 'fair' })], nothingHere, 5000);
+  expect(sendNote(cut, 5000)).toBe('Sent as far as it had come (fair)');
 });

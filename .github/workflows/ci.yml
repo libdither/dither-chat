@@ -8,7 +8,7 @@
 # bun run check:boot, bun scripts/verify-login.ts, bun scripts/verify-clear.ts, bun run check:offline,
 # bun scripts/verify-offline.ts, bun scripts/verify-loading.ts, bun scripts/verify-link.ts, bun scripts/verify-arrived.ts, bun scripts/verify-timeline-scroll.ts,
 # bun scripts/verify-presence.ts, bun scripts/verify-video.ts, bun scripts/verify-calibration.ts, bun scripts/verify-edit.ts, bun scripts/verify-sidebar-counts.ts,
-# bun scripts/verify-their-time.ts,
+# bun scripts/verify-pictures.ts, bun scripts/verify-their-time.ts,
 # bun scripts/verify-back.ts, bun scripts/verify-response.ts,
 # bun scripts/verify-memory.ts, bun scripts/verify-perf.ts --ci.
 name: CI
@@ -198,6 +198,10 @@ jobs:
       # Their time beside yours, and their usual day on a card by it: guessed and stated clocks, Escape, back, a zone
       # set by hand, a phone's tap (docs/profile.md, "Their time").
       - run: bun scripts/verify-their-time.ts
+      # Sending a photo: made progressive in the browser, uploaded by quality with the tile showing the hub's copy, a
+      # send the hub holds while it uploads, and the hub sending it as far as it came after the phone's link is cut
+      # (docs/uploads.md, "Pictures that sharpen" and "A send the hub holds"). About two minutes: the hub's shortest wait.
+      - run: bun scripts/verify-pictures.ts
 
   # Back from every kind of page and layer, by Escape and the browser's back, on a computer and a phone, against a demo
   # hub of its own (scripts/verify-back.ts, docs/desktop.md "Escape and back").

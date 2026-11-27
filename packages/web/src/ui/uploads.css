@@ -1,0 +1,135 @@
+/* A file on its way to the hub, in the composer and on a pending message (UploadTile.tsx, ComposerFiles.tsx;
+   docs/uploads.md "How it looks"). Loaded with the conversation's chunk, not at startup. */
+/* The file itself gives the tile its shape; over it, the hub's copy of a photo, or the dither of what is still only
+   on this phone; a badge with the hub's count. */
+.up-tile {
+  position: relative;
+  display: block;
+  height: 100%;
+}
+.up-tile > img,
+.up-tile > video {
+  display: block;
+  height: 100%;
+}
+.up-tile:not(.whole) > img:first-child,
+.up-tile:not(.whole) > video:first-child {
+  visibility: hidden;
+}
+.up-tile > .up-dither,
+.up-tile > .up-hub {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  object-fit: cover;
+}
+.up-dither.sparkle {
+  animation: up-sparkle 0.9s ease-in-out infinite alternate;
+}
+@keyframes up-sparkle {
+  to {
+    opacity: 0.55;
+  }
+}
+.up-badge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 12px);
+  padding: 2px 7px 2px 3px;
+  border-radius: 999px;
+  background: rgb(10 11 16 / 0.62);
+  color: #f1f2f6;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+.up-ring {
+  flex: none;
+  stroke: var(--accent);
+}
+.up-ring .up-ring-track {
+  stroke: rgb(255 255 255 / 0.22);
+}
+.up-size .up-ring .up-ring-track {
+  stroke: var(--border);
+}
+.up-ring.amber {
+  stroke: var(--warn);
+}
+.up-ring.done {
+  stroke: var(--good);
+}
+.up-ring.spin {
+  animation: up-spin 0.9s linear infinite;
+}
+@keyframes up-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .up-dither.sparkle,
+  .up-ring.spin {
+    animation: none;
+  }
+}
+.up-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.up-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+/* A pending message's files: tiles at their shape, then one line for all of them. */
+.pend-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+.pend-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pend-tile {
+  display: block;
+  height: 150px;
+  max-width: 260px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--bg-raised);
+}
+.app.phone .pend-tile {
+  height: 120px;
+  max-width: 200px;
+}
+.pend-tile .up-tile > img,
+.pend-tile .up-tile > video {
+  width: auto;
+  max-width: 260px;
+  object-fit: cover;
+}
+.pend-line {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.pend-line.amber {
+  color: var(--warn);
+}

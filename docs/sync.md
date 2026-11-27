@@ -154,8 +154,10 @@ adapter announcing the same things again, and a send retried after a lost answer
   one made, never sent twice. A device copy is never in doubt for that reason; only the hub can say a send may have
   gone out. One the hub refused (a 4xx: nothing went out) stays, with the reason, to try again or discard. A device
   sends one chat's copies one after the other, in the order they were written. Its files upload as they are attached,
-  a piece at a time ([uploads.md](uploads.md)): a send waits for the ones still uploading, an upload carries on after
-  a reload, and the hub keeps them across its own restart.
+  a piece at a time ([uploads.md](uploads.md)): a send whose files are still uploading goes to the hub at once
+  (`waitForFiles`), and its row heads its chat until they are in or, if the phone stops partway, until the hub sends
+  its photos as far as they came ([uploads.md](uploads.md), "A send the hub holds"); the device uploads them on, its
+  copy hidden behind the row, after a reload too, and the hub keeps them across its own restart.
 - **The hub's rows** (bootstrap `sends`, the `sends` event): every device shows the same rows of a chat's queue under
   its last message once the hub has them, with one tick, two once the network named the message it became, until
   that message is here (or 30 s, for a network that never echoes it; the chat is drawn again then). A row still being
@@ -200,6 +202,10 @@ a slow send) can land after what made it wrong.
   makes it `sent`, a refusal `failed`, an unknown outcome (`outcome.ts unknownOutcome`: its adapter timed out or
   dropped mid-command; the accounts manager's client gave up waiting, its connection dropped mid-call, or it was
   closed with the call waiting; the manager gave up on the account or lost it while it had the call) `unsure`.
+- **Files still coming** (`waitForFiles`, [uploads.md](uploads.md) "A send the hub holds"): the row is `queued` with
+  `filesComing`, heads its chat until its uploads are in, and blocks the rows behind it as a held one does; once they
+  are in, or the hub cut its photos after the phone stopped (`cut`), it goes as any other, checked for a hold first.
+  The hub checks for a hold before it cuts, so a held one keeps its photos whole until you let it go.
 - **A restart**: rows left `sending` become `unsure` ("The hub restarted while sending it"), and `queued` rows go
   again. An answer the account gives while the hub is stopping is kept, so a send that went out is not put in doubt.
 - Every change goes out on the socket (the `sends` event: the open rows, and those sent in the last 2 minutes, with
@@ -219,7 +225,8 @@ a slow send) can land after what made it wrong.
 | `failed` | alert | refused; goes again only when you say | Try again, Discard |
 | `cancelled` | (gone) | taken back before it went | |
 
-A queued row behind a held or in-doubt one says "The hub has it · waiting on the message above".
+A queued row behind a held or in-doubt one, or one whose files are still coming, says "The hub has it · waiting on
+the message above"; the one waiting for its files says "The hub has it, and sends it once the files are in".
 
 **Held when the chat moved on.** The app sends `seenUpTo` (the id and time of the newest message the chat showed when
 Send was pressed) with each send; a reply from a notification sends the id of the message it answers, and the hub

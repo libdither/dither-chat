@@ -3762,6 +3762,15 @@ button.inbox-status:hover {
 .composer-media.failed .composer-media-open {
   border-color: var(--danger);
 }
+/* A pending message with files (Timeline.tsx): only the words are dimmed, so its tiles (ui/uploads.css) show the
+   hub's copy as it is. */
+.pending.with-files {
+  opacity: 1;
+}
+.pending.with-files .msg-body,
+.pending.with-files .pending-note {
+  opacity: 0.6;
+}
 .upload-bar {
   display: block;
   height: 4px;

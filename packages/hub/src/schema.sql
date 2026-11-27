@@ -1353,6 +1353,8 @@ CREATE TABLE IF NOT EXISTS send_queue (
   hold_until      INTEGER,                      -- the countdown, by the hub's clock
   confirmed       INTEGER NOT NULL DEFAULT 0,   -- you pressed Send on it: no hold check on its next try
   told            INTEGER NOT NULL DEFAULT 0,   -- you were notified that it waits
+  files_coming    INTEGER NOT NULL DEFAULT 0,   -- its files are still uploading: it heads its chat until they are in
+  cut             TEXT,                         -- it went with its pictures cut as far as they came, at this detail
   updated_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS send_queue_open ON send_queue(conversation_id, seq) WHERE state NOT IN ('sent', 'cancelled');

@@ -182,13 +182,14 @@ try {
   await page.send('Input.insertText', { text });
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
   await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-  await page.until(`[...document.querySelectorAll('.msg.pending')].some(e => e.textContent.includes(${JSON.stringify(text)}) && e.querySelector('.pending-note')?.textContent === 'Uploading…')`, 5000).then(
-    () => check('sent while a file uploads: it waits, saying it is uploading', true),
-    async () => check('sent while a file uploads: it waits, saying it is uploading', false, await page.eval(`document.querySelector('.msg.pending')?.textContent ?? null`)),
+  // The hub holds the send while its files come (docs/uploads.md, "A send the hub holds").
+  await page.until(`[...document.querySelectorAll('.msg.pending')].some(e => e.textContent.includes(${JSON.stringify(text)}) && e.querySelector('.pending-note')?.textContent === 'The hub has it, and sends it once the files are in')`, 5000).then(
+    () => check('sent while a file uploads: the hub holds it, and it says so', true),
+    async () => check('sent while a file uploads: the hub holds it, and it says so', false, await page.eval(`document.querySelector('.msg.pending')?.textContent ?? null`)),
   );
   check('…and the composer is free again', (await chips()).length === 0, await chips());
-  const pendingPct = await page.eval<string | null>(`document.querySelector('.msg.pending .pending-upload')?.textContent ?? null`);
-  check('…with how far the file has got on the pending message', /\d+%/.test(pendingPct ?? ''), pendingPct);
+  const pendingLine = await page.eval<string | null>(`document.querySelector('.msg.pending .pend-line')?.textContent ?? null`);
+  check('…with how far the files have got on the pending message', /^Sending · .+ of .+/.test(pendingLine ?? ''), pendingLine);
 
   let mid = '';
   await until(() => {
