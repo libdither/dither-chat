@@ -4,13 +4,14 @@
  * (Signal), and its end. Where the network lets a vote change, a tap votes; where it does not, you choose, then
  * Vote. A poll you made ends early from its card where the network allows.
  */
+import { computed } from '@preact/signals';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type * as P from '@dither-chat/protocol';
 import { POLL_RULES, pollDraftProblem, pollHoursLabel } from '@dither-chat/protocol';
 import { renderMarkdown } from '../markdown.ts';
-import { identityName } from '../model.ts';
+import { heldByRequest, identityName } from '../model.ts';
 import { canEndPoll, endPoll, makePoll, vote, voter } from '../polls.ts';
-import { metaRev } from '../state.ts';
+import { metaRev, rev } from '../state.ts';
 import { SourceChip } from './bits.tsx';
 import { Icon } from './icons.tsx';
 import './Poll.css';
@@ -26,8 +27,18 @@ function left(ms: number): string {
   return 'less than an hour left';
 }
 
+/**
+ * The conversations an open message request holds, as one string: accepting one opens its polls' votes, and that
+ * moves `rev`, not `metaRev`. A message or a read moves `rev` too, and leaves this, so polls are not drawn again.
+ */
+const heldSource = computed(() => {
+  rev.value;
+  return [...heldByRequest()].sort().join(' ');
+});
+
 export function PollCard({ m }: { m: P.MessageView }) {
   metaRev.value; // whether an account that can vote is connected
+  heldSource.value; // whether a message request holds this conversation (polls.ts voter)
   const p = m.poll!;
   const mine = p.options.filter((o) => o.mine).map((o) => o.id);
   const [picked, setPicked] = useState<string[] | null>(null);

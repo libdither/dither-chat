@@ -75,9 +75,9 @@ export function MyCodes() {
   const [pick, setPick] = useState(accounts[0]?.id ?? null);
   const [shown, setShown] = useState<string | null>(null);
   const a = accounts.find((x) => x.id === pick) ?? accounts[0];
+  const username = useOwnUsername(a); // before the return below: hooks run in the same order on every draw
   if (!a) return <p class="set-help">Add an account first: each one gets a code here.</p>;
   const me = a.selfIdentityId ? db.identities.get(a.selfIdentityId) : undefined;
-  const username = useOwnUsername(a);
   const own = me ? ownCode(a.network, me, username) : { code: null, notes: [`${a.label} has not said who it is yet, so there is no code to show.`] };
   const code = own.code;
   const hidden = code?.number && shown !== a.id;

@@ -12,7 +12,7 @@ import { bareSubject } from '@dither-chat/protocol';
 import { signal } from '@preact/signals';
 import { api } from '../api.ts';
 import { db } from '../store.ts';
-import { mailChanged } from '../versions.ts';
+import { mailChanged, mailDataVersion } from '../versions.ts';
 import { details } from './held.ts';
 import { rungKey, threadName } from './model.ts';
 
@@ -111,6 +111,21 @@ export function routesByPerson(): Map<string, P.ConversationView[]> {
     else m.set(ch.personId, [routeConv(ch)]);
   }
   return m;
+}
+
+let routesSeen: { mail: number; chats: P.MailChatView[]; v: number } = { mail: -1, chats: [], v: 0 };
+/**
+ * Moves when what `routesByPerson` gives does: a route added, gone or changed (the store replaces a route that
+ * changes). Looked at once per mail change, so one that leaves every route as it was (a thread's flags, a rung) works
+ * out nothing that reads the routes again (model.ts `placesMemo`).
+ */
+export function routesVersion(): number {
+  const mail = mailDataVersion();
+  if (routesSeen.mail === mail) return routesSeen.v;
+  const chats = [...db.mail.chats.values()].filter((ch) => db.mail.accounts.has(ch.accountId));
+  const same = chats.length === routesSeen.chats.length && chats.every((ch, i) => ch === routesSeen.chats[i]);
+  routesSeen = { mail, chats, v: same ? routesSeen.v : routesSeen.v + 1 };
+  return routesSeen.v;
 }
 
 /** Whether a timeline holds mail: the hub's sync of timelines knows only chat, so these are always asked for again. */

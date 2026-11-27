@@ -10,7 +10,7 @@ import { dataVersion, db, inbox, isSelfIdentity, mailTriage } from './state.ts';
 import { convsChangedSince, mailDataVersion, metaDataVersion, placesDataVersion } from './versions.ts';
 import { isMailItem, triageBoard, type Board, type BoardItem } from './board.ts';
 import { mailInboxRows, mailNames, scopeAccounts } from './mail/model.ts';
-import { routesByPerson } from './mail/chats.ts';
+import { routesByPerson, routesVersion } from './mail/chats.ts';
 import { accountName, chatKey, groupChats } from './chatroutes.ts';
 import { channelKey, groupChannels } from './channelrows.ts';
 import { isQuietConv } from './feed.ts';
@@ -37,7 +37,7 @@ function memo<T>(kind: string, id: string, fn: () => T): T {
   return value;
 }
 
-const placesMemos = new Map<string, Map<string, { rev: number; value: unknown; at: number }>>();
+const placesMemos = new Map<string, Map<string, { rev: number; value: unknown; at: number; routes?: number }>>();
 /**
  * The same, for what reads no identity and not the inbox's messages (versions.ts `placesDataVersion`): the rail's
  * places, their counts and order, the badge, people's directs and the inbox's rows. Identities that come with a page or
@@ -48,14 +48,18 @@ const placesMemos = new Map<string, Map<string, { rev: number; value: unknown; a
  * server's count is kept when none of them is under it, where every server's was worked out again from all ~5,600
  * conversations (docs/perf.md "One conversation at a time"). With none changed (reactions' usage), the value holds.
  * It must give what `fn` would; test/model-incremental.test.ts checks that it does.
+ *
+ * `routes`: the value reads people's email routes too (mail/chats.ts), which a mail change moves and
+ * `placesDataVersion` does not: a change to the routes works it out again whole.
  */
-function placesMemo<T>(kind: string, id: string, fn: () => T, update?: (prev: T, ids: ReadonlySet<string>) => T | undefined): T {
+function placesMemo<T>(kind: string, id: string, fn: () => T, update?: (prev: T, ids: ReadonlySet<string>) => T | undefined, routes = false): T {
   const byId = entries(placesMemos, kind);
   const m = byId.get(id);
   const v = placesDataVersion();
-  if (m && m.rev === v) return m.value as T;
+  const mv = routes ? routesVersion() : undefined;
+  if (m && m.routes === mv && m.rev === v) return m.value as T;
   const now = Date.now();
-  if (m) {
+  if (m && m.routes === mv) {
     const ids = convsChangedSince(m.rev);
     if (ids && levelsHeld(m.at, now)) {
       const value = ids.size ? update?.(m.value as T, ids) : (m.value as T);
@@ -68,7 +72,7 @@ function placesMemo<T>(kind: string, id: string, fn: () => T, update?: (prev: T,
     }
   }
   const value = fn();
-  byId.set(id, { rev: v, value, at: now });
+  byId.set(id, { rev: v, value, at: now, routes: mv });
   return value;
 }
 
@@ -1212,7 +1216,7 @@ export function folderConvs(f: P.FolderView): P.ConversationView[] {
       } else for (const c of directsOf(it.id)) out.set(c.id, c);
     }
     return [...out.values()];
-  }, (prev, ids) => (touches(ids, idSet(prev)) ? undefined : prev));
+  }, (prev, ids) => (touches(ids, idSet(prev)) ? undefined : prev), folderLeaves(f).some((it) => it.kind === 'person'));
 }
 
 const idSets = new WeakMap<readonly P.ConversationView[], ReadonlySet<string>>();
@@ -1239,16 +1243,15 @@ function directsByPerson(): Map<string, P.ConversationView[]> {
       }
       const sorted = new Map<string, P.ConversationView[]>();
       for (const [p, l] of found) sorted.set(p, latestFirst(l));
-      return { found, sorted, mail: mailDataVersion() };
+      return { found, sorted };
     },
     // A message or a read in a direct chat: that person's list, as found, with its new copy in the old one's place.
     (prev, ids) => {
-      if (prev.mail !== mailDataVersion()) return undefined;
       let next: typeof prev | null = null;
       for (const id of ids) {
         const c = db.conversations.get(id);
         if (c?.shape !== 'direct' || !c.peerPersonId || !visibleConv(c)) continue;
-        next ??= { found: new Map(prev.found), sorted: new Map(prev.sorted), mail: prev.mail };
+        next ??= { found: new Map(prev.found), sorted: new Map(prev.sorted) };
         const l = next.found.get(c.peerPersonId);
         const at = l ? l.findIndex((x) => x.id === id) : -1;
         if (!l || at < 0) return undefined;
@@ -1259,6 +1262,7 @@ function directsByPerson(): Map<string, P.ConversationView[]> {
       }
       return next ?? prev;
     },
+    true,
   ).sorted;
 }
 
@@ -1287,6 +1291,7 @@ export function people(): { person: P.PersonView; directs: P.ConversationView[];
       for (const id of ids) if (db.conversations.get(id)?.shape === 'direct') return undefined;
       return prev;
     },
+    true, // each person's directs hold their email routes
   );
 }
 
@@ -1484,6 +1489,7 @@ function convRows(): ConvInboxRow[] {
       }
       return { base, out: groupRows([...base.values()]) };
     },
+    true, // a person's first email route makes their DM a chat, grouped with the rest (groupRows)
   ).out;
 }
 
