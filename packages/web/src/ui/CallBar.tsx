@@ -5,7 +5,8 @@
  * phone a sheet under it with every button and Go to chat, on a computer the dock above it. A phone keeps it at the
  * top of the screen wherever the call's own chat isn't the page on screen; a computer shows it under the list (or the
  * page, with the list hidden) where the list has no room for the dock.
- * The mark is a small sign on a chat row with a call going on: three small bars, green when it's your call.
+ * The mark is a small sign on a chat row with a call going on: three small bars, green when it's your call. A person's
+ * row (and a voice channel's) gets a small speaker while they are in a call or voice channel anywhere (VoiceNowMark).
  */
 import { computed, signal } from '@preact/signals';
 import type { JSX } from 'preact';
@@ -17,7 +18,10 @@ import { PANE_DEFAULT, paneWidths } from '../panes.ts';
 import { useLayer } from '../phone.ts';
 import { callIn } from '../ringing.ts';
 import { db, go, metaRev } from '../state.ts';
+import { voiceNow } from '../voicenow.ts';
+import { placesOf } from '../voiceplaces.ts';
 import { Avatar } from './bits.tsx';
+import { Icon } from './icons.tsx';
 import { CallAvatar, callMarks } from './CallAvatar.tsx';
 import { CallControls } from './CallControls.tsx';
 import './CallBar.css';
@@ -177,6 +181,30 @@ export function CallMark({ convIds }: { convIds: readonly string[] }) {
   return (
     <span class="call-mark" data-call-mark="going" role="img" title="A call is going on" aria-label="A call is going on">
       <Bars />
+    </span>
+  );
+}
+
+/**
+ * A small speaker on a person's row while they are in a call or a voice channel now (voicenow.ts), its tooltip saying
+ * where: "In voice in #hangout · Dither", "In a call with you". The row's own conversations are left out: CallMark shows
+ * those. On a voice channel's own row (`channel`), who is in it, unless it is the call you're in.
+ */
+export function VoiceNowMark({ person, identity, convIds = [], channel }: { person?: string | null; identity?: string | null; convIds?: readonly string[]; channel?: string }) {
+  const now = voiceNow.value;
+  let words = '';
+  if (channel) {
+    const ch = now.channels.get(channel);
+    if (ch && yourCall.value?.conv !== channel) words = ch.words;
+  } else if (person || identity) {
+    words = placesOf(now, { person, identity }, convIds)
+      .map((p) => p.words)
+      .join('\n');
+  }
+  if (!words) return null;
+  return (
+    <span class="voice-now-mark" data-voice-now={channel ? 'channel' : 'person'} role="img" title={words} aria-label={words}>
+      <Icon name="voice" size={12} />
     </span>
   );
 }

@@ -2749,7 +2749,8 @@ class DemoAdapter implements InprocAdapter {
   /**
    * Evenings in the hangout voice channel over the past three weeks (kept only with the adversarial voice setting), for
    * a profile's Voice and Close to cards and the graph's voice ties (docs/profile.md "Voice"): Lev and Mara most nights,
-   * Owl for a while, Pixelfox now and then, you twice; Lev and Mara are in it now.
+   * Owl for a while, Pixelfox now and then, you twice; Lev, Mara and Alice are in it now (Alice for the in-call icon
+   * on her DM and People rows, docs/calls.md "In a call now").
    */
   private seedVoice(ago: (min: number) => number) {
     if (this.key !== 'dmain') return;
@@ -2763,7 +2764,7 @@ class DemoAdapter implements InprocAdapter {
       if (d === 10 || d === 6) stretches.push([D.pixelfox, at - 20, at - 75]);
       if (d === 13 || d === 3) stretches.push([this.self, at - 40, at - 100]);
     }
-    stretches.push([D.lev, 25, 0], [D.mara, 22, 0]);
+    stretches.push([D.lev, 25, 0], [D.mara, 22, 0], [D.alice, 12, 0]);
     const times = [...new Set(stretches.flatMap(([, a, b]) => [a, b]).filter((t) => t > 0))].sort((x, y) => y - x);
     for (const t of times)
       this.emit({ t: 'voice', conversation: ch('dither-hangout'), space: g.dither, members: stretches.filter(([, a, b]) => a >= t && b < t).map(([w]) => ({ who: w.nativeId })), ts: ago(t) });
