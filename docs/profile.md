@@ -64,7 +64,10 @@ Left:
   under your bio: your name, pronouns and banner on each network that lets you change them here
   (docs/account-self.md); your picture is the hero's ("Changing a picture", below).
 - **Between you** (on your own page, **Your messages**): their recent messages and your mail threads with them in one list,
-  newest first, six at a time with All for the rest. With both, chips choose All, Messages or Mail with their counts.
+  newest first, six at a time with All for the rest. The hub sends their 15 newest in direct chats and their 15 newest
+  anywhere else, so someone you DM a lot still shows what they said in groups and servers (before 2026-11-27 it was
+  the 15 newest of all, often all direct). With two kinds, chips choose All, Direct, In groups or Mail with their
+  counts.
   A message has the place's picture (the server's icon for a channel), the place, and when; a feed item says what they
   did ("X notifications", "Liked your post: “…”"). A thread (docs/mail.md, "People") says "Mail" and who wrote, with
   its subject bold while unread and its start, and opens in Mail; All mail opens every thread with them. Absent when
@@ -100,8 +103,13 @@ Right:
   the handle and the id, Open on the network, Split Into Its Own Person. A line under the rows says which account
   speaks for them, whether you chose it or the hub did, and which accounts their name and picture are from when
   another's. Under each row, how each of your accounts stands with it ("Connections", below: In your Telegram
-  contacts, Friends on Discord from alt and from main), each with its Remove friend or the like. A row whose name is
-  the person's leads with its handle instead of repeating the name. A hint when someone elsewhere has the same name,
+  contacts, Friends on Discord from alt and from main), each with its Remove friend or the like. Where you could do
+  something, a line says so in the network's words with the button: a stranger's "Not friends on Discord" with **Add
+  friend** (Follow, Add contact), someone who asked "Wants to be friends on Discord" with **Accept** and **Decline**,
+  the same as the hero's buttons (docs/add.md "Profile buttons"). A row whose name is the person's leads with its handle
+  instead of repeating the name, on the line with its buttons; the network, since when and their own name go under it
+  (with no handle the chip shows their own name, so it is not said twice). Until 2026-11-27 that row wrapped its
+  handle, buttons and lines into one squeezed line. A hint when someone elsewhere has the same name,
   saying where ("Alice Chen on Signal", "Alice Chen <alice@…>"), and the merge search, which finds people by any name
   or handle (an email address too) and email addresses no person holds yet (`GET /api/persons/candidates`), sit under
   it. Before 2026-11-23 each account was a tile with its bio on it and its menu behind ⋯; before 2026-11-11 the hero

@@ -19529,26 +19529,21 @@ button.pair-last:hover {
   padding: 4px 6px;
   align-items: center;
 }
-/* An account named as the person: its handle leads, on one line with its buttons. */
-.pf-acct-item[data-same] .pf-acct-name {
-  display: none;
-}
-.pf-acct-item[data-same] .pf-acct-text {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: 8px;
-}
-.pf-acct-item[data-same] .pf-acct-handle {
-  order: -1;
-  flex: 1;
+/* An account named as the person: its handle leads, on the line with its buttons, which keep the right; the network,
+   since when and their own name go on the line under it. */
+.pf-acct-top > .pf-handle {
+  flex: 0 1 auto;
   min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg-raised);
 }
-.pf-acct-item[data-same] .pf-acct-top {
-  flex: none;
-}
-.pf-acct-item[data-same] .pf-acct-edit {
-  flex-basis: 100%;
+.pf-acct-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 /* How yours stand with it, a line each under it, its button small. */
 .pf-acct-item .pf-conn-list {
@@ -19582,8 +19577,17 @@ button.pair-last:hover {
   color: var(--accent-text, var(--accent));
 }
 .pf-acct-item .pf-link-row .btn {
+  flex: none;
   padding: 1px 6px;
   font-size: 11px;
   min-height: 0;
   color: var(--text-faint);
+}
+/* Add friend, Accept and the like on a stranger's account: the one thing to do there, so it reads as a button. */
+.pf-acct-item .pf-offers .pf-link-what b {
+  color: var(--text-dim);
+}
+.pf-acct-item .pf-offers .btn.primary {
+  padding: 2px 9px;
+  color: var(--on-accent);
 }
