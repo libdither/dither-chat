@@ -208,7 +208,7 @@ try {
   check(await wait(b.page, `${shown('.room-chat')} && (${LEAVES}) === 1`, 5000), 'phone: the chat, one Leave');
   await shot(b.page, 'phone-chat');
   // Left from Chat, the next join opens as a room again.
-  await press(b.page, '.call-dock-buttons .call-btn.leave');
+  await press(b.page, '.call-dock .call-btn.leave');
   check(await wait(b.page, `!document.querySelector('.croom') && (window.__activeCall.value === null || window.__activeCall.value.phase === 'ended')`, 8000), 'the dock\'s Leave ends the call');
   check(await wait(b.page, `window.__mics.open() === 0`, 3000), 'no microphone open after leaving');
   await wait(b.page, `!!document.querySelector('.call-join')`, 8000);

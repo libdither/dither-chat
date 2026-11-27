@@ -54,7 +54,7 @@ try {
   const t0 = Date.now();
   await page.until(`document.querySelector('[data-call-phase]')?.dataset.callPhase !== 'connecting'`, 60_000);
   const phase = await page.eval<string>(`document.querySelector('[data-call-phase]')?.dataset.callPhase`);
-  check('call goes live', phase === 'live', { phase, ms: Date.now() - t0, note: await page.eval(`document.querySelector('.call-dock-text small')?.textContent`) });
+  check('call goes live', phase === 'live', { phase, ms: Date.now() - t0, note: await page.eval(`document.querySelector('.call-dock-text')?.textContent`) });
   if (phase === 'live') {
     await page.eval(`document.querySelector('.call-dock-title').click()`);
     await page.until(`document.querySelectorAll('.call-people li:not(.call-empty)').length > 0`, 20_000).catch(() => {});
@@ -66,7 +66,7 @@ try {
       await Bun.sleep(5000);
       const ph = await page.eval<string | undefined>(`document.querySelector('[data-call-phase]')?.dataset.callPhase`);
       if (ph !== 'live') {
-        console.log('call left live:', ph, await page.eval(`document.querySelector('.call-dock-text small')?.textContent`));
+        console.log('call left live:', ph, await page.eval(`document.querySelector('.call-dock-text')?.textContent`));
         break;
       }
       const s = await page.eval<string | undefined>(`document.querySelector('[data-call-stats]')?.dataset.callStats`);

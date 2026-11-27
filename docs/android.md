@@ -29,7 +29,7 @@ Around the WebView:
 | Bridge | `WebViewCompat.addWebMessageListener` named `DitherAndroid`, with an allowed-origin rule of the hub's origin only, so no other page, frame or redirect target can post to it. Page side: `packages/web/src/android.ts` |
 | Calls | `CallService`: a foreground service while the page says a call is live (`phoneCall`, and `microphone` once the microphone is allowed: [The call service](#the-call-service)), with an ongoing notification (Hang up, Mute, Audio route) |
 | Playing in the background | `MediaService`: a `mediaPlayback` foreground service while the page plays a voice message or a sound file, with a media notification and session (play and pause, the position, Close, the lock screen, a headset's button). See [Playing in the background](#playing-in-the-background) |
-| Audio route | `AudioManager.setCommunicationDevice` (Android 12+: speaker, earpiece, Bluetooth, wired, USB); speaker or earpiece before that. The notification's Audio button cycles; `android.setAudioRoute()` is there for the call UI. On the earpiece a proximity wake lock turns the screen off at the ear |
+| Audio route | `AudioManager.setCommunicationDevice` (Android 12+: speaker, earpiece, Bluetooth, wired, USB); speaker or earpiece before that. The notification's Audio button cycles; the call UI's speaker button uses `android.setAudioRoute()`. On the earpiece a proximity wake lock turns the screen off at the ear |
 | History uploads | The History section's upload buttons open the system picker from the app, which then uploads in a `dataSync` foreground service, so it goes on with the app closed. Files, or a whole folder, which a WebView's picker can't do. See [History uploads](#history-uploads) |
 | Push | UnifiedPush (below), registered from Settings → *Push on this device*. Tapping a notification opens its conversation; opening a conversation clears its notification; Reply in the notification goes through the hub's ordinary send, as `sw.js` does in a browser |
 
@@ -657,8 +657,8 @@ loudness without an audio device, so on the phone hearing is the far end's audio
 
 ## What is left
 
-- The call UI has no audio-route picker yet; the notification has one button that cycles. `android.audio` and
-  `android.setAudioRoute()` in `src/android.ts` are there for it.
+- The call UI's speaker button (docs/calls.md "The call bar") switches between the earpiece and the loudspeaker, or
+  picks from a menu with a headset too; the notification still has one button that cycles.
 - Calls in the app run end to end on the emulator against the demo call room (bridge mode, [Testing
   calls](#testing-calls)), rings included; direct mode and Discord calls between the app and a computer are checked by
   hand with `verify-call-pair.ts` on a lab hub. Audio routing has only been seen on the emulator, which offers a

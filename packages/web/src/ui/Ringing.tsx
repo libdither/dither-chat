@@ -47,14 +47,16 @@ function RingCard({ c }: { c: P.CallView }) {
   return (
     <div class="ring-card" role="alertdialog" aria-label={`${caller.name} is calling`} data-call={c.id}>
       <button class="ring-who" onClick={() => go({ view: 'inbox', conv: c.conversationId })} title="Open the chat">
-        <Avatar id={caller.personId ?? c.callerId ?? c.id} name={caller.name} url={caller.avatar} size={40} network={c.network} />
+        <span class="ring-face">
+          <Avatar id={caller.personId ?? c.callerId ?? c.id} name={caller.name} url={caller.avatar} size={48} network={c.network} />
+        </span>
         <span class="ring-text">
-          <b>{caller.name} is calling</b>
+          <b>{caller.name}</b>
           <small>
-            {net} {c.video ? 'video call' : 'call'}
+            Incoming {net} {c.video ? 'video call' : 'call'}
             {where}
-            {!c.canAnswer && ` · ${answerElsewhere(c)}`}
           </small>
+          {!c.canAnswer && <small>{answerElsewhere(c)}</small>}
         </span>
       </button>
       <div class="ring-buttons">

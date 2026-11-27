@@ -137,7 +137,7 @@ for (const mode of modesArg.split(',')) {
     const phase = await page.eval<string>(`document.querySelector('[data-call-phase]')?.dataset.callPhase`);
     const joinMs = Date.now() - t0;
     if (phase !== 'live') {
-      results[mode] = { error: await page.eval(`document.querySelector('.call-dock-text small')?.textContent`) };
+      results[mode] = { error: await page.eval(`document.querySelector('.call-dock-text')?.textContent`) };
       continue;
     }
     await Bun.sleep(3000); // let the connections settle

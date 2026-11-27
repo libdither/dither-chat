@@ -149,11 +149,23 @@
 .call-sheet-buttons {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  gap: 12px;
-  padding: 4px 0 10px;
+  gap: 14px 10px;
+  padding: 6px 0 12px;
 }
+/* Six or more: three to a row, so none is left alone on a line of its own. */
+.call-sheet-buttons:has(> :nth-child(6)) {
+  display: grid;
+  grid-template-columns: repeat(3, 60px);
+  justify-content: space-evenly;
+}
+/* A phone's call screen: round buttons with a word under each (CallControls words). */
+.call-sheet-buttons .call-btn {
+  width: 52px;
+  height: 52px;
+}
+
 .call-sheet-go {
   display: flex;
   align-items: center;

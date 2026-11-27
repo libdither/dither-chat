@@ -298,7 +298,7 @@ export function statusFor(call: CallLike, now: number, networkName: string): Cal
   return { text: callTime(now - call.since), phase: 'live', ...(hint ? { hint } : {}) };
 }
 
-export type CallControlKind = 'mute' | 'deafen' | 'camera' | 'share' | 'hand' | 'speak' | 'listen' | 'leave';
+export type CallControlKind = 'mute' | 'deafen' | 'speaker' | 'camera' | 'share' | 'hand' | 'speak' | 'listen' | 'leave';
 
 export interface CallControl {
   kind: CallControlKind;
@@ -311,6 +311,30 @@ export interface CallControl {
   /** Something of yours is on: camera, sharing, a hand up. */
   on?: boolean;
   disabled?: boolean;
+  /** The speaker button: the phone's sound outputs, the one in use, and the one a tap moves to (null: a tap asks which). */
+  audio?: { routes: AudioRoute[]; current: AudioRoute | null; next: AudioRoute | null };
+}
+
+/** One of the phone's sound outputs (the Android app's `audio` report). */
+export interface AudioRoute {
+  id: number;
+  /** speaker, earpiece, bluetooth, wired, usb, other */
+  kind: string;
+  name: string;
+}
+
+/**
+ * The speaker button, in the Android app only (it reports the phone's sound outputs): between the earpiece and the
+ * loudspeaker a tap switches, as a phone's call screen does; with a headset or Bluetooth as well, a tap asks which.
+ * Lit while the loudspeaker plays. Null with fewer than two outputs, or after the call.
+ */
+export function audioControl(audio: { routes: AudioRoute[]; current: number | null } | null, ended: boolean): CallControl | null {
+  const routes = audio?.routes ?? [];
+  if (ended || routes.length < 2) return null;
+  const current = routes.find((r) => r.id === audio!.current) ?? null;
+  const next = routes.length === 2 ? (routes.find((r) => r.id !== current?.id) ?? null) : null;
+  const now = current ? `Sound: ${current.name}` : 'Sound output';
+  return { kind: 'speaker', label: next ? `Switch to ${next.name}` : 'Choose where the sound plays', title: next ? `${now}. Tap for ${next.name}` : now, on: current?.kind === 'speaker', audio: { routes, current, next } };
 }
 
 /** What the account can do here, beyond the call itself. */
