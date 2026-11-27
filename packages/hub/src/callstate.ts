@@ -144,15 +144,18 @@ function callView(store: Store, r: Row): P.CallView {
   const c = caps(acc);
   const participants = JSON.parse(r.participants || '[]') as string[];
   const ended = r.state === 'ended';
+  const ringing = !ended && !!r.rings_self && !r.declined_at;
+  const network = (acc?.network ?? 'discord') as P.Network;
   return {
     id: r.id,
     accountId: r.account_id,
-    network: (acc?.network ?? 'discord') as P.Network,
+    network,
     conversationId: r.conversation_id,
     callerId: r.caller_id ?? null,
     startedAt: r.started_at,
     state: r.state,
-    ringing: !ended && !!r.rings_self && !r.declined_at,
+    ringing,
+    alerts: ringing && ringGate(store, { conversationId: r.conversation_id, accountId: r.account_id, network, callerId: r.caller_id ?? null }, Date.now()) === 'ring',
     outgoing: !!r.outgoing,
     video: !!r.video,
     participants,

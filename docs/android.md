@@ -647,6 +647,9 @@ bun scripts/verify-call-pair.ts <hub> --conversation <id> --caller <account>@pho
   [--mode bridge|direct] [--wav-callee speech.wav] --serial emulator-5584
 ```
 
+When the two accounts see the call in different chats (two Signal accounts, each with its own DM to the other), name
+the callee's with `--callee-conversation`. On Signal the caller is in the call only once it is answered.
+
 The emulator reaches the hub through `adb reverse`, which carries TCP only: its call's media needs the hub's TURN
 relay (on an address the emulator can reach, such as the computer's LAN address), since the far end offers only
 `.local` host addresses, which the emulator cannot resolve. A phone hears through its WebView, which reports no
