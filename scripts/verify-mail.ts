@@ -223,8 +223,9 @@ async function settles<T>(get: () => Promise<T>, ok: (v: T) => boolean, ms = 150
 
 // ------------------------------------------------------------------ layout (as verify-phone.ts)
 
-// Rows meant to scroll sideways: on a phone the editor's bar is one (its view switch stays at its end).
-const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips, .me-bar';
+// Rows meant to scroll sideways: on a phone the editor's bar is one (its view switch stays at its end), and a place's
+// switch row with more tabs than fit (a person on six networks: docs/places.md "The switch row").
+const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .mail-chips, .me-bar, .view-switch';
 async function overflow(): Promise<string[]> {
   return page.eval(`(() => {
     const W = innerWidth, out = [], sideways = ${JSON.stringify(SIDEWAYS)};

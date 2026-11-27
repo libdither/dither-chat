@@ -451,7 +451,8 @@ try {
   await key('Enter', 13);
   await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   const sam = await listed();
-  check('Enter on a friend from elsewhere opens their accounts: the person, then Matrix and Signal', sam.join('|') === 'Sam Rivera|Sam Rivera · Matrix|Sam Rivera · Signal' || sam.join('|') === 'Sam Rivera|Sam Rivera · Signal|Sam Rivera · Matrix', sam);
+  // Sam is reached by mail too in the demo (demo.ts joins the mail person to the chat person), so mail is one of the accounts.
+  check('Enter on a friend from elsewhere opens their accounts: the person, then Email, Matrix and Signal', sam[0] === 'Sam Rivera' && sam.slice(1).sort().join('|') === 'Sam Rivera · Email|Sam Rivera · Matrix|Sam Rivera · Signal', sam);
   await key('Escape', 27);
   await key('Escape', 27);
   await Bun.sleep(150);

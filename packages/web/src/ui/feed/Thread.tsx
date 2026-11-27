@@ -597,11 +597,13 @@ export function ThreadView({ src, kit: base, onBack, top }: { src: Src; kit: Kit
   const post = shownFocal ? (shownFocal.repostOf ?? shownFocal) : null;
   // The box's line: where it goes, and as whom (docs/chats.md "The message box's line").
   const aimedAt = answering?.post ?? post;
-  const whom = aimedAt ? (kit.isSelf(aimedAt.author ?? null) ? 'yourself' : kit.name(aimedAt.author ?? null)) : '';
+  // Under a post of your own it says "your post": you add to your thread, you do not answer "yourself".
+  const toMine = !!aimedAt && kit.isSelf(aimedAt.author ?? null);
+  const whom = aimedAt && !toMine ? kit.name(aimedAt.author ?? null) : '';
   const lead = (
     <span class="pair-lead-line">
       {answering?.mode === 'quote' ? 'Quote ' : 'Reply to '}
-      <span class="pair-token fixed">{answering?.mode === 'quote' ? `${whom === 'yourself' ? 'your' : `${whom}'s`} post` : whom}</span>
+      <span class="pair-token fixed">{toMine ? 'your post' : answering?.mode === 'quote' ? `${whom}'s post` : whom}</span>
       {` on ${net}`}
       {posters.length > 1 && as && (
         <>

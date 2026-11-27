@@ -92,8 +92,8 @@ const back = async () => {
 
 // ------------------------------------------------------------------ layout checks
 
-/** What scrolls sideways on purpose: rows of chips, code, logs. Anything else that does is a bug. */
-const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen';
+/** What scrolls sideways on purpose: rows of chips, code, logs, a place's switch row with more tabs than fit. Anything else that does is a bug. */
+const SIDEWAYS = '.level-picker, .ident-chips, .composer-files, .sheet-quick, pre, code, .log-view, .detail-dump, .lv-screen, .view-switch';
 /**
  * Anything in view that scrolls sideways when it should not, or runs past the right edge of the screen and
  * so is cut off. Fine inside something meant to scroll sideways, inside the card while it is moved aside, and

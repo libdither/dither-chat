@@ -154,7 +154,7 @@ try {
   const BOX = '.thread-box .compose-text';
   const box = await page.eval<any>(`({ under: !!document.querySelector('.thread-focal .post-composer, .thread-focal .compose-closed, .ct-node .post-composer'), bottom: !!document.querySelector('.thread-pane > .thread-box'), lead: document.querySelector('.thread-box .compose-lead')?.textContent ?? '' })`);
   check('one box, at the bottom of the page, none under the post', !box.under && box.bottom, box);
-  check('…its line says where it goes and as whom: "Reply to yourself on X · as @zyan_demo"', /^Reply to yourself on X · as @zyan_demo/.test(box.lead), box.lead);
+  check('…its line says where it goes and as whom: "Reply to your post on X · as @zyan_demo"', /^Reply to your post on X · as @zyan_demo/.test(box.lead), box.lead);
   await page.eval(`document.querySelector('.thread-focal .post-actions .pa-btn.reply').click()`);
   await page.until(`document.activeElement === document.querySelector('${BOX}')`, 3000).then(
     () => check('Reply on the post focuses the box', true),
@@ -215,6 +215,10 @@ try {
   await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await page.until(`!document.querySelector('.thread-box')?.dataset.aimed && !document.querySelector('.compose-aim')`, 3000);
   check('Escape takes the aim off, and the page stays', (await page.eval<string>('location.hash')) === hashBefore);
+  // The cursor is still in the box from before. Out with it first: then the box having it again can only be the aim's
+  // own focus landing (a timer after the press), and taking it out below is not undone by that timer striking late.
+  await page.eval(`document.activeElement.blur()`);
+  await page.until(`document.activeElement === document.body`, 3000);
   await page.eval(`${ravi}.querySelector(':scope > .ct-main .pa-btn.reply').click()`);
   // The cursor lands in the box a moment after the aim: wait for it, then take it out, so this Escape is the page's.
   await page.until(`document.querySelector('.thread-box')?.dataset.aimed === '${raviId}' && document.activeElement === document.querySelector('${BOX}')`, 3000);

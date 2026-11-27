@@ -21,7 +21,22 @@
 }
 .mail-tree-row.head > .mail-tree-rail {
   top: 10px;
-  border-top-left-radius: 6px;
+}
+/* Where a branch begins, its rail turns in toward the mail: a mail under the turn answers the one above the branch,
+   a mail further down the same rail answers the mail before it. */
+.mail-tree-row.head > .mail-tree-rail::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 4px;
+  width: 9px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.mail-tree-row.head > .mail-tree-rail:hover::before,
+.mail-tree-row.head > .mail-tree-rail:focus-visible::before {
+  background: var(--accent);
 }
 .mail-tree-more {
   margin: 0 0 6px 64px;
