@@ -404,18 +404,20 @@ try {
   const plainBody = await sentBody(tag1);
   check('sent, it arrives as plain @Mom: no reference, no ping', plainBody === `@Mom hi ${tag1}`, plainBody);
 
-  // Theo is one person on Discord and Signal, and a member of the server: "@theo" finds him here, and → opens his accounts.
+  // Theo is one person on Discord, Signal and X (demo.ts), and a member of the server: "@theo" finds him here, and →
+  // opens his accounts.
   const theo = (await ask(dev.id, 'theo', main.id)).rows.find((r) => r.name === 'Theo' && r.section === 'here');
   const theoDiscord = theo?.accounts?.find((a) => a.network === 'discord');
   const theoSignal = theo?.accounts?.find((a) => a.network === 'signal');
-  check('"theo": Theo here, with his Discord and Signal accounts', !!theo && theo.insert === theoDiscord?.insert && !!theoSignal && !theoSignal.pings, theo);
+  const theoX = theo?.accounts?.find((a) => a.network === 'x');
+  check('"theo": Theo here, with his Discord, Signal and X accounts', !!theo && theo.insert === theoDiscord?.insert && !!theoSignal && !theoSignal.pings && !!theoX && !theoX.pings, theo);
   await clear();
   await type('@theo');
   await settled(dev.id, 'theo', main.id);
   await key('ArrowRight', 39);
   await page.until(`!!document.querySelector('.mp-pop .mp-back')`, 3000).catch(() => {});
   const accounts = await listed();
-  check("→ opens Theo's accounts, each with its network", accounts.length === 2 && accounts.includes(`${theoDiscord?.name} · Discord`) && accounts.includes(`${theoSignal?.name} · Signal`), accounts);
+  check("→ opens Theo's accounts, each with its network", accounts.length === 3 && accounts.includes(`${theoDiscord?.name} · Discord`) && accounts.includes(`${theoSignal?.name} · Signal`) && accounts.includes(`${theoX?.name} · X`), accounts);
   await key('Escape', 27);
   await Bun.sleep(150);
   check('Escape goes back to the list, still open', (await open()) && !(await page.eval<boolean>(`!!document.querySelector('.mp-pop .mp-back')`)) && (await picked()) === 'Theo');
@@ -547,7 +549,7 @@ try {
     `(() => { const p = document.querySelector('.mp-pop'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right), width: innerWidth, scroll: document.documentElement.scrollWidth }; })()`,
   );
   const phoneAccounts = await listed();
-  check("on a phone: the sections, and a tap on the arrow opens Theo's accounts, which fit the screen", phoneHeads.join('|') === 'Here|Friends' && phoneAccounts.length === 2 && !!phoneFit && phoneFit.left >= 0 && phoneFit.right <= phoneFit.width && phoneFit.scroll <= phoneFit.width, { phoneHeads, phoneAccounts, phoneFit });
+  check("on a phone: the sections, and a tap on the arrow opens Theo's accounts, which fit the screen", phoneHeads.join('|') === 'Here|Friends' && phoneAccounts.length === 3 && !!phoneFit && phoneFit.left >= 0 && phoneFit.right <= phoneFit.width && phoneFit.scroll <= phoneFit.width, { phoneHeads, phoneAccounts, phoneFit });
   if (shots) await page.shot(join(shots, 'mentions-phone-accounts.png'));
   await key('Escape', 27);
   await clear();

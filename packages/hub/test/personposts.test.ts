@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
 import { parseCursor } from '../src/chats.ts';
-import { personPosts } from '../src/personposts.ts';
+import { personPosts, withPublic } from '../src/personposts.ts';
 import { Posts } from '../src/posts.ts';
 import { mediaSigner } from '../src/server.ts';
 import { Store, type AccountRow } from '../src/store.ts';
@@ -102,6 +102,21 @@ describe('a person’s posts', () => {
 
   test('to you only: the reply and the mention', () => {
     expect(ids(page(null, 30, true))).toEqual(['p10', 'p7']);
+  });
+
+  test('their chat: what they wrote to you in public, as rows in the page’s range, oldest first', () => {
+    const empty: P.MessagePage = { messages: [], identities: [], hasMore: false };
+    const all = withPublic(store, kimPerson, null, empty).elsewhere!;
+    expect(all.map((e) => [e.place, e.placeKind, e.post?.act, e.title])).toEqual([
+      ['pst_x_p7', 'post', 'reply', 'replied to your post on X'],
+      ['pst_x_p10', 'post', 'mention', 'mentioned you on X'],
+    ]);
+    expect(all[1]!.excerpt).toBe('@me_demo look');
+    // A page with more before it covers from its oldest message: the reply, older, is the next page's.
+    const oldest = { id: 'msg_x', conversationId: 'c', ts: T - 3 * MIN } as P.MessageView;
+    expect(withPublic(store, kimPerson, null, { ...empty, messages: [oldest], hasMore: true }).elsewhere!.map((e) => e.place)).toEqual(['pst_x_p10']);
+    // …and that page, from the cursor, has the reply and not the mention.
+    expect(withPublic(store, kimPerson, { ts: T - 3 * MIN, id: 'msg_x' }, empty).elsewhere!.map((e) => e.place)).toEqual(['pst_x_p7']);
   });
 
   test('a merge brings the other identity’s posts in, by time; a split takes them away', () => {

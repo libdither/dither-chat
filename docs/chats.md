@@ -198,7 +198,8 @@ conversations too and pages with the same cursor.
 A chat of several routes is one page: the page any conversation has (`PersonChat` uses the same header, timeline and
 message box as `ConversationPane`), with every route interleaved. Opening any DM of theirs, from anywhere, shows it,
 sending through that DM; `#/people/<id>` shows the same page. With one route, a person's page is that conversation's
-page, exactly.
+page, exactly, unless they also post where your accounts read: then it is their page, with a Posts tab
+(docs/places.md "A person's networks").
 
 It adds detail only as the chat needs it. **One rule decides everything it adds** (`tells` in `chatroutes.ts`): for a
 route among the chat's routes, what tells it apart. Of the routes on the same network as this one:

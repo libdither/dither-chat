@@ -403,8 +403,10 @@ export function PersonTabs({ person, directs, view, onTab }: { person: P.PersonV
       value={tabOf(view, directs, extra.map((t) => t.id))}
       onPick={onTab}
       tabs={tabs.map((t) => {
-        if (t.id === POSTS_TAB)
-          return { id: t.id, label: 'Posts', icon: t.network ? <NetGlyph network={t.network} size={12} color={netColor(t.network)} /> : undefined, title: `What they posted in public${t.network ? ` on ${netName(t.network)}` : ''}, as the hub logged it (${TAB_KEYS} move between tabs)` };
+        if (t.id === POSTS_TAB) {
+          // In the text's colour: a network of posts may be black or white (X), so it takes the tab's text colour, which never hides it.
+          return { id: t.id, label: 'Posts', icon: t.network ? <NetGlyph network={t.network} size={12} /> : undefined, title: `What they posted in public${t.network ? ` on ${netName(t.network)}` : ''}, as the hub logged it (${TAB_KEYS} move between tabs)` };
+        }
         const label = t.network ? netName(t.network) : 'All';
         const what = t.network ? `Only ${label}` : 'Every chat with them together';
         return {
@@ -474,8 +476,8 @@ interface ListRow {
 export function PairDropdown({ person, directs, focus, onPick }: { person: P.PersonView; directs: P.ConversationView[]; focus: P.ConversationView; view?: string; onPick: (view: string) => void }) {
   metaRev.value; // names: counts and times come with a new `directs`
   const shows = viewOf(person, directs);
-  // One route shown alone follows the route you send through (PersonChat).
-  const v = shows === 'all' || tabNetwork(shows) !== null ? shows : focus.id;
+  // One route shown alone follows the route you send through (PersonChat); their posts are no one route.
+  const v = shows === 'all' || shows === POSTS_TAB || tabNetwork(shows) !== null ? shows : focus.id;
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   // The header clips what overflows it, so the card is placed on the page, under the line.

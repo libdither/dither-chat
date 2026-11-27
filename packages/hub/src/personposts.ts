@@ -20,7 +20,7 @@ const NETS_SQL = `(${POST_NETWORKS.map((n) => `'${n}'`).join(', ')})`;
 const TO_YOU: ReadonlySet<string> = new Set(['reply', 'mention', 'quote']);
 
 /** Their identities that can post: on a network of posts. */
-export function postingIdentities(s: Store, personId: string): string[] {
+function postingIdentities(s: Store, personId: string): string[] {
   return (s.db.query(`SELECT id FROM identity WHERE person_id = ? AND network IN ${NETS_SQL} ORDER BY id`).all(personId) as Row[]).map((r) => r.id as string);
 }
 

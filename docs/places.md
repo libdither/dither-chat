@@ -46,7 +46,7 @@ Someone you reach on several networks (docs/chats.md) has the row under their he
 network you reach them on, its glyph and name ("Signal", "Discord", "Email") and how many are unread there. A person
 on one network by several routes (three Discord accounts) gets All and Discord. The networks go by their names, mail
 last, so a tab never moves as messages come in and your eyes and keys find it where they left it. The tabs are made by
-one function, `personTabs` in `chattabs.ts`, which takes tabs to add after the networks (their posts, next).
+one function, `personTabs` in `chattabs.ts`, which takes tabs to add after the networks: their **Posts**, last.
 
 - **A network's tab** shows every route on that network together, interleaved as All shows everything, and your
   next message goes through that network: its route of the latest message, unless the route in use is already on
@@ -62,6 +62,25 @@ one function, `personTabs` in `chattabs.ts`, which takes tabs to add after the n
 - What the page shows is kept per person for the session (`viewing` in `ui/Pairs.tsx`: `all`, `net:<network>` or a
   route's id), never in the address. Where a message goes is kept by the hub, an email route too
   (`PATCH /api/chats/person:<id>`), so after a reload the page shows All and still sends where you left it.
+- **Posts** ends the row when they have an account on a network of posts (X, Mastodon, Reddit, Bluesky, …) that one
+  of your accounts reads (`postNetsOf` in `ui/Pairs.tsx`, `postNetworks` in `chattabs.ts`): their identities and your
+  accounts, both already on the page, so the tab costs nothing at start and asks nothing. When they post on one
+  network the tab carries its glyph before "Posts". Someone you reach by one route who also posts gets the person's page
+  (and the row) instead of that chat's own.
+- **The Posts tab** shows what they posted in public as the hub logged it, newest first as on the Feed page, each
+  drawn with the feed's own row (`ui/feed/PersonPosts.tsx`, in the feed's chunk): `GET /api/persons/:id/posts`
+  (`personposts.ts`). Nothing is asked of a network: it lists posts read in a thread or on a profile (variant
+  `posts`), replies under a post you follow (`follow`), and their reply, mention or quote in your notifications
+  (`feed`, which carries their post whole); a like, a repost or a follow there is not a post of theirs. A post both
+  in your notifications and logged shows once, as logged. One written to you says so over it ("Replied to your
+  post"). Older pages come as you scroll. A post opens its thread on top of the page; Back or Escape come back to
+  the Posts tab, still chosen and scrolled where it was (the list and its place are kept per person for the
+  session). With nothing logged, one line says so and opens their profile, whose Recent posts asks the network. The
+  head stays; the message box does not (a post is answered in its thread). The route line says no `only this`.
+- **What they wrote to you in public**, in All: their reply to a post of yours, their post that mentions or quotes
+  you, each one short row at its time among the chat's messages, as their mail in threads with others is ("Theo
+  replied to your post on X · 6:05 PM", its first words, **Answer there** opening the post's thread). The hub adds
+  them to the page's `elsewhere` (`withPublic`, `ElsewhereView.placeKind: 'post'`); `PublicRow.tsx` draws them.
 - When the Same person? suggester is sure (`MATCH_STRONG` or over) that someone else is them, one slim line under
   the row says so: "Also Mom on Signal · Same person? Join · Not them" (`SameLine`). Join merges the two, Not them
   says they are not; nothing is ever joined without you.

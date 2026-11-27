@@ -52,7 +52,7 @@ const { page: p, close } = await launch();
 const shot = async (name: string) => shots && (await p.shot(`${shots}/${name}.png`));
 const at = async (sel: string, pick = '') => {
   const r = await p.eval<{ x: number; y: number } | null>(
-    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => { const b = x.getBoundingClientRect(); return b.width > 0 && b.top >= 0 && b.bottom <= innerHeight && x.innerText.includes(${JSON.stringify(pick)}); }); if (!e) return null; const b = e.getBoundingClientRect(); return { x: b.x + Math.min(b.width / 2, 40), y: b.y + Math.min(b.height / 2, 30) }; })()`,
+    `(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => { const b = x.getBoundingClientRect(); return b.width > 0 && b.top >= 0 && b.bottom <= innerHeight && b.left >= 0 && b.right <= innerWidth && x.innerText.includes(${JSON.stringify(pick)}); }); if (!e) return null; const b = e.getBoundingClientRect(); return { x: b.x + Math.min(b.width / 2, 40), y: b.y + Math.min(b.height / 2, 30) }; })()`,
   );
   if (!r) throw new Error(`nothing on screen matches ${sel} ${pick}`);
   return r;
@@ -82,7 +82,7 @@ const wheel = async (sel: string, dy: number) => {
   await p.until('window.__scrolled === true', 8000);
 };
 
-const tabs = () => p.eval<{ id: string; label: string; on: boolean; glyph: boolean }[]>(`[...document.querySelectorAll('.pane .person-tabs [role=tab]')].filter((t) => t.getBoundingClientRect().width > 0 || t.closest('.person-tabs').scrollWidth > 0).map((t) => ({ id: t.dataset.tab, label: t.innerText.trim(), on: t.getAttribute('aria-selected') === 'true', glyph: !!t.querySelector('svg') }))`);
+const tabs = () => p.eval<{ id: string; label: string; on: boolean; glyph: boolean }[]>(`[...document.querySelectorAll('.pane .person-tabs [role=tab]')].filter((t) => { const b = t.closest('.pane').getBoundingClientRect(); return b.width > 0 && b.left > -1 && b.left < innerWidth; }).map((t) => ({ id: t.dataset.tab, label: t.innerText.trim(), on: t.getAttribute('aria-selected') === 'true', glyph: !!t.querySelector('svg') }))`);
 const chosen = async () => (await tabs()).find((t) => t.on)?.id ?? null;
 const rows = () => p.eval<string[]>(`[...document.querySelectorAll('[data-person-posts] [data-person-post]')].map((e) => e.dataset.personPost)`);
 const scrollTop = () => p.eval<number>(`document.querySelector('[data-person-posts]')?.scrollTop ?? -1`);
@@ -130,6 +130,7 @@ async function pass(phone: boolean) {
   check((await authors()).every((a) => a === 'Theo'), 'every row is theirs', [...new Set(await authors())]);
   check(!(await composer()), 'no message box on the Posts tab');
   check(await p.eval<boolean>(`!!document.querySelector('.pane .conv-head')`), 'the head stays');
+  check(!(await p.eval<boolean>(`[...document.querySelectorAll('.pane .conv-head .pair-only')].some((e) => e.getBoundingClientRect().width > 0)`)), 'and its line says no "only this": their posts are no one route');
   const mark = (id: string) => p.eval<string>(`document.querySelector('[data-person-posts] [data-person-post="${id}"] .pp-to-you')?.textContent ?? ''`);
   const shown = ids.slice(0, first.length);
   const marks = await Promise.all(shown.map(mark));
