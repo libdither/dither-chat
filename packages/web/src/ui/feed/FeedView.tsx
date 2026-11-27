@@ -25,6 +25,7 @@ import './feed.css';
 export { PostsList, ThreadView } from './Thread.tsx';
 export { FeedPane, FeedSidebar } from './FeedPage.tsx';
 export { FollowChat } from './FollowChat.tsx';
+export { PersonPosts } from './PersonPosts.tsx';
 
 /** The feed below its header. Read on the hub as it shows (the network is told nothing); older pages as it scrolls. */
 export function FeedView({ c, kit }: { c: P.ConversationView; kit: Kit }) {

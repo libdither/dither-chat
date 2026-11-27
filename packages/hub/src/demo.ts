@@ -20,7 +20,7 @@ import { DEMO_SELF_CAPS, DemoSelf } from './demoself.ts';
 import type { InprocAdapter } from './supervisor.ts';
 import { DEMO_CALL_CAPS, DemoRings, demoCallRoom } from './democalls.ts';
 import { DemoStage, demoStageSeed } from './demostage.ts';
-import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX } from './demo-x.ts';
+import { DEMO_X2_ACCOUNT, DEMO_X_ACCOUNT, DemoX, X } from './demo-x.ts';
 import { DEMO_POST_ACCOUNTS, DemoPosts } from './demo-posts.ts';
 import { DEMO_EVENT_ACCOUNTS, DemoEvents } from './demo-events.ts';
 import { DEMO_CLOCKS_ACCOUNT, DemoClocks, demoClocksOn } from './demo-clocks.ts';
@@ -3481,7 +3481,11 @@ export function applyDemoOverlay(store: Store) {
   const mailOf = (address: string, name: string) => store.ensurePerson(store.emailIdentity(address, name));
   store.mergePersons(alice, mailOf('alice.chen@example.org', 'Alice Chen'));
   store.mergePersons(sam, mailOf('sam@rivera.example', 'Sam Rivera'));
-  merge('Theo', ['signal', S.theo], ['discord', D.theo]);
+  const theo = merge('Theo', ['signal', S.theo], ['discord', D.theo]);
+  // Theo posts on X too, and the hub logged some of it (demo-x.ts loggedPosts): their page has a Posts tab
+  // (docs/places.md "A person's networks"). X's Alice and Ravi stay apart, for the Same person? flow
+  // (scripts/verify-people-links.ts, verify-same-person.ts).
+  if (store.one('SELECT 1 FROM identity WHERE id = ?', idn('x', X.theo))) store.mergePersons(theo, personOf('x', X.theo));
   merge('Quinn', ['discord', D.quinn], ['signal', S.quinn]);
   if (MULTI_ACCOUNT) merge('Mo', ['discord', MO.main], ['discord', MO.art]);
   if (MULTI_ACCOUNT) merge('Kit', ['discord', KIT.exe], ['discord', KIT.alt], ['discord', KIT.work], ['signal', KIT.sig], ['matrix', KIT.mx], ['matrix', KIT.nix], ['telegram', KIT.tg]);

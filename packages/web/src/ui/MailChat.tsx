@@ -18,6 +18,7 @@ import { db, go, mailRev, metaRev, openChat, openProfile, timelineKey, timelineR
 import { timelines } from '../store.ts';
 import { details } from '../mail/held.ts';
 import { Icon } from './icons.tsx';
+import { PublicRow } from './PublicRow.tsx';
 import './MailChat.css';
 import { MailTile } from './MailLists.tsx';
 import { ChatMailBodyLazy, MailThreadActionsLazy, mailMessageExtras, mailThreadFiling, openCompose, preloadMail } from './mail/lazy.tsx';
@@ -524,6 +525,8 @@ export function ElsewhereRows({ view, person, rows }: { view: string; person: P.
 
 function PlaceRow({ view, person, r }: { view: string; person: P.PersonView; r: ElsewhereRow }) {
   mailRev.value; // whether it is open is its rung in `db.mail`, which a click on it changes
+  // Their post written to you in public (PublicRow.tsx): a row of its own kind.
+  if (r.e.placeKind === 'post') return <PublicRow person={person} e={r.e} />;
   const subject = bareSubject(r.e.title) || '(no subject)';
   const open = isOpen(view, r);
   const menu = useMenu(() => placeMenu(view, person, r, subject));

@@ -11,6 +11,7 @@
 import type { IdentityView, TriageView } from './api.ts';
 import type { FileInfo } from './files.ts';
 import type { MailboxRole, MailWriteKind } from './mail-iface.ts';
+import type { Network } from './ontology.ts';
 
 export type { MailboxRole, MailWriteKind } from './mail-iface.ts';
 
@@ -896,9 +897,11 @@ export interface MailChatView {
  * elsewhere"): a message of theirs in a thread with others. The chat draws one row per thread, at its newest message.
  */
 export interface ElsewhereView {
-  /** Where it is: a thread `mth_…`. */
+  /** Where it is: a thread `mth_…`, or a post's thread `pst_<network>_<post>` (their post written to you in public). */
   place: string;
-  placeKind: 'mail-thread';
+  placeKind: 'mail-thread' | 'post';
+  /** A post's: what it is to you, and its network (docs/places.md "A person's networks"). */
+  post?: { network: Network; act: 'reply' | 'mention' | 'quote' };
   /** The place's name: the thread's subject. */
   title: string;
   /** The others there besides you and them, by name. */

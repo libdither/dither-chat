@@ -6,7 +6,7 @@ import { codeBuild } from './restarts.ts';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
-import { personPosts } from './personposts.ts';
+import { personPosts, withPublic } from './personposts.ts';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
 import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
@@ -1888,8 +1888,9 @@ export class HubServer {
         // With mail (docs/mail.md "Mail as chats"): their mail with you alone, merged in by the same cursor, and what
         // they wrote in threads with others in the page's range.
         const places = ref.kind === 'person' ? mailPlaces(this.opts.mail) : null;
-        if (ref.kind === 'person' && places?.chat) return ok(personPage(this.opts.mail!, places, s, ref.personId, before, limit));
-        return ok(ref.kind === 'person' ? s.personTimeline(ref.personId, before, limit) : s.mergedTimeline([ref.conversationId], before, limit));
+        // And what they wrote to you in public, as short rows the same way (personposts.ts withPublic).
+        if (ref.kind === 'person') return ok(withPublic(s, ref.personId, before, places?.chat ? personPage(this.opts.mail!, places, s, ref.personId, before, limit) : s.personTimeline(ref.personId, before, limit)));
+        return ok(s.mergedTimeline([ref.conversationId], before, limit));
       }
       if (m[2] === '/messages' && method === 'POST') {
         const b = await body<SendBody & { route?: { conversationId?: string; accountId?: string } }>();

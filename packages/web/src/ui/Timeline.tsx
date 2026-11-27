@@ -131,8 +131,8 @@ import { memo } from './memo.ts';
 import { heldRequest } from '../requests.ts';
 import { LinkBanner, RequestBar, RequestSentMark, RequestSentNote } from './Requests.tsx';
 import { countKey } from '../clicklog.ts';
-import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, PersonTabs, RouteTag, SameLine, SendAsLead, SendLine, setView, tabRoute, viewOf } from './Pairs.tsx';
-import { netTab, tabNetwork } from '../chattabs.ts';
+import { badgeShows, focusedPair, focusPair, headNames, loadChat, PairDropdown, PairLead, PersonTabs, postNetsOf, RouteTag, SameLine, SendAsLead, SendLine, setView, tabRoute, viewOf } from './Pairs.tsx';
+import { netTab, POSTS_TAB, tabNetwork } from '../chattabs.ts';
 import { TAB_KEYS } from '../tabkeys.ts';
 import { nicknamable, NicknamedName, ownName } from './Nickname.tsx';
 import { Loading } from './Loader.tsx';
@@ -148,7 +148,7 @@ import { NextUnreadBar, takeQuietOpen } from './NextUnreadLazy.tsx';
 import { CallRoomLazy, roomCall, roomHasChat, roomSide, RoomSwitch } from './CallRoomLazy.tsx';
 import { CallSlot, fillsPage } from './CallSlot.tsx';
 import { ScheduledStrip, useSendExtras } from './SendExtras.tsx';
-import { FeedViewLazy, FollowChatLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
+import { FeedViewLazy, FollowChatLazy, PersonPostsLazy, PostsListLazy, ThreadLazy } from './feed/lazy.tsx';
 import { postMessageKey } from '../feed.ts';
 
 
@@ -2526,7 +2526,8 @@ export function PersonPane({ personId, onBack }: { personId: string; onBack?: ()
   const directs = directsOf(personId);
   if (!person) return <Empty icon="user" title="Person not found" />;
   if (!directs.length) return <Empty icon="user" title={`No chats with ${person.name}`} />;
-  if (directs.length === 1 && directs[0].network !== 'email') return <PlainPane convId={directs[0].id} onBack={onBack} />;
+  // One route and nothing else to show: that chat. Someone who also posts gets their page, for its Posts tab.
+  if (directs.length === 1 && directs[0].network !== 'email' && !postNetsOf(person).length) return <PlainPane convId={directs[0].id} onBack={onBack} />;
   return <PersonChat person={person} directs={directs} onBack={onBack} />;
 }
 
@@ -2544,8 +2545,10 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   useEffect(() => setReply(null), [person.id]);
   useEffect(() => void loadChat(person.id), [person.id]);
   // What the page shows (Pairs.tsx viewOf): every route, one network's (the switch row), or one route's (the list).
-  const chosen = viewOf(person.id, directs);
+  const chosen = viewOf(person, directs);
   const net = tabNetwork(chosen);
+  // Their posts (docs/places.md): the head stays, the body is the list, and no box (a post is answered in its thread).
+  const posts = chosen === POSTS_TAB;
   // Where a message goes: the route of the message you are editing or replying to, else the route in use (Pairs.tsx);
   // with a network's tab chosen, a route on that network (the one in use if it is on it, else its latest).
   const ed = editing.value;
@@ -2553,11 +2556,11 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   const focus = (ed && directs.find((d) => d.id === ed.conversationId)) || (reply && directs.find((d) => d.id === reply.conversationId)) || (net !== null && tabRoute(chosen, inUse, directs)) || inUse;
   useEffect(() => void (!isMailPlace(focus.id) && reactionContext(focus.id)), [focus.id]);
   // Showing one route's history follows the route you send through, so switching it in the message box switches both.
-  const view = chosen === 'all' || net !== null ? chosen : focus.id;
-  const shown = view === 'all' ? directs : net !== null ? directs.filter((d) => d.network === net) : [focus];
+  const view = chosen === 'all' || net !== null || posts ? chosen : focus.id;
+  const shown = view === 'all' || posts ? directs : net !== null ? directs.filter((d) => d.network === net) : [focus];
   // One network of one route is that route's own timeline; of several, the person's, showing only theirs.
-  const tkey = view === 'all' || shown.length > 1 ? timelineKey('p', person.id) : timelineKey('c', shown[0].id);
-  const only = view !== 'all' && shown.length > 1 ? shown.map((d) => d.id) : undefined;
+  const tkey = view === 'all' || posts || shown.length > 1 ? timelineKey('p', person.id) : timelineKey('c', shown[0].id);
+  const only = view !== 'all' && !posts && shown.length > 1 ? shown.map((d) => d.id) : undefined;
   const onFocus = (id: string) => {
     if (reply && reply.conversationId !== id) setReply(null);
     focusPair(person.id, focus.id, id, at?.id);
@@ -2583,49 +2586,55 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
   const held = heldRequest(db.requests, focus.id);
   return (
     <section class="pane">
-      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all' || net !== null, onView }} />
+      <ConvHeader c={focus} onBack={onBack} chat={{ person, directs, all: view === 'all' || net !== null || posts, onView }} />
       <PersonTabs person={person} directs={directs} view={view} onTab={onTab} />
       <SameLine person={person} />
       {!held && shown.filter((d) => d.pending).map((d) => <LinkBanner key={d.id} c={d} />)}
       <NotStartedNote c={focus} />
-      <Timeline
-        key={view}
-        tkey={tkey}
-        only={only}
-        convIds={shown.map((d) => d.id)}
-        onReply={setReply}
-        firstUnreadTs={unreadAt}
-        focus={msg}
-        chat={{ badge: shown.length > 1 && badgeShows(shown), onFocus, onMissing }}
-      />
-      {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
-      <TypingBar
-        convIds={shown.map((d) => d.id)}
-        tkey={tkey}
-        awaited={{ who: person.id, name: person.name, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) || null }}
-        lead={
-          !held && (
-            <>
-              <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />
-              {/* An email route: the thread it goes into, or a new subject (MailChat.tsx SubjectChip). */}
-              {focus.network === 'email' && !reply && <SubjectChip routeId={focus.id} subjects={heldSubjects(tkey)} />}
-              {focus.network === 'email' && reply?.mail && <ReplySubject m={reply} />}
-            </>
-          )
-        }
-      />
-      {held ? (
-        <RequestBar r={held} />
+      {posts ? (
+        <PersonPostsLazy person={person} />
       ) : (
-        <Composer
-          targets={{ convId: focus.id }}
-          placeholder={focus.network === 'email' ? `Email ${person.name}` : `Message ${person.name}`}
-          reply={reply}
-          clearReply={() => setReply(null)}
-          disabledReason={composerBlocker(focus)}
-          routed
-          post={isMailPlace(focus.id) ? mailPost(focus.id, tkey, reply) : undefined}
+        <>
+        <Timeline
+          key={view}
+          tkey={tkey}
+          only={only}
+          convIds={shown.map((d) => d.id)}
+          onReply={setReply}
+          firstUnreadTs={unreadAt}
+          focus={msg}
+          chat={{ badge: shown.length > 1 && badgeShows(shown), onFocus, onMissing }}
         />
+        {/* The route line shares the typing line's row, over the box (docs/chats.md "The message box"). */}
+        <TypingBar
+          convIds={shown.map((d) => d.id)}
+          tkey={tkey}
+          awaited={{ who: person.id, name: person.name, last: Math.max(0, ...directs.map((d) => d.lastMessageAt ?? 0)) || null }}
+          lead={
+            !held && (
+              <>
+                <PairLead person={person} directs={directs} focus={focus} onFocus={onFocus} />
+                {/* An email route: the thread it goes into, or a new subject (MailChat.tsx SubjectChip). */}
+                {focus.network === 'email' && !reply && <SubjectChip routeId={focus.id} subjects={heldSubjects(tkey)} />}
+                {focus.network === 'email' && reply?.mail && <ReplySubject m={reply} />}
+              </>
+            )
+          }
+        />
+        {held ? (
+          <RequestBar r={held} />
+        ) : (
+          <Composer
+            targets={{ convId: focus.id }}
+            placeholder={focus.network === 'email' ? `Email ${person.name}` : `Message ${person.name}`}
+            reply={reply}
+            clearReply={() => setReply(null)}
+            disabledReason={composerBlocker(focus)}
+            routed
+            post={isMailPlace(focus.id) ? mailPost(focus.id, tkey, reply) : undefined}
+          />
+        )}
+        </>
       )}
     </section>
   );

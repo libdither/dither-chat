@@ -10,6 +10,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type * as P from '@dither-chat/protocol';
+import { postMessage, postsConvOf } from './posts.ts';
 import type { AccountRow } from './store.ts';
 import type { InprocAdapter } from './supervisor.ts';
 
@@ -149,6 +150,20 @@ function postsOf(who: Who, epoch: number): P.PostFact[] {
 }
 
 /**
+ * What the hub has logged of Theo's (posts.ts) as if read before: their profile's posts, their question under your
+ * routing post, two from the home timelines, and older ones from scrolling their profile, so a person's Posts tab
+ * (docs/places.md "A person's networks") has a page and more in the plain demo. Theo's X account is one person with
+ * their Signal and Discord (demo.ts applyDemoOverlay); every other X account stays apart.
+ */
+function loggedPosts(epoch: number, replyUnder: P.PostFact | null): P.PostFact[] {
+  const h = homePosts(epoch);
+  const older = Array.from({ length: 24 }, (_, k) =>
+    post(epoch, 700 + k, X.theo, (2 + k) * 24 * 60 + 90, [`Tool ${k + 1} of the week: a script that finds the commit that made a test slow.`, `Cleaned out ${3 + (k % 5)} stale branches. The repo is lighter by a little.`, `Reading notes: chapter ${k + 2}, on building small things that last.`][k % 3], { counts: { likes: 5 + k * 3, replies: k % 4, views: 400 + k * 90 } }),
+  );
+  return [...postsOf('theo', epoch).map(({ pinned: _, ...p }) => p), ...(replyUnder ? [replyUnder] : []), h.theoA, h.release, ...older];
+}
+
+/**
  * The home timelines (docs/feed.md "The Feed page"): who each account follows, newest first, and X's For you, ranked
  * with its reasons. A post both accounts follow (Alice's) is in both, so Home shows it once.
  */
@@ -273,7 +288,7 @@ function threads(epoch: number, made: readonly P.PostFact[] = [], late: readonly
   // Every other post the demo knows: yours, the feeds', profiles', the home timelines' (a conversation's parent first).
   const others = () => {
     const h = homePosts(epoch);
-    return [...Object.values(mine), ...[...feed(epoch), ...workFeed(epoch)].flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch)), ...Object.values(h).map((p) => p.repostOf ?? p)];
+    return [...Object.values(mine), ...[...feed(epoch), ...workFeed(epoch)].flatMap((x) => [x.item.post, x.item.theirs]), ...(Object.keys(X) as Who[]).flatMap((w) => postsOf(w, epoch)), ...Object.values(h).map((p) => p.repostOf ?? p), ...loggedPosts(epoch, null)];
   };
   // A reply and the first answers under it, as X shows one in a thread.
   const chain = (p: P.PostFact) => {
@@ -398,6 +413,15 @@ export class DemoX implements InprocAdapter {
     });
     // Read up to the ones that arrive live.
     if (!this.work) emit({ t: 'read', conversation: 'feed', upToTs: this.epoch - items[items.length - LIVE - 1].min * MIN });
+    // A history of reading (loggedPosts): in the posts conversation the hub keeps, as its own logging writes them.
+    if (!this.work) {
+      const conv = postsConvOf(X.self.nativeId);
+      emit({ t: 'conversation', conversation: { nativeId: conv, shape: 'channel', variant: 'posts', name: 'X posts' } });
+      for (const p of loggedPosts(this.epoch, threads(this.epoch).known(pid(36)))) {
+        const m = postMessage(p, conv);
+        if (m) emit({ t: 'message', message: m });
+      }
+    }
     if (firstRun) writeFileSync(marker, String(Date.now()));
   }
 
