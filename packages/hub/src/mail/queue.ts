@@ -75,11 +75,14 @@ export class MailQueue {
       for (const q of this.waiting) {
         const t = q.find((x) => x.key === key);
         if (t) {
-          // Asked for sooner than it was queued: it moves up.
+          // Asked for sooner than it was queued: it moves up, and starts now if it may. Without the pump it sat until
+          // something else ended or the gate's timer for the line it had left went off: a body fetched ahead (P2),
+          // then asked for by a page (P0), waited out the ten quiet seconds a page's call gives the background.
           if (p < t.p) {
             q.splice(q.indexOf(t), 1);
             t.p = p;
             this.waiting[p].push(t);
+            this.pump();
           }
           return t.done as Promise<T>;
         }
