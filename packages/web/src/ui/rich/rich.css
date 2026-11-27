@@ -201,3 +201,45 @@
 .rc-state.timedOut {
   color: #da373c;
 }
+/* A sound file: its name over its position bar, as a voice message's row. */
+.sound-file {
+  border-radius: 14px;
+}
+.sound-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sound-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.voice-wave.sound-line {
+  flex: none;
+  height: 14px;
+}
+.voice-wave.sound-line::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text-faint);
+  opacity: 0.35;
+}
+.voice-wave.sound-line .voice-line {
+  min-width: 0;
+  border-radius: 2px;
+}
+.sound-facts {
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

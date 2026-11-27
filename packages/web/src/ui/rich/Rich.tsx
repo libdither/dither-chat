@@ -4,11 +4,12 @@
 /**
  * The heavier part of rich messages (docs/rich-messages.md), a chunk loaded the first time a message needs it: a bot's
  * buttons and selects (pressed and chosen from here where the account can, docs/apps.md; link buttons open their link), an activity invite,
- * quotes of the stored messages a message links to, the voice-message player and the embed video player.
+ * quotes of the stored messages a message links to, the voice-message and sound-file players and the embed video player.
  */
 // Classic JSX (the pragmas above), and the app's own helpers handed in as `kit` (parts.tsx) rather than imported:
 // either would split shared chunks off the app's start.
-import { Fragment, h } from 'preact';
+import { useComputed } from '@preact/signals';
+import { Fragment, h, type ComponentChildren } from 'preact';
 import type * as P from '@dither-chat/protocol';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Kit } from './parts.tsx';
@@ -166,63 +167,139 @@ export function RichFoot({ m, rich, kit }: { m: P.MessageView; rich: P.RichView;
 
 const time = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-/** A voice message: play and pause, its waveform filling as it plays (a click on it seeks), and its length. */
-export function VoicePlayer({ a, index, kit }: { a: P.AttachmentView; index: number; kit: Kit }) {
-  const audio = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [at, setAt] = useState(0);
-  const total = a.voice?.seconds ?? 0;
+/**
+ * Where the app's player is in this message's file, when it holds that file (nowplaying.ts playback). Read only by
+ * the parts that move as it plays: the buttons go by `playingKey`, so they are not drawn again with each step. Through
+ * a computed of its own, so the rows of other files, which stay null, are not drawn again either.
+ */
+function usePlace(m: P.MessageView, index: number, kit: Kit) {
+  const key = kit.fileKey(m.id, index);
+  return useComputed(() => {
+    const p = kit.playback.value;
+    return p && p.key === key ? p : null;
+  }).value;
+}
+
+/** A tap on a position bar: play from there. */
+function seekTo(e: MouseEvent, go: (fraction: number) => void) {
+  const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  if (box.width) go(Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)));
+}
+
+/** A position bar's keys: the arrows step 5 seconds, Home and End go to either end. */
+function seekKey(e: KeyboardEvent, at: number, length: number, go: (fraction: number) => void) {
+  if (!length) return;
+  const to = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? at - 5 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? at + 5 : e.key === 'Home' ? 0 : e.key === 'End' ? length : null;
+  if (to === null) return;
+  e.preventDefault();
+  go(Math.max(0, Math.min(1, to / length)));
+}
+
+/** A position bar, for the mouse, a tap and the keys. */
+function Position({ at, length, go, class: cls, children }: { at: number; length: number; go: (fraction: number) => void; class: string; children: ComponentChildren }) {
+  return (
+    <div
+      class={cls}
+      onClick={(e) => seekTo(e, go)}
+      onKeyDown={(e) => seekKey(e, at, length, go)}
+      tabIndex={length ? 0 : -1}
+      role="slider"
+      aria-label="Position"
+      aria-valuemin={0}
+      aria-valuemax={length ? Math.round(length) : undefined}
+      aria-valuenow={Math.round(at)}
+      aria-valuetext={length ? `${time(at)} of ${time(length)}` : time(at)}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Play or pause, saying what: "Play voice message", "Pause voice message". */
+function PlayButton({ playing, what, onClick, kit }: { playing: boolean; what: string; onClick: () => void; kit: Kit }) {
+  return (
+    <button class="icon-btn voice-play" onClick={onClick} aria-label={`${playing ? 'Pause' : 'Play'} ${what}`}>
+      {kit.icon(playing ? 'pause' : 'play', 16)}
+    </button>
+  );
+}
+
+/**
+ * A voice message: its waveform and length, and the controls of the app's player for it (nowplaying.ts playFile), so
+ * it goes on playing when you leave the chat, and shows where it got to when you come back.
+ */
+export function VoicePlayer({ m, a, index, kit }: { m: P.MessageView; a: P.AttachmentView; index: number; kit: Kit }) {
+  const playing = kit.playingKey.value === kit.fileKey(m.id, index);
+  return (
+    <div class="voice-msg" data-att={index}>
+      <PlayButton playing={playing} what="voice message" onClick={() => kit.playFile(m, index)} kit={kit} />
+      <VoicePlace m={m} a={a} index={index} kit={kit} />
+    </div>
+  );
+}
+
+/** The waveform, lit as far as it has played, and the time. */
+function VoicePlace({ m, a, index, kit }: { m: P.MessageView; a: P.AttachmentView; index: number; kit: Kit }) {
+  const place = usePlace(m, index, kit);
+  const at = place?.at ?? 0;
   const points = kit.points(a.voice?.waveform);
   // At most 64 bars, each the loudest of the points it covers.
   const bars: number[] = [];
   const per = Math.max(1, Math.ceil(points.length / 64));
   for (let i = 0; i < points.length; i += per) bars.push(Math.max(...points.slice(i, i + per)));
-  useEffect(() => {
-    const el = audio.current;
-    if (!el) return;
-    const on: Record<string, () => void> = {
-      timeupdate: () => setAt(el.currentTime),
-      ended: () => (setPlaying(false), setAt(0)),
-      pause: () => setPlaying(false),
-      play: () => setPlaying(true),
-    };
-    for (const k in on) el.addEventListener(k, on[k]);
-    return () => {
-      for (const k in on) el.removeEventListener(k, on[k]);
-    };
-  }, []);
-  const length = total || audio.current?.duration || 0;
+  const length = a.voice?.seconds || place?.length || 0;
   const done = length ? at / length : 0;
-  const toggle = () => {
-    const el = audio.current;
-    if (!el) return;
-    if (el.paused) el.play().catch(() => {});
-    else el.pause();
-  };
-  const seek = (e: MouseEvent) => {
-    const el = audio.current;
-    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    if (!el || !length || !box.width) return;
-    el.currentTime = Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)) * length;
+  return (
+    <>
+      <Position class="voice-wave" at={at} length={length} go={(f) => kit.playFile(m, index, f)}>
+        {bars.length ? bars.map((b, i) => <span class={i / bars.length < done ? 'on' : ''} style={{ height: `${Math.max(12, Math.round(b * 100))}%` }} />) : <span class="voice-line" style={{ width: `${Math.round(done * 100)}%` }} />}
+      </Position>
+      <small class="voice-time">{time(place?.playing || at ? at : length)}</small>
+    </>
+  );
+}
+
+/** A sound file: its name, a position bar and the controls of the app's player for it, as a voice message has. */
+export function SoundPlayer({ m, a, index, kit, onPlay }: { m: P.MessageView; a: P.AttachmentView; index: number; kit: Kit; onPlay?: () => void }) {
+  const playing = kit.playingKey.value === kit.fileKey(m.id, index);
+  const play = (from?: number) => {
+    if (!playing) onPlay?.();
+    kit.playFile(m, index, from);
   };
   return (
-    <div class="voice-msg" data-att={index}>
-      <audio ref={audio} src={a.url} preload="none" />
-      <button class="icon-btn voice-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play voice message'}>
-        {playing ? (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <rect x="6" y="4" width="4" height="16" rx="1" />
-            <rect x="14" y="4" width="4" height="16" rx="1" />
-          </svg>
-        ) : (
-          kit.icon('play', 16)
-        )}
-      </button>
-      <div class="voice-wave" onClick={seek} role="slider" aria-label="Position" aria-valuemin={0} aria-valuemax={Math.round(length)} aria-valuenow={Math.round(at)}>
-        {bars.length ? bars.map((b, i) => <span class={i / bars.length < done ? 'on' : ''} style={{ height: `${Math.max(12, Math.round(b * 100))}%` }} />) : <span class="voice-line" style={{ width: `${Math.round(done * 100)}%` }} />}
-      </div>
-      <small class="voice-time">{time(playing || at ? at : length)}</small>
+    <div class="voice-msg sound-file" data-att={index}>
+      <PlayButton playing={playing} what={a.name ?? 'the sound'} onClick={() => play()} kit={kit} />
+      <SoundPlace m={m} a={a} index={index} kit={kit} play={play} />
+      <a class="icon-btn" href={a.url} download={a.name ?? true} aria-label="Download" title="Download">
+        {kit.icon('download', 16)}
+      </a>
     </div>
+  );
+}
+
+/**
+ * The file's name over what it is (its type and size) until the player holds it, then over its position bar; and the
+ * time, where its length is known.
+ */
+function SoundPlace({ m, a, index, kit, play }: { m: P.MessageView; a: P.AttachmentView; index: number; kit: Kit; play: (from?: number) => void }) {
+  const place = usePlace(m, index, kit);
+  const at = place?.at ?? 0;
+  const length = place?.length || a.info?.duration || 0;
+  const done = length ? at / length : 0;
+  return (
+    <>
+      <div class="sound-body">
+        <b class="sound-name">{a.name ?? 'Sound'}</b>
+        {place ? (
+          <Position class="voice-wave sound-line" at={at} length={length} go={play}>
+            <span class="voice-line" style={{ width: `${Math.round(done * 100)}%` }} />
+          </Position>
+        ) : (
+          <small class="sound-facts">{kit.facts(a)}</small>
+        )}
+      </div>
+      {(place || length > 0) && <small class="voice-time">{place?.playing || at ? time(at) : time(length)}</small>}
+    </>
   );
 }
 

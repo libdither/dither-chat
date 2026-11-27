@@ -183,6 +183,9 @@ jobs:
       # The video player with a mouse, keys and a finger: play, pause, seek, mute, full screen and back out of it
       # (docs/media-kinds.md, "Videos").
       - run: bun scripts/verify-video.ts
+      # A voice message or sound file plays on after you leave its chat, in the app's one player, with the playing bar
+      # on a computer and a phone (docs/media-kinds.md, "Playing on after leaving a chat").
+      - run: bun scripts/verify-playing.ts
       # Notification calibration: the inbox's quiet row, the page drawing each notification again where it was seen,
       # and an answer reaching the hub (docs/notifications.md, "Check-ins").
       - run: bun scripts/verify-calibration.ts

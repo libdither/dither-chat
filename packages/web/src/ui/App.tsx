@@ -39,6 +39,7 @@ import { OfflineLayer } from './Offline.tsx';
 import { PaneEdge, usePaneWidths } from './PaneEdge.tsx';
 import { CallDock } from './Call.tsx';
 import { barShown, callBarOn } from './CallBar.tsx';
+import { PlayingBar, playingBarShown } from './PlayingBar.tsx';
 import { RingCards } from './Ringing.tsx';
 import { viewer } from '../viewer.ts';
 import { fileViewer } from '../files.ts';
@@ -440,13 +441,16 @@ export function App() {
   const narrow = p && (detailRoute || rest === 'peek');
   // The call bar is a row of the layout where it shows (CallBar.tsx). The conversation on screen: on a phone, none while
   // the lists show, so a call there is the bar.
-  const bar = barShown((p && tabs) || !('conv' in r) ? null : (r.conv ?? null), p, !p && full);
+  const onScreen = (p && tabs) || !('conv' in r) ? null : (r.conv ?? null);
+  const bar = barShown(onScreen, p, !p && full);
   // A phone's bar means the call's chat is not the page (it may still peek): the call window leaves its slot.
   useLayoutEffect(() => void (callBarOn.value = bar), [bar]);
+  // What the app's player plays, away from its chat, takes the same row (PlayingBar.tsx); a call's bar comes first.
+  const playingBar = !bar && playingBarShown(onScreen);
   return (
     <div
       ref={app}
-      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''} ${bar ? 'with-bar' : ''}`}
+      class={`app ${p ? `phone rest-${rest}` : ''} ${!p && details ? 'with-details' : ''} ${full ? 'full' : ''} ${tabs ? 'tabs' : ''} ${tabRoot ? 'tab-root' : ''} ${narrow ? 'narrow' : ''} ${bar || playingBar ? 'with-bar' : ''}`}
       style={{ '--peek': `${PEEK}px` } as any}
     >
       {updateReady.value && (
@@ -489,6 +493,7 @@ export function App() {
       )}
       {addingAccount.value && <AddAccount onClose={() => (addingAccount.value = false)} />}
       <CallDock bar={bar} />
+      {playingBar && <PlayingBar />}
       <RingCards />
       <ReactionLayer />
       <MessageHistoryLayer />
