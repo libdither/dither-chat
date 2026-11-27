@@ -8,10 +8,10 @@ import { accountName } from './chatroutes.ts';
 
 /** One of their accounts having a name, and which of its names it is. */
 export type NameRef = { i: P.IdentityView; field: P.NameField };
-/** A name of theirs, once however many of their accounts have it. */
+/** A name of theirs, once however many of their accounts have it: "Kit" and "kit" are two. */
 export type NameEntry = { text: string; refs: NameRef[] };
-/** A row of the name picker: `from` null puts the main account's name back. */
-export type NameRow = { text: string; refs: NameRef[]; detail: string; from: P.NameFrom | null; on: boolean };
+/** A row of the name picker: `from` null puts the main account's name back; `nick`, your nickname for the person. */
+export type NameRow = { text: string; refs: NameRef[]; detail: string; from: P.NameFrom | null; on: boolean; nick?: true };
 
 // A phone number for a handle (Signal, WhatsApp) is no name to go by.
 const PHONE = /^[+\d][\d\s()-]*$/;
@@ -42,16 +42,18 @@ export const alsoNames = (entries: NameEntry[], shown: string) => entries.filter
 export const whereFrom = (e: NameEntry) => e.refs.map((r) => [NETWORK_META[r.i.network].name, r.i.handle && !PHONE.test(r.i.handle) && r.i.handle].filter(Boolean).join(' ')).join(', ');
 
 /**
- * The picker's rows: the main account's name as you see it (`faceName`) first, following it as it changes, with the
- * accounts that share it; then each other name. The tick is on the name chosen, or on the first row while nothing is
- * (or the account chosen lacks it now: a nickname removed).
+ * The picker's rows: your nickname for the person first, where you gave one; the main account's name as you see it
+ * (`faceName`), following it as it changes, with the accounts that share it; then each other name. The tick is on your
+ * nickname, else the name chosen, else the main account's (also when the account chosen lacks that name now).
  */
 export function nameRows(entries: NameEntry[], person: P.PersonView, faceName: string, several: boolean): NameRow[] {
-  const chosen = person.nameFrom;
+  const nick = person.nickname;
+  const chosen = nick ? undefined : person.nameFrom;
   const has = (e: NameEntry) => !!chosen && e.refs.some((r) => r.i.id === chosen.identityId && r.field === chosen.field);
   const hit = entries.find(has);
-  const label = (e: NameEntry) => (e.refs.every((r) => r.field === 'nickname') ? 'Your nickname' : e.refs.every((r) => r.field === 'handle') ? 'Handle' : '');
-  const rows: NameRow[] = [{ text: faceName, refs: entries.find((e) => e.text === faceName)?.refs ?? [], detail: several ? "Main account's" : '', from: null, on: !hit || hit.text === faceName }];
+  const label = (e: NameEntry) => (e.refs.every((r) => r.field === 'nickname') ? 'Account nickname' : e.refs.every((r) => r.field === 'handle') ? 'Handle' : '');
+  const rows: NameRow[] = nick ? [{ text: nick, refs: [], detail: 'Your nickname', from: null, on: true, nick: true }] : [];
+  rows.push({ text: faceName, refs: entries.find((e) => e.text === faceName)?.refs ?? [], detail: several ? "Main account's" : '', from: null, on: !nick && (!hit || hit.text === faceName) });
   for (const e of entries) {
     if (e.text === faceName) continue;
     rows.push({ text: e.text, refs: e.refs, detail: label(e), from: { identityId: e.refs[0].i.id, field: e.refs[0].field }, on: has(e) });

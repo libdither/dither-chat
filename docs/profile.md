@@ -141,27 +141,30 @@ and so does making that account main or splitting it off. The hub keeps both on 
 `PersonView.faceId`, `facePinned`, `pictureIdentityId`). Not on your own page: your own accounts go by the names you
 gave them on their networks.
 
-**Choosing from the hero.** Their name is text a click copies, with nothing after it but the pencil. Under it,
-always shown, a line of their other names ("also"), each once with "×N" where it is shared (hover for which
-accounts), a click copying it; handles stay off it (the Accounts card has them), and the line wraps. The pencil
-beside the name turns it into a field, the name selected, with every name of theirs listed under it: the main
-account's name as you see it first ("Main account's", following it as it changes, once, with the marks of the
-accounts that share it), then their other names, then their handles ("Handle"), each text once with its accounts'
-network marks (a handle that is a phone number is left out). Typing filters the list; a name none of theirs is goes
-first as **Call them "…"**, so Enter saves what you typed as your nickname for their main account, which then is the
-name shown. Up and Down move through the list, Enter or ✓ takes the row, Escape or ✕ leaves the name as it was. A pick
-names them everywhere their name shows, ticked when the field opens again, and follows that account: a new display
-name renames them, and while it lacks that name (a nickname you removed) the main account's shows, and the first row
-is the one ticked. The first row puts the main account's back. Someone of one account has the same: its names, then
-its handle. Each account's own nickname is still set from its row in the Accounts card. The Accounts card's note
-says where their name and picture come from when not from the main account. Kept on the person (`person.name_identity_id` with `name_field`, set with `PATCH
-/api/persons/:id { nameFrom: { identityId, field: nickname | display | handle } | null }`, refused whole for an
-account not theirs or a name it lacks; `PersonView.nameFrom`) and cleared when that account is split off. Where their
-accounts have more than one picture, their picture has a badge (a picture on it) and opens all of them in the image viewer, each once, the main
-account's first, starting on the one shown. Each has its account's name, network and handle in the bar, and a row of them
-along the bottom: the one in view ringed, the one shown ticked. Swipe, click one in the row or use the arrow keys to
-page through them; **Use this picture** shows the one in view (the main account's is `{ picture: null }`), and the
-tick moves to it once the hub has it (viewer.ts `choose`). Helpers in `namechoices.ts`, the hero's name in `ui/HeroName.tsx`; checked end to end, on a
+**Choosing from the hero.** Their name is text a click copies, with nothing after it but the pencil. Under it, always
+shown, a line of their other names ("also"), each once with "×N" where it is shared (hover for which accounts), a
+click copying it; handles stay off it (the Accounts card has them), and the line wraps. The pencil beside the name
+turns it into a field, the name selected, with every name of theirs listed under it: the main account's name as you
+see it first ("Main account's", following it as it changes, once, with the marks of the accounts that share it), then
+their other names, then their handles ("Handle"), each text once with its accounts' network marks (a handle that is a
+phone number is left out). Typing filters the list; a name none of theirs is goes first as **Call them "…"**, so Enter
+saves what you typed as your nickname for the person, no account's, which then is the name shown and the list's first
+row, ticked ("Your nickname"); picking any name of theirs takes its place. Names that differ only in case ("Kit",
+"kit") are two names, each with its own row. Up and Down move through the list, Enter or ✓ takes the row, Escape or ✕
+leaves the name as it was. A pick names them everywhere their name shows, ticked when the field opens again, and
+follows that account: a new display name renames them, and while it lacks that name (a nickname you removed) the main
+account's shows, and the first row is the one ticked. The main account's row puts it back. Someone of one account has
+the same: its names, then its handle. Each account's own nickname is still set from its row in the Accounts card. The
+Accounts card's note says where their name and picture come from when not from the main account. Kept on the person
+(`person.name_identity_id` with `name_field`, set with `PATCH /api/persons/:id { nameFrom: { identityId, field:
+nickname | display | handle } | null }`, refused whole for an account not theirs or a name it lacks;
+`PersonView.nameFrom`) and cleared when that account is split off; your nickname for them as `person.nickname` (`{
+nickname }`, docs/chats.md "Names"). Where their accounts have more than one picture, their picture has a badge (a
+picture on it) and opens all of them in the image viewer, each once, the main account's first, starting on the one
+shown. Each has its account's name, network and handle in the bar, and a row of them along the bottom: the one in view
+ringed, the one shown ticked. Swipe, click one in the row or use the arrow keys to page through them; **Use this
+picture** shows the one in view (the main account's is `{ picture: null }`), and the tick moves to it once the hub has
+it (viewer.ts `choose`). Helpers in `namechoices.ts`, the hero's name in `ui/HeroName.tsx`; checked end to end, on a
 computer and on a phone, by `scripts/verify-name-picture.ts` on the `multiaccount` demo.
 
 ### Your own bio

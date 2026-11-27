@@ -110,6 +110,8 @@ export interface PersonView {
    * (yours), display name or handle. `name` is it while that account has it; absent where it follows the face.
    */
   nameFrom?: NameFrom;
+  /** Your nickname for them, no account's (PATCH `{ nickname }`): `name` is it, over every account's name. */
+  nickname?: string;
 }
 
 /** Which of an account's names a person's name is (docs/profile.md, "Which account speaks for them"). */

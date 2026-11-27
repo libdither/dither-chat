@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS person (
   face_pinned INTEGER NOT NULL DEFAULT 0,     -- you chose face_id (Make Main Account); else the hub keeps or chooses one
   picture_identity_id TEXT,                   -- the account whose picture they show, when you chose one other than face_id's
   name_identity_id TEXT,                      -- with name_field: the name you chose for them, one account's (P.NameFrom)
-  name_field TEXT                             -- nickname | display | handle
+  name_field TEXT,                            -- nickname | display | handle
+  nickname   TEXT                             -- your name for them, no account's: shown over every account's name
 );
 
 CREATE TABLE IF NOT EXISTS identity (
