@@ -319,8 +319,11 @@ describe('plain or styled (which part the reader shows)', () => {
     }
     const md = messageHtml('reply', 'See you at **7:30**!\n\n- bring the map\n- and `cash`', sam, true, 'UTC');
     expect([clean(md).plain, clean(md).formatted]).toEqual([true, true]);
-    // Only text, links, lists and quotes: plain, and its text part says it all.
-    for (const html of ['<p>Hi</p>', '<ul><li>a</li></ul>', '<blockquote type="cite">q</blockquote>', messageHtml('reply', 'See you at 7:30!', sam, true, 'UTC')]) expect(clean(html).formatted, html.slice(0, 60)).toBe(false);
+    // Only text, links that show their own address, and quotes: plain, and its text part says it all.
+    for (const html of ['<p>Hi</p>', '<p><a href="https://docs.example/a">https://docs.example/a</a></p>', '<p><a href="https://docs.example/">docs.example</a></p>', '<blockquote type="cite">q</blockquote>', messageHtml('reply', 'See you at 7:30!', sam, true, 'UTC')])
+      expect(clean(html).formatted, html.slice(0, 60)).toBe(false);
+    // A list, or a link with words of its own, is what a text part loses too (the link's words, or where it goes).
+    for (const html of ['<ul><li>a</li></ul>', '<ol><li>a</li></ol>', '<p>Read <a href="https://docs.example/a">the docs</a></p>']) expect([clean(html).plain, clean(html).formatted], html).toEqual([true, true]);
     // Styled stays styled, whatever formatting it has.
     expect(clean('<p style="color:red"><b>Hi</b></p>').formatted).toBe(false);
   });

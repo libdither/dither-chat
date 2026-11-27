@@ -14,6 +14,7 @@ import { demoPdf, demoPng } from '../src/mail/demo-html.ts';
 import { MailCallError } from '../src/mail/backend.ts';
 import { FakeMailBackend, type FakeInput } from '../src/mail/fake.ts';
 import { MailHub } from '../src/mail/index.ts';
+import { SANITIZE_VERSION } from '../src/mail/sanitize.ts';
 
 const ACC = 'acc_partsTest01';
 const ME = 'me@example.com';
@@ -88,7 +89,7 @@ describe('the frame’s document', () => {
   test('sanitised, with the CSP, nosniff and no referrer', async () => {
     const { get } = await world([NEWSLETTER]);
     const body = (await (await get(`/api/mail/messages/${mid('<news@x>')}/body`)).json()) as P.MailBodyView;
-    expect(body.html).toMatchObject({ url: `/api/mail/messages/${mid('<news@x>')}/html?p=none&t=0&v=4`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
+    expect(body.html).toMatchObject({ url: `/api/mail/messages/${mid('<news@x>')}/html?p=none&t=0&v=${SANITIZE_VERSION}`, remoteImages: 1, trackers: 1, imagesShown: false, plain: false });
     expect(body.html!.pictures).toMatchObject({ policy: 'none', source: 'setting', loaded: 0, held: 1, removed: 1, hosts: 0, hostsAll: 2 });
     expect(body.warnings).toEqual(['A link that shows shop.example goes to evil.example.']);
     const r = await get(body.html!.url);
