@@ -28,6 +28,8 @@ const sent: P.AdapterCommand[] = [];
 const idn = (i: P.IdentityFact) => hubId('idn', 'x', i.nativeId);
 const msgOf = (post: string) => hubId('msg', 'x', postNativeId(post));
 let POSTS: string;
+/** Logged before any read: the demo's history of Theo's posts (demo-x.ts loggedPosts). */
+let AT_START = 0;
 
 function command<T>(cmd: P.AdapterCommand): Promise<T> {
   sent.push(cmd);
@@ -58,6 +60,7 @@ beforeAll(() => {
   )();
   store.flush();
   POSTS = hubId('cnv', 'x', `posts:${X.self.nativeId}`);
+  AT_START = store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!.n;
 });
 afterAll(() => {
   store.db.close();
@@ -90,7 +93,7 @@ describe('a thread read from X', () => {
 
     // Logged: one conversation, read-only and quiet; a message per post, its reply the post it answers.
     expect(store.conversationView(POSTS)).toMatchObject({ variant: 'posts', shape: 'channel' });
-    const n = (store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n;
+    const n = (store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n - AT_START;
     // The post, then its replies with the first answers under each, as X shows them: 1 + 2 + 3 + 3 + 1.
     expect(n).toBe(10);
     const answer = t.replies[1][1];
@@ -111,7 +114,7 @@ describe('a thread read from X', () => {
 
     // Read again: nothing new, nothing doubled.
     await posts.thread('x', id);
-    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(10);
+    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n - AT_START).toBe(10);
   });
 
   test('more replies come with the cursor and are logged too', async () => {
@@ -123,7 +126,8 @@ describe('a thread read from X', () => {
     expect(t.replies.map((c) => c.length)).toEqual([3, 1, 2, 1]);
     expect(t.replies.at(-1)![0]!.author).toBe(idn(X.quinn));
     expect(t.more).toBeNull();
-    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n).toBe(17);
+    // Seven more, less Theo's, logged at the start already.
+    expect((store.one<{ n: number }>('SELECT COUNT(*) AS n FROM message WHERE conversation_id = ?', POSTS)!).n - AT_START).toBe(16);
   });
 
   test('a reply opens with what it answers above it', async () => {
