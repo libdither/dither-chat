@@ -1078,7 +1078,8 @@ export class CatchUp implements EventWatch {
       left: h.left_out ? JSON.parse(h.left_out) : [],
       pages: tasks.pages ?? 0,
       found: tasks.found ?? 0,
-      current: here && !here.resting ? (this.store.one<Row>('SELECT name FROM conversation WHERE id = ?', here.cid)?.name ?? here.cid) : null,
+      current: here && !here.resting ? (this.store.one<Row>('SELECT name FROM conversation WHERE id = ?', here.cid)?.name ?? '') : null,
+      currentId: here && !here.resting ? here.cid : null,
       resting: here?.resting ? this.pace.resting(h.account_id) : null,
     };
     if (withList)

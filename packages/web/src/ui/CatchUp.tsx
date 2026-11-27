@@ -10,7 +10,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { clock, dayLabel } from '../format.ts';
 import { convLabel } from '../model.ts';
 import { netName } from '../model.ts';
-import { api, db, go, rev, toast } from '../state.ts';
+import { api, db, go, metaRev, rev, toast } from '../state.ts';
 import { checkAccount } from '../catchupask.ts';
 import { NetGlyph } from './bits.tsx';
 import { Icon } from './icons.tsx';
@@ -73,6 +73,7 @@ function chatName(id: string, name: string): string {
 }
 
 function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
+  metaRev.value; // its account's and chats' names
   const [busy, setBusy] = useState(false);
   const [list, setList] = useState<P.CatchUpChatView[] | null>(null);
   const [shown, setShown] = useState(false);
@@ -129,9 +130,9 @@ function HoleRow({ h, reload }: { h: P.CatchUpHoleView; reload: () => void }) {
               : 'No chat worth fetching'
             : `${h.chatsDone.toLocaleString()} of ${plural(h.chats, 'chat')} done · ${plural(h.found, 'missing message')} fetched in ${plural(h.pages, 'page')}`}
       </p>
-      {h.current && (
+      {h.currentId && (
         <div class="job-line job-now">
-          <Loading inline label={`Now: ${h.current}`} />
+          <Loading inline label={`Now: ${chatName(h.currentId ?? '', h.current ?? '')}`} />
         </div>
       )}
       {h.resting && open(h) && (
@@ -194,6 +195,7 @@ const TWO_WEEKS = 14 * 24 * 3_600_000;
  * all its history (a first full pass, for chats the hub has never fetched). One already being checked says so.
  */
 function AccountChecks({ holes, reload }: { holes: P.CatchUpHoleView[]; reload: () => void }) {
+  metaRev.value; // accounts come, go and change their names and status
   const [busy, setBusy] = useState<string | null>(null);
   const accounts = [...db.accounts.values()].filter((a) => a.status !== 'disabled' && a.capabilities.includes('history')).sort((a, b) => a.network.localeCompare(b.network) || a.label.localeCompare(b.label));
   if (!accounts.length) return null;

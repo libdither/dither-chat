@@ -100,8 +100,9 @@ export interface CatchUpHoleView {
   left: { why: string; count: number }[];
   pages: number;
   found: number;
-  /** What it is fetching now. */
+  /** The chat it is fetching now: its name (empty for one without a name of its own, such as a direct chat), and id. */
   current: string | null;
+  currentId: string | null;
   /** Waiting on the reading pace: out of hours, the day's messages read, or a break. */
   resting: { until: number; why: 'hours' | 'cap' | 'break' } | null;
   /** The chats, busiest first; only in GET /api/catch-up/:id. */

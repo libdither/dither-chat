@@ -38,7 +38,7 @@ export interface Pager {
   settled?: (accountId: string) => Promise<boolean>;
 }
 
-export type Page =
+type Page =
   /** The adapter cannot read just now: ask again after this long. Nothing was fetched. */
   | { kind: 'defer'; deferMs: number }
   /** Its messages did not come with the answer (or did not commit in time): nothing recorded; ask again later. */

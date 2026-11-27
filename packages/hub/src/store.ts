@@ -289,7 +289,7 @@ function unreactView(raw: string | null): { data: P.UnreactData; seen?: true } {
 }
 
 /** A history page's messages as they are stored: by native id, its time and whether it was new to the hub. */
-export interface PageTap {
+interface PageTap {
   accountId: string;
   conversation: string;
   seen: Map<string, { ts: number; fresh: boolean }>;

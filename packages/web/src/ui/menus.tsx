@@ -518,6 +518,7 @@ export function chatMenu(p: P.PersonView, routes: P.ConversationView[], why?: st
       [
         { label: 'Profile', icon: 'user', run: () => go({ view: 'profile', person: p.id }) },
         { label: 'Search in Chat', icon: 'search', run: () => go({ view: 'search', q: `in:${p.id}` }) },
+        routes.some((c) => canCheck(c.id)) && { label: 'Check for Missing Messages', icon: 'refresh', run: () => void checkChat(ids) },
         { label: 'Copy Link', icon: 'link', run: () => copy(appLink({ view: 'people', person: p.id }), 'Link copied') },
       ],
       [

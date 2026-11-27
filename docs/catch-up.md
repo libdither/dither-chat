@@ -151,8 +151,9 @@ so a crash's time is known to within that.
 
 ## Asking
 
-- **A chat:** its menu (and its details' More) has **Check for Missing Messages**. The chat is read back to its start,
-  over what is known whole, and what the hub did not have is fetched. A first pass for a chat the hub never fetched
+- **A chat:** its menu (and its details' More) has **Check for Missing Messages**; a person's row has it too, for each
+  of their chats you can read the history of. The chat is read back to its start, over what is known whole, and what
+  the hub did not have is fetched. A first pass for a chat the hub never fetched
   reads all of it; a chat read before costs a page or two.
 - **An account:** Settings → Catching up → Check an account lists every account that can read its history, each with
   **Last 2 weeks** and **All history**. Either goes through every chat of the account, the ones a plan would leave

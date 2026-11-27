@@ -63,10 +63,10 @@
 .catchup-account {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 8px;
+  gap: 8px;
 }
 .catchup-account-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--text);
@@ -76,6 +76,7 @@
 .catchup-account-buttons,
 .catchup-account .job-pill {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   margin-left: auto;
 }

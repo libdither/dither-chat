@@ -8,7 +8,7 @@ import { api, go, toast } from './state.ts';
 import { showSection } from './ui/bits.tsx';
 
 /** Opens Settings at Catching up. */
-export function openCatchUp() {
+function openCatchUp() {
   go({ view: 'settings' });
   setTimeout(() => showSection('set-catchup', 'auto'), 120);
 }
@@ -18,21 +18,25 @@ export function canCheck(conversationId: string): boolean {
   return !!describe('conversation', conversationId)?.history;
 }
 
-async function ask(body: Record<string, unknown>, what: string) {
+async function ask(bodies: Record<string, unknown>[], what: string) {
   try {
-    await api('/api/catch-up/report', { body: { ...body, asked: true } });
+    for (const body of bodies) await api('/api/catch-up/report', { body: { ...body, asked: true } });
     toast({ kind: 'info', title: 'Checking for missing messages', body: `${what}, at the reading pace.`, action: openCatchUp, actionLabel: 'Show' });
   } catch (e: any) {
     toast({ kind: 'error', title: 'Could not check for missing messages', body: e?.message ?? String(e) });
   }
 }
 
-/** The whole chat, back to its start. */
-export function checkChat(conversationId: string) {
-  return ask({ conversationId, from: 0, note: 'You asked, from the chat' }, 'Going back through the whole chat');
+/** The whole chat, back to its start; for a person, each of their chats you can read the history of. */
+export function checkChat(conversationIds: string | string[]) {
+  const ids = (Array.isArray(conversationIds) ? conversationIds : [conversationIds]).filter(canCheck);
+  return ask(
+    ids.map((conversationId) => ({ conversationId, from: 0, note: 'From the chat' })),
+    ids.length > 1 ? `Going back through their ${ids.length} chats` : 'Going back through the whole chat',
+  );
 }
 
 /** Every chat of the account: since `from` (0: all their history). */
 export function checkAccount(accountId: string, from: number) {
-  return ask({ accountId, from, note: from ? 'You asked: every chat, the last two weeks' : 'You asked: every chat, all its history' }, from ? 'Every chat, the last two weeks' : 'Every chat, all its history');
+  return ask([{ accountId, from, note: from ? 'Every chat, the last two weeks' : 'Every chat, all its history' }], from ? 'Every chat, the last two weeks' : 'Every chat, all its history');
 }
