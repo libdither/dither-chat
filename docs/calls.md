@@ -154,7 +154,8 @@ device, watching the bot's Go Live, leaving, and a device with no microphone joi
 phone size, checks the call bar (below): the dock on the call's own chat and the bar elsewhere, in one place at the top
 with nothing under it, no Leave on it and 44 px buttons, the row's mark, mute from the bar, a tap opening the sheet in
 place, back folding it, Go to chat; then at computer size with the list hidden, the bar under the page, the dock over it
-on a tap, Escape folding it, and leaving from there.
+on a tap, Escape folding it, and leaving from there. Last, a ring on the main account's DM shows the ring card and
+rings aloud on the page in front, stops when the caller gives up, and with the chat muted shows the card quietly.
 
 The libdither server also has a stage, `office-hours` (`demostage.ts`), with the topic "Office hours: routing
 questions": the room's bot and two invented people speaking (their speaking takes turns), an audience of twenty
@@ -273,8 +274,12 @@ no answer) and how long it lasted where the network says.
 
 - **A ring alerts once.** A call that rings you is an alert on every device (the highest tier), titled "Ann is
   calling", with Answer where the account can join calls from here and Decline where it can stop the ringing. Open
-  pages show a ring card instead (`ui/Ringing.tsx`). A mute on the chat, the caller, the account, the network or
-  everything, quiet hours, and a device's own rules keep it off devices; the card shows either way. Quiet hours let
+  pages show a ring card instead (`ui/Ringing.tsx`): a computer's service worker closes the notification while a page
+  is in front, and the Android app skips it while it is on screen, so the page in sight rings aloud itself
+  (`ringtone.ts`, loaded with the first such call) while this device is in no call. A mute on the chat, the caller,
+  the account, the network or everything, quiet hours, and a device's own rules keep it off devices and keep the page
+  quiet (the call's `alerts`); the card shows either way. A page nobody has clicked yet may not be let make sound by
+  the browser: its card still shows. Quiet hours let
   a call through from a chat or person set to always alert when they let starred messages through, as for messages
   (`ringGate`). Each ring sent is logged as a notification of kind `ring` (docs/activity.md), so the phones' delivered
   and shown reports say whether it rang there; one that is held says so in the hub's log (`ring: <id> not sent`).

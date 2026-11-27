@@ -3601,7 +3601,10 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
     flags: { seen: false },
     bulk: { listId: '<weekly.rust-weekly.example>', unsubscribe: '<https://rust-weekly.example/unsubscribe>', precedence: 'bulk', autoSubmitted: null },
     text: 'Hello and welcome to another issue of This Week in Rust!\n\nUpdates from the Rust project:\n• Async closures are stable\n• A new edition guide\n\nRead it on the web: https://rust-weekly.example/512',
-    html: '<h1>This Week in Rust 512</h1><p>Hello and welcome to another issue!</p>',
+    html:
+      '<h1>This Week in Rust 512</h1><p>Hello and welcome to another issue of This Week in Rust!</p>' +
+      '<p>Updates from the Rust project:</p><ul><li>Async closures are stable</li><li>A new edition guide</li></ul>' +
+      '<p>Read it <a href="https://rust-weekly.example/512">on the web</a>.</p>',
   });
   put({
     messageId: id('gh-25'),
@@ -3633,6 +3636,25 @@ export function seedDemoMail(fake: FakeMailBackend, now = Date.now()) {
 
   // Older, read: Theo, and what you sent Mom.
   put({ messageId: id('climb'), from: [theo], to: [ME], subject: 'Climbing on Sunday', receivedAt: now - 6 * D, text: 'Gym at 10 on Sunday? I can bring the spare harness.\n\nTheo' });
+  // Alice's trip notes, written with formatting (bold, lists, a link with its own words, a quote, code): her chat draws it.
+  put({
+    messageId: id('trip-notes'),
+    from: [alice],
+    to: [ME],
+    subject: 'Trip notes for Saturday',
+    receivedAt: now - 5 * D,
+    text:
+      'Hi!\n\nNotes for *Saturday*, so we don\'t forget anything:\n\n- Bring the big tent\n- Snacks for two days\n\nThe drive:\n1. Leave at 8\n2. Coffee in Millbrook\n3. Trailhead by 11\n\n' +
+      'The trail map is on the park\'s page: https://trails.example/maple-ridge\n\n> Pack light, walk far.\n\nThe packing list checks itself, run `pack --check` first:\n\n    pack --check\n    pack --print list.txt\n\nAlice',
+    html:
+      '<div dir="ltr"><p>Hi!</p><p>Notes for <b>Saturday</b>, so we <i>don\'t</i> forget anything:</p>' +
+      '<ul><li>Bring the <b>big</b> tent</li><li>Snacks for two days</li></ul>' +
+      '<p>The drive:</p><ol><li>Leave at 8</li><li>Coffee in Millbrook</li><li>Trailhead by 11</li></ol>' +
+      '<p>The trail map is <a href="https://trails.example/maple-ridge">on the park\'s page</a>.</p>' +
+      '<blockquote><p>Pack light, walk far.</p></blockquote>' +
+      '<p>The packing list checks itself, run <code>pack --check</code> first:</p>' +
+      '<pre><code>pack --check\npack --print list.txt</code></pre><p>Alice</p></div>',
+  });
   put({ mailboxId: 'Sent', messageId: id('photos'), from: [ME], to: [mom], subject: 'Photos from the weekend', receivedAt: now - 8 * D, text: 'Here are the photos from the lake. The one of the dog is my favourite.' });
   put({ messageId: id('photos-re'), inReplyTo: id('photos'), references: [id('photos')], from: [mom], to: [ME], subject: 'Re: Photos from the weekend', receivedAt: now - 7 * D, text: 'Lovely! Can you print the dog one for me?\n\nLove, Mom' });
   for (let i = 0; i < 12; i++)

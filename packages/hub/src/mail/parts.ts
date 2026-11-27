@@ -28,6 +28,7 @@ import { P0 } from './queue.ts';
 import type { MailRouter } from './routes.ts';
 import { contentId, mailDocument, type PictureDecision, SANITIZE_VERSION, sanitizeMail, type Sanitized } from './sanitize.ts';
 import { htmlText } from './store.ts';
+import { type BlocksOf, carriesMore, mailBlocks } from './blocks.ts';
 import type { ComposeOriginal } from './compose.ts';
 import { islandOf } from './island.ts';
 import type { OutboxPictures } from './outbox.ts';
@@ -191,6 +192,14 @@ class Parts {
     return s;
   }
 
+  /** The words' tree of a sanitised body, kept with it (the sanitiser's cache holds what is costly). */
+  private trees = new WeakMap<Sanitized, BlocksOf>();
+  blocksOf(san: Sanitized): BlocksOf {
+    let t = this.trees.get(san);
+    if (!t) this.trees.set(san, (t = mailBlocks(san.html)));
+    return t;
+  }
+
   /** Messages the server no longer has, or a whole account: their HTML and files go too. */
   forget(accountId: string, messageIds: string[] | null) {
     if (!messageIds) {
@@ -222,16 +231,21 @@ class Parts {
       const pol = this.policy(m);
       const san = this.sanitized(m, b.html, pol);
       cids = new Set(san.cids);
+      const ownText = hasTextPart(b);
       out.html = {
         url: `/api/mail/messages/${messageId}/html?p=${pol.pictures}&t=${pol.trackers ? 1 : 0}&v=${SANITIZE_VERSION}`,
         remoteImages: san.remoteImages,
         trackers: san.trackers,
         imagesShown: pol.pictures === 'all',
-        plain: san.plain && hasTextPart(b),
+        plain: san.plain && ownText,
         ...(san.formatted ? { formatted: true } : {}),
         pictures: this.picturesView(san, pol),
       };
       for (const x of dedupe(san.mismatched).slice(0, 3)) warnings.push(`A link that shows ${x.shown} goes to ${x.goes}.`);
+      // Its words with their formatting (blocks.ts), when they say more than the text part: formatting of their own,
+      // no text part of its own, or HTML that is not plain (the words without the logo, not the mail framed).
+      const tree = this.blocksOf(san);
+      if ('blocks' in tree && (!san.plain || !ownText || carriesMore(tree.blocks))) out.blocks = tree.blocks;
     }
     out.attachments = parts
       .filter((a) => !(a.inline && a.contentId && cids.has(contentId(a.contentId))))

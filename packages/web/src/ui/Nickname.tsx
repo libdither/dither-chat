@@ -13,10 +13,11 @@ import type { MenuEntry } from './ContextMenu.tsx';
 /** What the account calls itself on its network, without your nickname. */
 export const ownName = (i: P.IdentityView) => accountName({ ...i, nickname: null });
 
-/** Gives one account a nickname, or takes it away (null or empty). */
-async function saveNickname(identityId: string, nickname: string | null) {
-  await api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).catch((e) =>
-    toast({ kind: 'error', title: 'Could not save that', body: e.message }),
+/** Gives one account a nickname, or takes it away (null or empty): whether it was saved. */
+export async function saveNickname(identityId: string, nickname: string | null) {
+  return api(`/api/identities/${identityId}`, { method: 'PATCH', body: { nickname: nickname?.trim() || null } }).then(
+    () => true,
+    (e) => (toast({ kind: 'error', title: 'Could not save that', body: e.message }), false),
   );
 }
 

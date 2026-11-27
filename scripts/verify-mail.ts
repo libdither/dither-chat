@@ -13,7 +13,10 @@
  *     and as the pill over the box; the quote behind …, unless the mail answers the one right above; read here after
  *     a second; a thread's own chat named by its subject, cut with an ellipsis on a phone, beside Archive and ⋯ (Star
  *     and Trash are in ⋯ there);
- *   - an HTML-only message shows its text, and none of its script;
+ *   - an HTML-only message shows its words with their formatting (its bold, a link's own words), and none of its
+ *     script; a mail written with formatting (bold, lists, a link with its words, a quote, code) is drawn with it, no
+ *     frame, its name folded behind …; a letter with a picture in it shows as sent in place, "Just the words" folds it
+ *     back and … "Show as sent" frames it again;
  *   - the Accounts screen's mail account;
  *   - from a person (slice 8): with Mail on, the Inbox has no newsletters or notifications, the Updates chip lists them;
  *     Everything has the newsletters too; an old People link still lists; on a desktop, "Not a person" and "This is a
@@ -27,8 +30,8 @@
  *   - writing (slice 5), last, since it sends: on a phone, Sam's chat's box with its subject pill: the words go as a
  *     reply on that thread, held with Undo (Undo puts them back in the box), then sent. A mail's menu has "Reply in the
  *     full editor", which fills in To, the subject and the quote; a Cc typed in, a file attached; Send, "Sending…
- *     Undo", Undo brings the draft back, Send again, and the reply joins the chat with its file and its Markdown bold,
- *     drawn in the app's theme under … (its plain, formatted HTML part is not put on a white sheet); a chip opens
+ *     Undo", Undo brings the draft back, Send again, and the reply joins the chat with its file and its Markdown bold
+ *     drawn as bold, and as sent under … in the app's theme (its plain, formatted HTML part is not put on a white sheet); a chip opens
  *     back into text with Backspace and Ctrl+Z makes it a chip again. On a desktop, New email (the Inbox's +) docks a
  *     new message whose To completes from your mail and from the account's server; a clicked chip opens to edit and
  *     goes back in its place; the editor's bar (B, lists, heading, table), its Markdown and HTML views, a table and
@@ -37,7 +40,8 @@
  *     says how many of its pictures can tell, and it sends its pictures inside the mail when asked from the Drafts
  *     line; discarding offers Undo, then the draft is gone.
  *
- * With --html (slice 3, htmlChecks below), the HTML frame (a mail's … then "Show as sent") in Chromium: no script
+ * With --html (slice 3, htmlChecks below), the HTML frame (a designed mail shows as sent in place, Show all takes its
+ * height cap off) in Chromium: no script
  * runs in it, even put there by hand; no request leaves for anywhere but the hub; a link click goes through the app's
  * opener and never moves the frame, and one whose text names another site asks first; the remote-image banner and the
  * proxy; quotes folded; cid: pictures; files open in the viewers; swiping back over a body works on a phone; a white
@@ -355,11 +359,38 @@ async function phone(themeName: string, first: boolean) {
     const [plan] = (await mailsOf(garden.id)).filter((m) => m.addressed !== 'self');
     await layersSettled();
     await page.eval(`location.hash = ${JSON.stringify(`#/inbox/c/${encodeURIComponent(aliceRoute.id)}?m=${plan.id}`)}`);
+    // A letter with a picture in it shows as it was sent, in place, without a click; "Just the words" folds it back.
+    await page.until(`!!document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-framed .mail-html.ready iframe`)})`, 15000);
+    check(`${tag}: a mail with a picture in it shows as sent, in place`, !(await has(`${msg(plan.id)} .mail-words`)));
+    await tap(await at(`${msg(plan.id)} .mail-open-chip`, `el => el.textContent.includes('Just the words')`));
     await page.until(`!!document.querySelector(${JSON.stringify(`${msg(plan.id)} .mail-quote-dots`)})`, 15000);
+    check(`${tag}: Just the words folds it back to its words`, !(await has(`${msg(plan.id)} .chat-mail-framed`)) && (await page.eval<string>(`document.querySelector(${JSON.stringify(`${msg(plan.id)} .mail-words`)})?.textContent ?? ''`)).includes('sketch of the beds'));
     check(`${tag}: the quote is folded behind …`, !(await has(`${msg(plan.id)} .chat-mail-quote`)));
     await tap(await at(`${msg(plan.id)} .mail-quote-dots`));
     await holds(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`);
     check(`${tag}: … shows the quote`, await page.eval(`(document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-quote`)})?.textContent ?? '').includes('Could you send the plan')`));
+    // Show as sent puts the frame back, and it stays so (the html checks find it there).
+    await tap(await at(`${msg(plan.id)} .mail-open-chip`, `el => el.textContent.includes('Show as sent')`));
+    check(`${tag}: … Show as sent frames it again`, await holds(`!!document.querySelector(${JSON.stringify(`${msg(plan.id)} .chat-mail-framed .mail-html.ready`)})`));
+
+    // A mail written with formatting (her trip notes) is drawn with it, as elements, in her chat.
+    const [trip] = await mailsOf(byTitle('Trip notes for Saturday').id);
+    const tc = msg(trip.id);
+    await layersSettled();
+    await page.eval(`location.hash = ${JSON.stringify(`#/inbox/c/${encodeURIComponent(aliceRoute.id)}?m=${trip.id}`)}`);
+    await page.until(`!!document.querySelector(${JSON.stringify(`${tc} .mail-blocks`)})`, 15000);
+    const drawn2 = await page.eval<{ b: string[]; ul: number; ol: number; start: string; link: string; href: string; q: string; code: string[]; pre: string; frames: number; stars: boolean }>(
+      `(() => { const c = document.querySelector(${JSON.stringify(tc)}); const a = c.querySelector('.mail-blocks a[href^="https://trails"]'); return { b: [...c.querySelectorAll('.mail-blocks b')].map((x) => x.textContent), ul: c.querySelectorAll('ul.mail-wlist > li').length, ol: c.querySelectorAll('ol.mail-wlist > li').length, start: c.querySelector('ol.mail-wlist')?.getAttribute('start') ?? '', link: a?.textContent ?? '', href: a?.getAttribute('href') ?? '', q: c.querySelector('.mail-bq')?.textContent ?? '', code: [...c.querySelectorAll('.mail-blocks code')].map((x) => x.textContent), pre: c.querySelector('.mail-pre')?.textContent ?? '', frames: c.querySelectorAll('iframe').length, stars: c.textContent.includes('*Saturday*') }; })()`,
+    );
+    check(
+      `${tag}: a formatted mail draws its bold, lists, a link with its words, a quote and code, with no frame`,
+      drawn2.b.join() === 'Saturday,big' && drawn2.ul === 2 && drawn2.ol === 3 && !drawn2.start && drawn2.link === "on the park's page" && drawn2.href === 'https://trails.example/maple-ridge' && drawn2.q.includes('Pack light') && drawn2.code.includes('pack --check') && drawn2.pre.includes('pack --print list.txt') && !drawn2.frames && !drawn2.stars,
+      drawn2,
+    );
+    // Its name at the end is folded behind …, as a text letter's is.
+    check(`${tag}: a formatted mail's last line, the sender's name, is folded behind …`, (await has(`${tc} .mail-quote-dots`)) && !/Alice\s*$/.test(await page.eval<string>(`document.querySelector(${JSON.stringify(`${tc} .mail-words`)}).textContent`)));
+    check(`${tag}: no sideways overflow: a formatted mail`, !(await overflow()).length, await overflow());
+    await shot(`mail-${tag.replace(' ', '-')}-formatted`);
     await page.eval('history.back()');
     await holds(`!location.hash.includes('/c/')`);
   }
@@ -373,6 +404,11 @@ async function phone(themeName: string, first: boolean) {
   await page.until(`${words}.length > 10`, 15000);
   const text = await page.eval<string>(words);
   check(`${tag}: an HTML-only message shows`, text.includes('your order #4471 has shipped') && text.includes('Track your parcel'), text.slice(0, 120));
+  check(
+    `${tag}: with its formatting (the bold, the link's words), not the flattener's "[href]"`,
+    (await page.eval<string>(`document.querySelector(${JSON.stringify(`${msg(order.id)} .mail-blocks b`)})?.textContent ?? ''`)) === 'your order #4471 has shipped' && !text.includes('[https:') && (await has(`${msg(order.id)} a[href="https://maple-hardware.example/track/4471"]`)),
+    text.slice(0, 160),
+  );
   check(`${tag}: none of its script shows or runs`, !/alert|evil|hacked/.test(text) && !(await page.eval(`document.title.includes('hacked')`)));
   await page.eval('history.back()');
   check(`${tag}: the browser's back goes to the list too`, await holds(`!location.hash.includes('/c/') && location.hash.includes('v%3Aall')`), await hash());
@@ -643,11 +679,12 @@ async function composer(themeName: string, full: boolean) {
     const card = msg(mine.id);
     await page.until(`!!document.querySelector(${JSON.stringify(card)})`, 10000);
     check(`composer phone ${t}: the thread's own chat shows your reply`, await has(`.mail-thread-pane ${card}`));
-    // The reader folded it to a line; the chat draws its words, and its HTML behind … as "Show as sent".
+    // The reader folded it to a line; the chat draws its words with their formatting (from its HTML: the text part has
+    // the stars, and is never read as Markdown), and its HTML behind … as "Show as sent".
     // The words without the … at the end of their last line, which opens the rest of the mail.
     const said = await page.eval<string>(`(() => { const w = document.querySelector('${card} .mail-words')?.cloneNode(true); w?.querySelectorAll('.mail-quote-dots').forEach((d) => d.remove()); return w?.textContent ?? ''; })()`);
-    // As its text part says them (mail is never drawn as Markdown: the bold is its stars there).
-    check(`composer phone ${t}: your reply's words in the chat, as its text part has them`, said.startsWith('See you at **7:30**!') && String(body.text).startsWith(said.split('\n')[0]), said.slice(0, 120));
+    const bold = await page.eval<string>(`document.querySelector('${card} .mail-blocks b')?.textContent ?? ''`);
+    check(`composer phone ${t}: your reply's words in the chat, its bold drawn as bold`, said.startsWith('See you at 7:30!') && bold === '7:30' && String(body.text).startsWith('See you at **7:30**!'), { said: said.slice(0, 120), bold });
     await tap(await at(`${card} .mail-quote-dots`));
     await tap(await at(`${card} .mail-open-chip`, `el => el.textContent.includes('Show as sent')`));
     await holds(`!!document.querySelector('${card} .chat-mail-sent .mail-html.ready')`);
@@ -900,12 +937,13 @@ async function forwardWithPictures(tag: string) {
   const card = msg(news.id);
   await layersSettled();
   await page.eval(`location.hash = ${JSON.stringify(inList('v:updates:*', sale.id))}`);
-  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .mail-quote-dots`)})`, 15000);
-  // The reader showed a newsletter's HTML; a chat shows its words, and the HTML behind … as "Show as sent".
-  await click(await at(`${card} .mail-quote-dots`));
-  await click(await at(`${card} .mail-open-chip`, `el => el.textContent.includes('Show as sent')`));
-  // Its HTML drawn (the frame grows as it lays out, moving what is below it).
-  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .chat-mail-sent .mail-html.ready`)})`, 15000);
+  // A designed newsletter shows as it was sent, framed in place, without a click (the frame grows as it lays out).
+  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .chat-mail-framed .mail-html.ready`)})`, 15000);
+  check(`${tag}: a designed newsletter shows as sent, in place`, !(await has(`${card} .mail-words`)));
+  // Taller than the pane allows: capped, with Show all, once the grown frame is measured.
+  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .chat-mail-framed.capped .chat-mail-all`)})`, 15000);
+  const cap = await page.eval<{ box: number; pane: number }>(`(() => ({ box: document.querySelector('${card} .chat-mail-cap').getBoundingClientRect().height, pane: document.querySelector('${card}').closest('.pane').clientHeight }))()`);
+  check(`${tag}: its height capped at about 60% of the pane, with Show all`, cap.box <= cap.pane * 0.6 + 2 && (await has(`${card} .chat-mail-framed.capped .chat-mail-all`)), cap);
   // Its picture bar: this mail's own choice (none, the ones unlikely to tell, all), from ⋯.
   await click(await at('.mail-img-more'));
   const picMenu = await page.eval<string[]>(`[...document.querySelectorAll('[role=menuitemradio]')].map((e) => e.textContent.trim())`);
@@ -1552,12 +1590,16 @@ async function swipe(a: Pt, b: Pt, steps = 14) {
 /** The menu item (desktop) or sheet button (phone) with this text. */
 const menuItem = (text: string) => at('.cm-item, .cm-sheet button', `el => el.textContent.includes(${JSON.stringify(text)})`);
 
-/** A mail in a chat as it was sent: its …, then "Show as sent", and its frame drawn. */
+/**
+ * A designed mail in a chat as it was sent: framed in place already, and when it is taller than the pane allows,
+ * Show all takes its cap off (so all of it can be pressed).
+ */
 async function asSent(card: string, press: (p: Pt) => Promise<void>) {
-  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .mail-quote-dots`)})`, 15000);
-  await press(await at(`${card} .mail-quote-dots`));
-  await press(await at(`${card} .mail-open-chip`, `el => el.textContent.includes('Show as sent')`));
-  await page.until(`!!document.querySelector(${JSON.stringify(`${card} ${FRAME}`)})?.contentDocument?.querySelector('.dc-mail')`, 15000);
+  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .chat-mail-framed${FRAME}`)})?.contentDocument?.querySelector('.dc-mail')`, 15000);
+  if (await has(`${card} .chat-mail-framed.capped`)) {
+    await press(await at(`${card} .chat-mail-all`));
+    check(`Show all takes the cap off a framed mail`, await holds(`!document.querySelector(${JSON.stringify(`${card} .chat-mail-framed.capped`)})`));
+  }
 }
 
 async function htmlChecks() {

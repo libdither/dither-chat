@@ -89,9 +89,9 @@ else its handle, else its id (`accountName` in `chatroutes.ts`, `identityName` i
 in the hub's `store.ts`).
 
 **A person is shown by one of their accounts, their face** (`person.face_id`, `faceId` on a PersonView): its name as
-you see it is their name, and its picture is their picture. Name and picture never come from two accounts, and both
-follow that account as it changes, unless you chose another of their accounts for the picture (docs/profile.md
-"Which account speaks for them"). Neither is ever set on the person:
+you see it is their name, and its picture is their picture. Both follow that account as it changes, unless you chose
+another of their names or another account's picture from their profile's hero (docs/profile.md "Which account speaks
+for them"). Neither is ever typed in on the person:
 
 - one account: it is their face, so a nickname for it is their name everywhere (header, inbox row, people list,
   message box, notifications), and the network renaming the account changes nothing while it has one;
@@ -139,8 +139,9 @@ the person's name as every conversation does.
 
 **Where you set one.** On a person's profile, each account's tile has Set Nickname…, Change Nickname… and Remove
 Nickname in its menu (⋯), which edit the name on the tile in place; a tile with a nickname shows it as the name and
-the account's own beneath it, muted ("their name: kitty"). A person of one account has a pencil by the name at the
-top of their profile, and the same entries under More. The menu of an author, a picture or a mention has them for that
+the account's own beneath it, muted ("their name: kitty"). The pencil by the name at the top of their profile takes a
+name typed as your nickname for their main account (docs/profile.md, "Choosing from the hero"), and a person of one
+account has the tile's entries under More. The menu of an author, a picture or a mention has them for that
 account. A chat of one route has the pencil by its name, for the account at the other end; a chat of several routes
 has none, since its name is made of the accounts' (it links to the profile, where the tiles are). Leaving the editor
 empty takes the nickname away. Your own accounts take none.

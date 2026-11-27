@@ -9,7 +9,10 @@
  *   under a sign-off ("Best,\nSam"), "Sent from my phone".
  * - A greeting ("Hi both,") stays full size, with no blank line after it.
  * - A run of blank lines is one paragraph break (the chat draws it as a small gap, not a full line).
+ *
+ * `letter` reads a text part; `letterBlocks` the same over formatted mail's tree (MessageMailView.blocks).
  */
+import type * as P from '@dither-chat/protocol';
 
 /** A line, and whether it is drawn faint (an unsure tail). */
 export interface LetterLine {
@@ -84,25 +87,31 @@ const isGreeting = (l: string) => {
   return t.length <= 40 && t.split(/\s+/).length <= 5 && GREETING.test(t) && /[,!:.]?$/.test(t);
 };
 
+/** What the letter is made of, by line: its paragraphs (lines by index), its faint ones, and what is folded (-1 a gap). */
+interface Shape {
+  paras: number[][];
+  faint: Set<number>;
+  rest: number[];
+}
+
 /**
- * The letter in a mail's words (the text above its quote). `names`: what the sender may sign with: the From name, their
- * identity's name, your account's display name for mail you sent.
+ * The letter's shape over its lines. A line that stands for a block of formatted mail (a list, a quote, code) is
+ * BLOCK: never blank, never a name, a sign-off or the signature's `--`.
  */
-export function letter(text: string, names: readonly (string | null | undefined)[]): Letter {
+function shape(lines: string[], names: readonly (string | null | undefined)[]): Shape {
   const known = nameSet(names);
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/\s+$/, ''));
   let start = 0;
   while (start < lines.length && blank(lines[start])) start++;
   let end = lines.length;
   const trim = () => {
     while (end > start && blank(lines[end - 1])) end--;
   };
-  const rest: string[] = [];
+  const rest: number[] = [];
   // The signature: what follows its "-- " line, when something is written above it. The delimiter itself is mail's
   // furniture and is not drawn even when the rest is opened.
   const sig = lines.findIndex((l, i) => i > start && l === '--');
   if (sig > start) {
-    rest.push(...lines.slice(sig + 1));
+    for (let i = sig + 1; i < lines.length; i++) rest.push(blank(lines[i]) ? -1 : i);
     end = sig;
   }
   trim();
@@ -115,7 +124,7 @@ export function letter(text: string, names: readonly (string | null | undefined)
   if (end - start >= 2 && isName(lines[end - 1], known)) {
     const p = prevLine(end - 1);
     if (p >= start && lines[p] !== '--' && !signOffAlone(lines[p])) {
-      rest.unshift(lines[end - 1], ...(rest.length ? [''] : []));
+      rest.unshift(end - 1, ...(rest.length ? [-1] : []));
       end--;
       trim();
     }
@@ -134,8 +143,8 @@ export function letter(text: string, names: readonly (string | null | undefined)
     faint.add(i);
   }
   // Paragraphs, a greeting joined to what follows it.
-  const paras: LetterLine[][] = [];
-  let cur: LetterLine[] = [];
+  const paras: number[][] = [];
+  let cur: number[] = [];
   let firstContent = true;
   for (let i = start; i < end; i++) {
     const l = lines[i];
@@ -146,12 +155,83 @@ export function letter(text: string, names: readonly (string | null | undefined)
     }
     const greeting = firstContent && isGreeting(l) && end - start > 1;
     firstContent = false;
-    cur.push(faint.has(i) ? { text: l, faint: true } : { text: l });
+    cur.push(i);
     if (greeting) while (i + 1 < end && blank(lines[i + 1])) i++;
   }
   if (cur.length) paras.push(cur);
-  while (rest.length && blank(rest[rest.length - 1])) rest.pop();
-  return { paras, rest: rest.length ? rest.join('\n') : null };
+  while (rest.length && rest[rest.length - 1] === -1) rest.pop();
+  return { paras, faint, rest };
+}
+
+/**
+ * The letter in a mail's words (the text above its quote). `names`: what the sender may sign with: the From name, their
+ * identity's name, your account's display name for mail you sent.
+ */
+export function letter(text: string, names: readonly (string | null | undefined)[]): Letter {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n').map((l) => l.replace(/\s+$/, ''));
+  const s = shape(lines, names);
+  return {
+    paras: s.paras.map((p) => p.map((i) => (s.faint.has(i) ? { text: lines[i], faint: true as const } : { text: lines[i] }))),
+    rest: s.rest.length ? s.rest.map((i) => (i < 0 ? '' : lines[i])).join('\n') : null,
+  };
+}
+
+// ------------------------------------------------------------------ formatted mail (MailBlock)
+
+/** A line of formatted mail: a paragraph's line with its formatting, or a block (a list, a quote, code, a heading). */
+export type BlockLine = { c: P.MailInline[]; faint?: true } | { block: P.MailBlock };
+
+export interface BlockLetter {
+  /** Paragraphs: lines a break apart, blocks as themselves. */
+  paras: BlockLine[][];
+  /** What is folded behind …, as paragraphs; null when nothing is. */
+  rest: BlockLine[][] | null;
+}
+
+/** Stands for a block among the lines: no rule reads it as a name, a sign-off or the signature. */
+const BLOCK = '\u0001';
+
+/** Inline nodes as plain text. */
+export const inlineText = (xs: P.MailInline[]): string => xs.map((x) => (typeof x === 'string' ? x : x.t === 'br' ? '\n' : inlineText(x.c))).join('');
+
+/**
+ * The letter in a formatted mail's words (MessageMailView.blocks), by the same rules as `letter`: each paragraph's
+ * lines are read as text for the name, the sign-off and the signature, and drawn with their formatting.
+ */
+export function letterBlocks(blocks: readonly P.MailBlock[], names: readonly (string | null | undefined)[]): BlockLetter {
+  const lines: string[] = [];
+  const of: (BlockLine | null)[] = [];
+  const push = (text: string, l: BlockLine | null) => {
+    lines.push(text);
+    of.push(l);
+  };
+  for (const b of blocks) {
+    if (lines.length) push('', null);
+    if (b.t !== 'p') {
+      push(BLOCK, { block: b });
+      continue;
+    }
+    let line: P.MailInline[] = [];
+    const end = () => push(inlineText(line).replace(/\s+$/, ''), { c: line });
+    for (const x of b.c)
+      if (typeof x === 'object' && x.t === 'br') {
+        end();
+        line = [];
+      } else line.push(x);
+    end();
+  }
+  const s = shape(lines, names);
+  const line = (i: number): BlockLine => {
+    const l = of[i]!;
+    return s.faint.has(i) && 'c' in l ? { ...l, faint: true } : l;
+  };
+  const rest: BlockLine[][] = [];
+  for (const i of s.rest) {
+    if (i < 0) rest.push([]);
+    else (rest[rest.length - 1] ?? (rest[0] = [])).push(line(i));
+  }
+  const kept = rest.filter((p) => p.length);
+  return { paras: s.paras.map((p) => p.map(line)), rest: kept.length ? kept : null };
 }
 
 /**
