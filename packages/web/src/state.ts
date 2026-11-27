@@ -1112,6 +1112,12 @@ function deliverInOrder(tempId: string): Promise<void> {
 async function deliver(tempId: string) {
   const o = outgoing.get(tempId);
   if (!o || delivering.has(tempId)) return;
+  // An older one of its chat waits for the hub (its post just failed): this waits behind it, so the hub takes them in
+  // the order they were made (flushOutgoing sends the oldest first).
+  if (pending.value.some((p) => p.conversationId === o.conversationId && p.queued && p.ts < o.ts && p.tempId !== tempId)) {
+    setPending(tempId, { queued: true });
+    return;
+  }
   delivering.add(tempId);
   setPending(tempId, { queued: false, failed: undefined });
   // Each file's upload: the composer's, still going or done, or one carrying on from what the hub has. `again`:

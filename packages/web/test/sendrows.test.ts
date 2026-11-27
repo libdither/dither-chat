@@ -40,6 +40,23 @@ test('a sent one goes once its message is here, or after a while if it never com
   expect(shownSends(['cnv_a'], [], [row('t2', { state: 'cancelled' })], nothingHere, 5000)).toEqual([]);
 });
 
+test('an echo that comes before the account answers is not shown twice, nor one a network sent without naming it', () => {
+  const echo = { id: 'msg_e', conversationId: 'cnv_a', body: 'hi', ts: 1200 };
+  expect(shownSends(['cnv_a'], [], [row('t1', { state: 'sending' })], nothingHere, 5000, [echo])).toEqual([]);
+  expect(shownSends(['cnv_a'], [], [row('t1', { state: 'sent' })], nothingHere, 5000, [echo])).toEqual([]);
+  // One echo is one send's: the second of two the same waits for its own.
+  expect(marks(shownSends(['cnv_a'], [], [row('t1', { state: 'sending' }), row('t2', { state: 'queued' }), row('t3', { state: 'sent' })], nothingHere, 5000, [echo]))).toEqual(['t2:hub', 't3:network']);
+  // Older than the press, another text, or the message another row named: not its echo.
+  expect(marks(shownSends(['cnv_a'], [], [row('t1', { state: 'sending', pressedAt: 100_000 })], nothingHere, 200_000, [echo]))).toEqual(['t1:hub']);
+  expect(marks(shownSends(['cnv_a'], [], [row('t1', { state: 'sending', body: 'other' })], nothingHere, 5000, [echo]))).toEqual(['t1:hub']);
+  expect(marks(shownSends(['cnv_a'], [], [row('t0', { state: 'sent', messageId: 'msg_e' }), row('t1', { state: 'sending' })], nothingHere, 5000, [echo]))).toEqual(['t0:network', 't1:hub']);
+});
+
+test('a sent one says when it stops being shown, so the chat is drawn again then', () => {
+  const [s] = shownSends(['cnv_a'], [], [row('t1', { state: 'sent', messageId: 'msg_1', updatedAt: 5000 })], nothingHere, 5000);
+  expect(s.goneAt).toBe(5000 + SENT_SHOWN_MS);
+});
+
 test("another device's sends show too; other chats' do not", () => {
   const shown = shownSends(['cnv_a'], [copy('t9', { conversationId: 'cnv_b' })], [row('other-device'), row('elsewhere', { conversationId: 'cnv_b' })], nothingHere, 5000);
   expect(marks(shown)).toEqual(['other-device:hub']);

@@ -1001,11 +1001,13 @@ class ReplyReceiver : BroadcastReceiver() {
                 if (replyTo != null) body.put("replyTo", replyTo)
                 intent.getStringExtra("seen")?.let { body.put("seenUpTo", JSONObject().put("id", it)) }
                 val (code, res) = runCatching { Hub.request(c, "POST", "/api/conversations/$conv/send", body, 60_000) }.getOrElse { 0 to "" }
-                val held = if (code == 202) runCatching { JSONObject(res).optJSONObject("row")?.takeIf { it.optString("state") == "held" } }.getOrNull() else null
-                if (held != null) {
+                // 202: the hub has it and it waits for you, held itself or behind an earlier send of the chat that is.
+                if (code == 202) {
+                    val held = runCatching { JSONObject(res).optJSONObject("row") }.getOrNull()
                     Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
-                    val n = held.optJSONObject("hold")?.optInt("count") ?: 0
-                    Notifications.post(c, conv, "Reply waiting", "$n new message${if (n == 1) "" else "s"} came in. Open the chat to send it, edit it or cancel it. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
+                    val n = held?.optJSONObject("hold")?.optInt("count") ?: 0
+                    val why = if (held?.optString("state") == "held") "$n new message${if (n == 1) "" else "s"} came in" else "It waits behind an earlier message of yours that is held"
+                    Notifications.post(c, conv, "Reply waiting", "$why. Open the chat to send it, edit it or cancel it. You wrote: $text".take(1000), "/inbox/c/$conv", sticky = true)
                 } else if (code in 200..299) {
                     Notifications.outcome(c, intent.getStringExtra("nid"), intent.getStringExtra("device"), "replied")
                     Notifications.replied(c, conv, text)

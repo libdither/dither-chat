@@ -158,8 +158,11 @@ adapter announcing the same things again, and a send retried after a lost answer
   a reload, and the hub keeps them across its own restart.
 - **The hub's rows** (bootstrap `sends`, the `sends` event): every device shows the same rows of a chat's queue under
   its last message once the hub has them, with one tick, two once the network named the message it became, until
-  that message is here (or 30 s, for a network that never echoes it). The device copy goes as soon as the hub's row
-  is there. The hub's row carries `messageId`, the hub id of the message the network says it sent (ids are derived
+  that message is here (or 30 s, for a network that never echoes it; the chat is drawn again then). A row still being
+  sent, or sent by a network that named no message, is not shown once a message of yours with its text came after you
+  pressed Send: that is its echo, come before the account's answer. The device copy goes as soon as the hub's row
+  is there. A device copy waits behind an older one of its chat that could not reach the hub, so the hub takes them
+  in the order they were written. The hub's row carries `messageId`, the hub id of the message the network says it sent (ids are derived
   from the network's, so it is known before the message is stored).
 - **Restarts**: a hub that is stopping (SIGTERM, which is how the deployer restarts it) says so to every socket first,
   `{ t: 'stopping', usualMs }`, not journaled, and keeps when it stopped in its data dir (`restarts.json`,
@@ -184,20 +187,25 @@ a slow send) can land after what made it wrong.
   GIF, view once, silent, ping on reply), what the sender could see (`seen_ts`, `seen_id`), when Send was pressed,
   and its state, error, tries, why it is held and the countdown's end.
 - **`POST /api/conversations/:id/send`** writes the row in one transaction. With `ack: 'hub'` (the app) it answers at
-  once with the row (`SendAccepted`, 202). Without it (send later, the notification reply, older callers) the answer
-  comes after the network's, as before: 200 with `messageId`, a refusal's status, 504 `SendUnsure`, or 202 with the row
-  when it is held or waits behind one that is. A repeat of a `clientId` gets the row's state and never sends again; a
-  repeat of a `failed` one (nothing went out) queues it again at the end. A send refused at once (no account, the
-  account not allowed there, empty, an upload gone) makes no row.
+  once with the row (`SendAccepted`, 200). Without it (the notification reply in the browser and the Android app,
+  older callers) the answer comes after the network's, as before: 200 with `messageId`, a refusal's status, 504
+  `SendUnsure`, or 202 with the row when it is held or waits behind one that is. Those callers say "Reply waiting"
+  themselves on a 202, so the hub sends no "is waiting" notification of its own for their rows. A repeat of a
+  `clientId` is answered with the row as it is now and never sends again by itself, a `failed` one too: that goes
+  again only when you press Try again (`POST /api/sends/:clientId` `{ action: 'send' }`), since an error the hub cannot
+  read may hide a send that went out. A send refused at once (no account, the account not allowed there, empty, an
+  upload gone) makes no row.
 - **One worker per chat** sends only the head of its queue. A held or in-doubt head blocks the rows behind it; a
   failed one does not (nothing went out). The account's own call and its timeouts are as before: the network's answer
   makes it `sent`, a refusal `failed`, an unknown outcome (`outcome.ts unknownOutcome`: its adapter timed out or
   dropped mid-command; the accounts manager's client gave up waiting, its connection dropped mid-call, or it was
   closed with the call waiting; the manager gave up on the account or lost it while it had the call) `unsure`.
 - **A restart**: rows left `sending` become `unsure` ("The hub restarted while sending it"), and `queued` rows go
-  again.
+  again. An answer the account gives while the hub is stopping is kept, so a send that went out is not put in doubt.
 - Every change goes out on the socket (the `sends` event: the open rows, and those sent in the last 2 minutes, with
-  the hub's clock), is journaled (list `sends`, so a catch-up carries it), and is in the bootstrap.
+  the hub's clock) and is journaled (list `sends`). The bootstrap, and every sync answer while there are rows, carry
+  the list whether or not it changed: a restart puts rows in doubt before any socket is open, a deleted chat takes its rows with it, and a
+  page's kept copy holds no rows, so a page back from any of these has them as they are now.
 
 | State | Mark | Means | What you can do |
 |---|---|---|---|
@@ -231,7 +239,8 @@ with a bar at their side, and it has:
 every 30 s), a held send counts down and goes by itself at the end, by the hub's clock (`holdUntil`). When no device
 shows it any more, the countdown stops, nothing goes, and you are told once: a notification "Your message to … is
 waiting" (the hub's push, under quiet hours' rules), and the row in the chat says "It waits for you". It survives a
-restart: the end is kept, and goes once a device shows the chat again. Settings → Sending sets its length
+restart: the end is kept, and goes once a device shows the chat again; one that ran out while the hub was down counts
+down again from the start, so a device that comes back sees it go, and nobody is told before then. Settings → Sending sets its length
 (`GET`/`PUT /api/send-settings`, kept on the hub): 0 to 120 seconds, default 10; 0 means no countdown, it always waits
 for you.
 

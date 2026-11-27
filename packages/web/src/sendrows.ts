@@ -46,20 +46,46 @@ export interface ShownSend {
   holdUntil?: number;
   /** Waits behind this held or in-doubt send. */
   behind?: string;
+  /** A sent one whose message is not here: when it stops being shown, by the hub's clock. */
+  goneAt?: number;
+  ts: number;
+}
+
+/** A message of yours in the loaded timeline, as far as matching a send to it goes. */
+export interface OwnMessage {
+  id: string;
+  conversationId: string;
+  body: string;
   ts: number;
 }
 
 /** How long a sent row is shown if its message never comes (a network that does not echo it), by the hub's clock. */
 export const SENT_SHOWN_MS = 30_000;
+/** How much older than the press an echo may be dated (the network's clock, not this device's). */
+const ECHO_SLACK_MS = 30_000;
 
 /**
  * The sends a chat shows, oldest first: device copies the hub has no row for, then the hub's rows that are still open,
  * and sent ones whose message is not here yet. `here(messageId)` says whether a message is in the loaded timeline;
- * `hubNow` is the hub's clock.
+ * `hubNow` is the hub's clock. `own`: your messages in the loaded timeline. A row being sent, or sent with no message
+ * named (a network that names none), is not shown once a message of yours with its text came after it was pressed:
+ * that is its echo, come before the account's answer, and it is not shown twice.
  */
-export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows: P.SendRow[], here: (messageId: string) => boolean, hubNow: number): ShownSend[] {
+export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows: P.SendRow[], here: (messageId: string) => boolean, hubNow: number, own: OwnMessage[] = []): ShownSend[] {
   const convs = new Set(conversationIds);
   const known = new Set(rows.map((r) => r.clientId));
+  // Echoes not yet the message of a row that names one; each is taken by one row, oldest send first.
+  const named = new Set(rows.map((r) => r.messageId).filter(Boolean));
+  const free = own.filter((m) => !named.has(m.id)).sort((a, b) => a.ts - b.ts);
+  const echoed = (r: P.SendRow) => {
+    if (!(r.state === 'sending' || (r.state === 'sent' && !r.messageId))) return false;
+    const text = r.body.trim();
+    if (!text) return false;
+    const k = free.findIndex((m) => m.conversationId === r.conversationId && m.body.trim() === text && m.ts >= r.pressedAt - ECHO_SLACK_MS);
+    if (k < 0) return false;
+    free.splice(k, 1);
+    return true;
+  };
   const out: ShownSend[] = [];
   for (const c of copies) {
     if (!convs.has(c.conversationId) || known.has(c.tempId)) continue;
@@ -81,6 +107,7 @@ export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows
   for (const r of [...rows].sort((a, b) => a.seq - b.seq)) {
     if (!convs.has(r.conversationId) || r.state === 'cancelled') continue;
     if (r.state === 'sent' && ((r.messageId && here(r.messageId)) || hubNow - r.updatedAt > SENT_SHOWN_MS)) continue;
+    if (echoed(r)) continue;
     const mark: SendMark = r.state === 'sent' ? 'network' : r.state === 'held' ? 'held' : r.state === 'unsure' ? 'unsure' : r.state === 'failed' ? 'failed' : 'hub';
     const behind = mark === 'hub' ? blocking.get(r.conversationId) : undefined;
     if ((mark === 'held' || mark === 'unsure') && !blocking.has(r.conversationId)) blocking.set(r.conversationId, r.clientId);
@@ -95,6 +122,7 @@ export function shownSends(conversationIds: string[], copies: DeviceCopy[], rows
       ...(r.hold && mark === 'held' ? { hold: r.hold } : {}),
       ...(r.holdUntil !== null && mark === 'held' ? { holdUntil: r.holdUntil } : {}),
       ...(behind ? { behind } : {}),
+      ...(mark === 'network' ? { goneAt: r.updatedAt + SENT_SHOWN_MS } : {}),
       ts: r.pressedAt,
     });
   }

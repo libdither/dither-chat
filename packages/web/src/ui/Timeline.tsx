@@ -1288,7 +1288,17 @@ export function Timeline({ tkey, convIds, onReply, firstUnreadTs, focus, chat, s
   // A sent one goes once its message is here.
   // Asked only of sent rows, of which there are few.
   const here = (id: string) => msgs.some((x) => x.id === id);
-  const mine = shownSends(convIds, pending.value, hubSends.value.rows, here, Date.now() + hubSends.value.offset);
+  const sendNow = Date.now() + hubSends.value.offset;
+  const open = hubSends.value.rows.some((r) => r.state === 'sending' || (r.state === 'sent' && !r.messageId));
+  const own = open ? msgs.filter((x) => isSelfIdentity(x.authorId)).map((x) => ({ id: x.id, conversationId: x.conversationId, body: x.body ?? '', ts: x.ts })) : [];
+  const mine = shownSends(convIds, pending.value, hubSends.value.rows, here, sendNow, own);
+  // A sent one whose message never came goes after a while: drawn again then, since nothing else may change.
+  const goneAt = Math.min(...mine.map((x) => x.goneAt ?? Infinity));
+  useEffect(() => {
+    if (!Number.isFinite(goneAt)) return;
+    const t = setTimeout(() => redraw((n) => n + 1), Math.max(0, goneAt - (Date.now() + hubSends.value.offset)) + 50);
+    return () => clearTimeout(t);
+  }, [goneAt]);
   useLayoutEffect(() => {
     const a = anchor.current;
     if (!a || t?.loading || (a.edge === 'first' ? first?.id : last?.id) === a.id) return;
@@ -1624,8 +1634,10 @@ const loadPanels = () =>
     },
   ));
 
-export function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed, draft, post }: {
+export function Composer({ targets, placeholder, reply, clearReply, disabledReason, routed, draft, post, also }: {
   targets: { convId: string; accountId?: string };
+  /** The other chats shown above the box (a person's routes, a stream's threads): Edit on a held send of one of them puts its text here. */
+  also?: string[];
   placeholder: string;
   /** Where the half-written message is kept, when not by its conversation: a stream's, whichever thread it goes to. */
   draft?: string;
@@ -1738,7 +1750,7 @@ export function Composer({ targets, placeholder, reply, clearReply, disabledReas
   // A mail sent from this box and undone comes back to it (mail/chats.ts refill), unless you have started another.
   const back = refill.value;
   useEffect(() => {
-    if (!back || (back.place !== targets.convId && back.place !== draft) || (!back.append && textNow.current.trim())) return;
+    if (!back || (back.place !== targets.convId && back.place !== draft && !also?.includes(back.place)) || (!back.append && textNow.current.trim())) return;
     refill.value = null;
     type(back.append && textNow.current.trim() ? `${textNow.current}\n${back.text}` : back.text);
     ta.current?.focus();
@@ -2604,6 +2616,7 @@ function PersonChat({ person, directs, at, onBack, msg }: { person: P.PersonView
       ) : (
         <Composer
           targets={{ convId: focus.id }}
+          also={shown.map((d) => d.id)}
           placeholder={focus.network === 'email' ? `Email ${person.name}` : `Message ${person.name}`}
           reply={reply}
           clearReply={() => setReply(null)}

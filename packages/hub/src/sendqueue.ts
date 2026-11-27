@@ -5,7 +5,8 @@
  *
  * - A send is a row in `send_queue`, written in one transaction when it comes (`accept`). The app's copy can go once
  *   the hub answers (one tick). A repeat of the same id, from any tab or device, any time later, is the same row:
- *   answered with what it is now, never sent again. Only a refused one (nothing went out) goes again on a repeat.
+ *   answered with what it is now, never sent again by itself: a refused one too, which goes again only when you press
+ *   Try again (`act`), since an error the hub cannot read may hide one that went out.
  * - One worker per conversation sends the oldest open row and nothing behind it until that one is sent, failed or
  *   cancelled. A held or in-doubt one blocks the rows behind it: they wait with it.
  * - Held: the newest message you could see when you pressed Send (`seen_ts`) is no longer the newest in the chat, and
@@ -14,7 +15,9 @@
  *   (`hold_until`, the setting's seconds) and goes by itself at the end; nobody watching, no countdown, and you are
  *   told. Nothing held goes out unwatched.
  * - A restart: a row left `sending` may be out, so it is in doubt (`unsure`), never sent again by itself; `queued`
- *   ones go; a countdown carries on from its `hold_until`.
+ *   ones go; a countdown carries on from its `hold_until`, and one that ran out while the hub was down starts again,
+ *   so a device that comes back can see it go. Every sync answer carries the list (sync.ts), so a page back after a
+ *   restart, or opened from its kept copy, has the rows as they are now.
  */
 import type * as P from '@dither-chat/protocol';
 import { HOLD_SECONDS_DEFAULT, HOLD_SECONDS_MAX } from '@dither-chat/protocol';
@@ -60,6 +63,7 @@ const SENT_SHOWN_MS = 2 * 60_000;
 const HOLD_IDS = 20;
 const BODY_MAX = 20_000;
 
+const LOST = 'The hub lost track of this send: it may have been sent. Look in the chat before sending it again.';
 const refuse = (message: string, status = 400) => Object.assign(new Error(message), { status });
 
 export class SendQueue {
@@ -87,7 +91,15 @@ export class SendQueue {
   /** Picks up what waits: queued rows go, countdowns carry on. */
   start() {
     this.stopped = false;
-    for (const r of this.db.query(`SELECT client_id, hold_until FROM send_queue WHERE state = 'held' AND hold_until IS NOT NULL`).all() as Row[]) this.arm(r.client_id, r.hold_until);
+    const now = this.clock.now();
+    const s = this.settings().holdSeconds;
+    for (const r of this.db.query(`SELECT client_id, hold_until FROM send_queue WHERE state = 'held' AND hold_until IS NOT NULL`).all() as Row[]) {
+      // Ran out while the hub was down, before any device is back to show it: it counts down again from the start.
+      if (r.hold_until <= now && s > 0) {
+        this.set(r.client_id, 'hold_until = ?', now + s * 1000);
+        this.arm(r.client_id, now + s * 1000);
+      } else this.arm(r.client_id, r.hold_until);
+    }
     for (const r of this.db.query(`SELECT DISTINCT conversation_id FROM send_queue WHERE state = 'queued'`).all() as Row[]) this.kick(r.conversation_id);
   }
 
@@ -154,14 +166,15 @@ export class SendQueue {
   }
 
   /**
-   * A send comes: its row, new or the one it repeats. Throws a refusal (with `status`) for one that cannot be a row at
-   * all: empty, too long, files the hub no longer has. A repeat of a refused one is taken again (nothing went out).
+   * A send comes: its row, new or the one it repeats, as it is now. Throws a refusal (with `status`) for one that
+   * cannot be a row at all: empty, too long, files the hub no longer has. `answered`: the caller waits for the outcome
+   * and tells you itself (a reply from a notification), so a hold sends no notification of its own.
    */
-  accept(conversationId: string, b: QueueBody): P.SendRow {
+  accept(conversationId: string, b: QueueBody, o: { answered?: boolean } = {}): P.SendRow {
     const clientId = typeof b.clientId === 'string' && b.clientId ? b.clientId.slice(0, 64) : `hub-${Buffer.from(crypto.getRandomValues(new Uint8Array(12))).toString('base64url')}`;
     const had = this.row(clientId);
     if (had && had.conversation_id !== conversationId) throw refuse('that send id belongs to another chat', 409);
-    if (had && had.state !== 'failed') return view(had);
+    if (had) return view(had);
     const body = typeof b.body === 'string' ? b.body : '';
     const ids = Array.isArray(b.attachments) ? b.attachments.filter((a): a is string => typeof a === 'string') : [];
     const sticker = typeof b.sticker === 'string' && b.sticker ? b.sticker.slice(0, 128) : null;
@@ -189,23 +202,12 @@ export class SendQueue {
       pressed_at: typeof b.pressedAt === 'number' && Number.isFinite(b.pressedAt) ? Math.floor(b.pressedAt) : now,
     };
     this.db.transaction(() => {
-      if (had) {
-        // Refused before: nothing went out, so it goes again, as asked now, at the end of its chat's queue.
-        this.db
-          .query(
-            `UPDATE send_queue SET seq = ?, account_id = ?, device = ?, body = ?, reply_to = ?, attachments = ?, files = ?, sticker = ?, voice = ?, gif = ?, view_once = ?, silent = ?,
-               mention_replied = ?, seen_ts = ?, seen_id = ?, pressed_at = ?, state = 'queued', error = NULL, status = NULL, hold_reason = NULL, hold_until = NULL, confirmed = 0, told = 0, updated_at = ?
-             WHERE client_id = ?`,
-          )
-          .run(this.nextSeq(), ...Object.values(fields), now, clientId);
-      } else {
-        this.db
-          .query(
-            `INSERT INTO send_queue (client_id, seq, conversation_id, account_id, device, body, reply_to, attachments, files, sticker, voice, gif, view_once, silent, mention_replied, seen_ts, seen_id, pressed_at, state, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
-          )
-          .run(clientId, this.nextSeq(), conversationId, ...Object.values(fields), now);
-      }
+      this.db
+        .query(
+          `INSERT INTO send_queue (client_id, seq, conversation_id, account_id, device, body, reply_to, attachments, files, sticker, voice, gif, view_once, silent, mention_replied, seen_ts, seen_id, pressed_at, state, told, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+        )
+        .run(clientId, this.nextSeq(), conversationId, ...Object.values(fields), o.answered ? 1 : 0, now);
       // Already behind what you saw: held from the start.
       this.holdIfMoved(this.row(clientId)!);
     })();
@@ -306,10 +308,19 @@ export class SendQueue {
     if (this.stopped) return;
     if (this.running.has(conversationId)) return void this.again.add(conversationId);
     this.running.add(conversationId);
-    void this.work(conversationId).finally(() => {
-      this.running.delete(conversationId);
-      if (this.again.delete(conversationId)) this.kick(conversationId);
-    });
+    void this.work(conversationId)
+      .catch((e) => {
+        // A fault of the hub's own (the database): the row it was on may be out, so it waits for you, in doubt.
+        console.error(`send queue: ${conversationId}:`, e);
+        try {
+          this.db.query(`UPDATE send_queue SET state = 'unsure', error = ?, updated_at = ? WHERE conversation_id = ? AND state = 'sending'`).run(LOST, this.clock.now(), conversationId);
+          this.changed();
+        } catch {}
+      })
+      .finally(() => {
+        this.running.delete(conversationId);
+        if (this.again.delete(conversationId)) this.kick(conversationId);
+      });
   }
 
   private async work(conversationId: string) {
@@ -344,21 +355,30 @@ export class SendQueue {
       ...(r.silent ? { silent: true } : {}),
       ...(r.mention_replied !== null ? { mentionReplied: r.mention_replied === 1 } : {}),
     };
+    // The answer is kept even while the hub stops, so a send that went out does not come back in doubt; one the stop
+    // cuts off (the database closed first) is found `sending` at the next start and put in doubt, as after a crash.
+    let record: () => void;
     try {
       const res = await this.d.send(r.conversation_id, send);
-      // Stopped meanwhile: the next start finds it `sending` and puts it in doubt, as after a crash.
-      if (this.stopped) return;
       const answer = (await res.json().catch(() => ({}))) as { error?: string; messageId?: string; accountId?: string; result?: { nativeId?: unknown } };
-      if (res.ok) {
-        const native = typeof answer.result?.nativeId === 'string' ? answer.result.nativeId : null;
-        this.set(r.client_id, `state = 'sent', message_id = ?, native_id = ?, sent_by = ?, error = NULL`, answer.messageId ?? null, native, answer.accountId ?? null);
-      } else this.set(r.client_id, `state = 'failed', error = ?, status = ?`, answer.error || `The send failed (${res.status})`, res.status);
+      const native = typeof answer.result?.nativeId === 'string' ? answer.result.nativeId : null;
+      record = res.ok
+        ? () => this.set(r.client_id, `state = 'sent', message_id = ?, native_id = ?, sent_by = ?, error = NULL`, answer.messageId ?? null, native, answer.accountId ?? null)
+        : () => this.set(r.client_id, `state = 'failed', error = ?, status = ?`, answer.error || `The send failed (${res.status})`, res.status);
     } catch (e) {
-      if (this.stopped) return;
-      if (unknownOutcome(e)) this.set(r.client_id, `state = 'unsure', error = ?`, 'The hub lost track of this send: it may have been sent. Look in the chat before sending it again.');
-      // The account said no (not connected, not allowed): nothing went out.
-      else this.set(r.client_id, `state = 'failed', error = ?, status = 500`, (e as Error)?.message || String(e));
+      record = unknownOutcome(e)
+        ? () => this.set(r.client_id, `state = 'unsure', error = ?`, LOST)
+        : // The account said no (not connected, not allowed). A failed one goes again only when you press Try again.
+          () => this.set(r.client_id, `state = 'failed', error = ?, status = 500`, (e as Error)?.message || String(e));
     }
+    if (this.stopped) {
+      try {
+        record();
+        for (const w of [...this.waiters]) w();
+      } catch {}
+      return;
+    }
+    record();
     this.changed();
   }
 

@@ -106,10 +106,18 @@ function world() {
     /** A hub stopped and a new one started over the same store, as a restart. */
     restart() {
       // The hub stops first, closing its sockets, as a real restart does.
+      w.stop();
+      w.start();
+    },
+    /** The two halves of a restart, for what happens between them. */
+    stop() {
       hub.stop();
       sockets.splice(0);
-      open();
     },
+    start: () => open(),
+    /** What /api/sync answers a page that last saw the journal at `from`. */
+    sync: async (from: { v: number; epoch: string; seq: number }) =>
+      (await (await fetch(`${url}/api/sync`, { method: 'POST', body: JSON.stringify({ v: from.v, epoch: from.epoch, since: from.seq, timelines: [] } satisfies P.SyncRequest) })).json()) as P.SyncResponse,
     /** A page's live socket, with the `sends` frames it got. */
     async socket() {
       const ws = new WebSocket(`${url.replace('http', 'ws')}/api/live`);
@@ -212,6 +220,32 @@ describe('order and keeping', () => {
     expect(w.calls.length).toBe(1);
   });
 
+  test('a page that catches up after the restart gets the send in doubt, though nothing was journaled since', async () => {
+    const w = fresh();
+    w.auto = false;
+    await w.send({ body: 'cut off', clientId: 'cut', ack: 'hub' });
+    await w.callCount(1);
+    const from = w.store.journal.position();
+    w.restart();
+    const r = await w.sync(from);
+    if (r.full) throw new Error(`a full bootstrap: ${r.reason}`);
+    const sends = r.events.find((e): e is Extract<P.ClientEvent, { t: 'sends' }> => e.t === 'sends');
+    expect(byId(sends!.rows, 'cut')?.state).toBe('unsure');
+  });
+
+  test('an answer that comes while the hub stops is kept: the send is sent, not in doubt', async () => {
+    const w = fresh();
+    w.auto = false;
+    await w.send({ body: 'late answer', clientId: 'late', ack: 'hub' });
+    await w.callCount(1);
+    const before = w.hub.queue;
+    w.stop();
+    w.calls[0].answer();
+    await before.settled('late');
+    w.start();
+    expect(w.row('late').state).toBe('sent');
+  });
+
   test('queued sends go after a restart', async () => {
     const w = fresh();
     w.auto = false;
@@ -262,6 +296,25 @@ describe('order and keeping', () => {
     await w.hub.queue.settled('yes');
     expect(w.row('no')).toMatchObject({ state: 'failed', error: 'the account is not connected' });
     expect(w.row('yes').state).toBe('sent');
+  });
+
+  test('a repeat of a refused send is answered with the refusal, not sent again; Try again sends it', async () => {
+    const w = fresh();
+    w.auto = false;
+    await w.send({ body: 'refused', clientId: 'f', ack: 'hub' });
+    await w.callCount(1);
+    // An error the hub cannot read: it may hide one that went out, so only you send it again.
+    w.calls[0].fail(new Error('socket hang up'));
+    await w.hub.queue.settled('f');
+    expect(w.row('f').state).toBe('failed');
+    const repeat = (await (await w.send({ body: 'refused', clientId: 'f', ack: 'hub' })).json()) as P.SendAccepted;
+    expect(repeat.row.state).toBe('failed');
+    expect(w.calls.length).toBe(1);
+    w.auto = true;
+    await w.act('f', 'send');
+    await w.hub.queue.settled('f');
+    expect(w.row('f').state).toBe('sent');
+    expect(w.calls.length).toBe(2);
   });
 });
 
@@ -433,6 +486,26 @@ describe('the countdown', () => {
     expect(w.row('h').state).toBe('sent');
   });
 
+  test('one that ran out while the hub was down counts down again from the start, and nobody is told meanwhile', async () => {
+    const w = fresh();
+    const page = await w.socket();
+    await page.watch([w.conv]);
+    const started = page.frame((rows) => byId(rows, 'h')?.holdUntil != null);
+    await held(w, 'h');
+    await started;
+    w.stop();
+    await w.clock.advance(60_000);
+    w.start();
+    expect(w.row('h')).toMatchObject({ state: 'held', holdUntil: w.clock.now() + 10_000 });
+    expect(w.told).toEqual([]);
+    const again = await w.socket();
+    await again.watch([w.conv]);
+    await w.clock.advance(10_000);
+    await w.hub.queue.settled('h');
+    expect(w.row('h').state).toBe('sent');
+    expect(w.told).toEqual([]);
+  });
+
   test('Cancel and Send now stop it', async () => {
     const w = fresh();
     const page = await w.socket();
@@ -483,6 +556,8 @@ describe('callers from before the queue', () => {
     expect(res.status).toBe(202);
     expect(((await res.json()) as P.SendAccepted).row).toMatchObject({ state: 'held', hold: { count: 1 } });
     expect(w.calls.length).toBe(0);
+    // The notification says so itself: the hub sends none of its own.
+    expect(w.told).toEqual([]);
   });
 
   test('a notification reply to the newest message goes as before', async () => {

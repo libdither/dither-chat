@@ -2971,7 +2971,7 @@ export class HubServer {
     const bad = (msg: string, status = 400) => Response.json({ error: msg }, { status });
     if (!this.store.nativeOf('conversation', conversationId)) return bad('no such conversation', 404);
     const known = typeof b.clientId === 'string' && b.clientId ? this.queue.get(b.clientId.slice(0, 64)) : null;
-    if (!known || known.state === 'failed') {
+    if (!known) {
       const accountId = this.pickAccount(conversationId, b.accountId);
       if (!accountId) return bad('no connected account can send here', 409);
       const refused = this.sendRefusal(conversationId, accountId);
@@ -2979,7 +2979,8 @@ export class HubServer {
     }
     let row: P.SendRow;
     try {
-      row = this.queue.accept(conversationId, b);
+      // A caller that waits for the outcome (a reply from a notification) tells you itself if it is held.
+      row = this.queue.accept(conversationId, b, { answered: b.ack !== 'hub' });
     } catch (e) {
       return bad((e as Error).message, (e as { status?: number }).status ?? 500);
     }

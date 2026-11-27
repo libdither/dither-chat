@@ -122,7 +122,11 @@ function changedSince(ctx: SyncContext, rows: ChangeRow[]): P.ClientEvent[] {
   if (list('rules')) out.push({ t: 'rules', rules: store.rules() });
   if (list('devices') && ctx.devices) out.push({ t: 'devices', devices: ctx.devices.list() });
   if (list('requests')) out.push({ t: 'requests', requests: requestViews(store) });
-  if (list('sends') && ctx.sends) out.push(ctx.sends.event());
+  // Whenever there are any, changed or not: a page back after a restart (whose rows left mid-send are now in doubt), or
+  // opened from its kept copy, has the hub's sends as they are now, though nothing journaled a change since its
+  // position. With none and no change, nothing: an empty catch-up stays empty.
+  const sends = ctx.sends?.event();
+  if (sends && (list('sends') || sends.rows.length)) out.push(sends);
 
   if (attention && list('attention')) {
     const xs = of('attention');

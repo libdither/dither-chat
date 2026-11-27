@@ -405,14 +405,19 @@ describe('the server', () => {
     });
   }
 
-  test('a refusal that did nothing is not in doubt: the same clientId may go again', async () => {
+  test('a refusal is not in doubt; a repeat of its clientId is answered with the refusal, and Try again sends it', async () => {
     const conv = convOf('c-refused');
     const send = () => fetch(`${url}/api/conversations/${conv}/send`, { method: 'POST', body: JSON.stringify({ body: 'refused first', clientId: 'tmp-refused' }) });
     answer = lost('offline', 'the account is not connected');
     const first = await send();
     expect(first.status).toBe(500);
     answer = 'ok';
-    expect((await send()).status).toBe(200);
+    // Never again by itself: an error the hub cannot read may hide one that went out.
+    expect((await send()).status).toBe(500);
+    expect(sent.filter((c: any) => c.body === 'refused first').length).toBe(1);
+    expect((await fetch(`${url}/api/sends/tmp-refused`, { method: 'POST', body: JSON.stringify({ action: 'send' }) })).status).toBe(200);
+    await hub.queue.settled('tmp-refused');
+    expect(hub.queue.get('tmp-refused')!.state).toBe('sent');
     expect(sent.filter((c: any) => c.body === 'refused first').length).toBe(2);
   });
 
