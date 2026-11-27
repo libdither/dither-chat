@@ -104,9 +104,10 @@ function Capped({ children }: { children: ComponentChildren }) {
     return () => ro.disconnect();
   }, []);
   const capped = over && !all;
+  // Held to the cap from the first draw, before a frame that grows is measured again: never drawn whole for a moment.
   return (
     <div class={`chat-mail-sent chat-mail-framed ${capped ? 'capped' : ''}`}>
-      <div ref={box} class="chat-mail-cap" style={capped ? { maxHeight: `${max}px` } : undefined}>
+      <div ref={box} class="chat-mail-cap" style={max && !all ? { maxHeight: `${capped ? max : max + 24}px` } : undefined}>
         <div>{children}</div>
       </div>
       {over && (

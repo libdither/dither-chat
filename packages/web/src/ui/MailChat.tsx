@@ -254,7 +254,10 @@ function MailLetter({ m, text, blocks, quoted, quoteAbove }: { m: P.MessageView;
   const x = m.mail!;
   const [open, setOpen] = useState(false);
   const framed = x.rich && !blocks && x.bodyState === 'cached';
-  const [sent, setSent] = useState(() => framed && !justWords.has(m.id));
+  // What the reader picked here; until then a designed mail shows as sent. Not fixed at the first draw: a mail drawn
+  // before its tree came is not left framed once it has one.
+  const [chosen, setSent] = useState<boolean | null>(null);
+  const sent = chosen ?? (framed && !justWords.has(m.id));
   const { ref, near } = useNear<HTMLDivElement>(sent && framed);
   const names = signNames(m);
   const l = blocks ? letterBlocks(blocks, names) : asBlockLetter(letter(text, names));

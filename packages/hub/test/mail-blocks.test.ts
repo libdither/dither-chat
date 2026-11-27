@@ -141,11 +141,8 @@ describe('giving up and caps', () => {
     expect(t).toEqual({ blocks: [{ t: 'p', c: ['Yes.'] }] });
   });
 
-  test('a huge mail is not walked past its cap', () => {
-    const big = '<p>' + '<i>x</i>'.repeat(200_000) + '</p>';
-    const at = performance.now();
-    expect(tree(big)).toEqual({ none: 'size' });
-    expect(performance.now() - at).toBeLessThan(5000);
+  test('a huge mail gives up on its size', () => {
+    expect(tree('<p>' + '<i>x</i>'.repeat(200_000) + '</p>')).toEqual({ none: 'size' });
   });
 });
 

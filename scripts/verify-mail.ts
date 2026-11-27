@@ -938,7 +938,8 @@ async function forwardWithPictures(tag: string) {
   // A designed newsletter shows as it was sent, framed in place, without a click (the frame grows as it lays out).
   await page.until(`!!document.querySelector(${JSON.stringify(`${card} .chat-mail-framed .mail-html.ready`)})`, 15000);
   check(`${tag}: a designed newsletter shows as sent, in place`, !(await has(`${card} .mail-words`)));
-  // Taller than the pane allows: capped, with Show all.
+  // Taller than the pane allows: capped, with Show all, once the grown frame is measured.
+  await page.until(`!!document.querySelector(${JSON.stringify(`${card} .chat-mail-framed.capped .chat-mail-all`)})`, 15000);
   const cap = await page.eval<{ box: number; pane: number }>(`(() => ({ box: document.querySelector('${card} .chat-mail-cap').getBoundingClientRect().height, pane: document.querySelector('${card}').closest('.pane').clientHeight }))()`);
   check(`${tag}: its height capped at about 60% of the pane, with Show all`, cap.box <= cap.pane * 0.6 + 2 && (await has(`${card} .chat-mail-framed.capped .chat-mail-all`)), cap);
   // Its picture bar: this mail's own choice (none, the ones unlikely to tell, all), from ⋯.
