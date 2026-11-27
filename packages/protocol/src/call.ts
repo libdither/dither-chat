@@ -367,6 +367,12 @@ export interface CallView {
   state: CallFact['state'];
   /** It rings you now: the ring card shows, with Answer and (where the account can) Decline. */
   ringing: boolean;
+  /**
+   * It rings you and may sound: no mute covers it and quiet hours don't hold it (the hub's ringGate), as for the ring
+   * sent to your devices. A page you are looking at rings aloud for it (web ringtone.ts); a muted one shows its card
+   * quietly.
+   */
+  alerts: boolean;
   outgoing: boolean;
   video: boolean;
   /** Identity ids. */

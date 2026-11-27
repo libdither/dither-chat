@@ -12,7 +12,11 @@ const calls = signal<Map<string, P.CallView>>(new Map());
 /** Voice channels with people or a status line, by conversation id. */
 export const voice = signal<Map<string, P.VoiceChannelView>>(new Map());
 
+/** The ring the page itself plays (ringtone.ts), loaded with the first call that rings you aloud: off the first screen. */
+let ringtone: Promise<unknown> | null = null;
+
 export function applyCalls(list: P.CallView[]) {
+  if (!ringtone && list.some((c) => c.ringing && c.alerts)) ringtone = import('./ringtone.ts').then((m) => m.startRingtone());
   const next = new Map(calls.value);
   for (const c of list) next.set(c.id, c);
   // Keep the page's map small: what rings or goes on, and the last few that ended.
@@ -63,4 +67,9 @@ export function callIn(conversationId: string): P.CallView | null {
 export function answerable(list: P.CallView[], callId: string | undefined): P.CallView | null {
   const c = callId ? list.find((x) => x.id === callId) : list.find((x) => x.state !== 'ended');
   return c && c.state !== 'ended' ? c : null;
+}
+
+/** Whether a page rings aloud (ringtone.ts): a call that rings you and may sound, the page in sight, this device in no call. */
+export function ringsAloud(calls: Pick<P.CallView, 'ringing' | 'alerts'>[], visible: boolean, inCall: boolean): boolean {
+  return visible && !inCall && calls.some((c) => c.ringing && c.alerts);
 }

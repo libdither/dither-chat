@@ -157,6 +157,8 @@
     "js/shared/Video.gzip": { "measured": 652, "budget": 662 },
     "js/shared/w3c-keyname.bytes": { "measured": 1536, "budget": 1567, "reason": "The mail editor (docs/mail.md \"Writing\"): rich text with pictures in place, Markdown and HTML views, forwards and quotes kept whole; the rich editor and the CodeMirror views load as chunks of their own when a message is first written" },
     "js/shared/w3c-keyname.gzip": { "measured": 861, "budget": 879, "reason": "The mail editor (docs/mail.md \"Writing\"): rich text with pictures in place, Markdown and HTML views, forwards and quotes kept whole; the rich editor and the CodeMirror views load as chunks of their own when a message is first written" },
+    "js/src/ringtone.ts.bytes": { "measured": 1150, "budget": 1173 },
+    "js/src/ringtone.ts.gzip": { "measured": 677, "budget": 691 },
     "js/src/graph/GraphView.tsx.bytes": { "measured": 85466, "budget": 87134, "reason": "People graph rings (docs/people-graph.md \"Rings\", \"Ties and circles\", \"How it is worked out, and tuning it\"): ties between people and their circles, the rings layout in the graph's chunk and its worker, a card that says why each person is the size they are, and the tuning panel with Fit to me" },
     "js/src/graph/GraphView.tsx.gzip": { "measured": 29913, "budget": 30492, "reason": "People graph rings (docs/people-graph.md \"Rings\", \"Ties and circles\", \"How it is worked out, and tuning it\"): ties between people and their circles, the rings layout in the graph's chunk and its worker, a card that says why each person is the size they are, and the tuning panel with Fit to me" },
     "js/src/prefetch.ts.bytes": { "measured": 55, "budget": 57 },
