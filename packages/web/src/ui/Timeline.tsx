@@ -140,7 +140,7 @@ import { Slices, whenIdle } from '../slices.ts';
 import { calendarOn } from '../plans.ts';
 import { PlanChipLazy } from './calendar/lazy.tsx';
 import { dayHover, TheirDayHost, TimeStamps } from './TheirTime.tsx';
-import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, veiled, Voice } from './rich/parts.tsx';
+import { EmbedVideo, RichFoot, RichHead, RichMarks, Veil, Sound, veiled, Voice } from './rich/parts.tsx';
 import { VoicePeople } from './Ringing.tsx';
 import { ForumLazy } from './ThreadsLazy.tsx';
 import { channelView, channelViews, headBefore, setChannelView, viewLabel, type ChannelView } from '../stream.ts';
@@ -628,8 +628,8 @@ function Attachments({ m, run, absorbed, layout, switchable }: { m: P.MessageVie
           return withNote(a, veiled(a) ? <Veil a={a}>{video}</Veil> : video);
         }
         // A voice message with its waveform and length (docs/rich-messages.md).
-        if (a.voice) return withNote(a, <Voice a={a} index={i} />);
-        if (kind === 'audio') return withNote(a, <audio class="att-audio" data-att={i} src={a.url} controls preload="metadata" onPlay={() => played(m)} />);
+        if (a.voice) return withNote(a, <Voice m={m} a={a} index={i} />);
+        if (kind === 'audio') return withNote(a, <Sound m={m} a={a} index={i} onPlay={() => played(m)} />);
         const fk = fileKind(a);
         // A kind with a viewer opens in it (Viewer.tsx); any other opens in its app when the helper or the phone can,
         // else downloads (a type the hub won't show, HTML or SVG, straight away rather than through an empty tab).

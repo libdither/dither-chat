@@ -1,0 +1,75 @@
+/* ---------------------------------------------------------------- the playing bar (PlayingBar.tsx)
+
+   Where the call bar goes (CallBar.css), as a row of the layout: on a computer under the list, on a phone the top of
+   the screen, everything else starting below it (styles.css ".app.with-bar"). Its position is a line along its foot. */
+
+.playing-bar {
+  grid-row: 3;
+  grid-column: 2;
+  position: relative;
+  min-width: 0;
+  height: var(--call-bar-h);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 4px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--bg-active);
+  color: var(--text);
+}
+.playing-bar-open {
+  flex: 1;
+  min-width: 0;
+  height: calc(var(--call-bar-h) - 8px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 6px;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  text-align: left;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.playing-bar-open:hover {
+  background: var(--bg-hover);
+}
+.playing-bar-open b,
+.playing-bar-open small {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.playing-bar-open b {
+  font-size: 14px;
+}
+.playing-bar-open small {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.playing-bar-line {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+@media (max-width: 820px) {
+  .playing-bar {
+    position: absolute;
+    z-index: 35;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--call-bar-top);
+    padding: env(safe-area-inset-top) 8px 0 4px;
+    border-top: 0;
+    border-bottom: 1px solid var(--bg-active);
+  }
+}

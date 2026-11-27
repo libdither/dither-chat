@@ -2,17 +2,19 @@
  * What a message carries beyond its text and files (docs/rich-messages.md), the light part: the lines above its text
  * (who ran the command a bot answers, where a crosspost came from), the marks beside its time, and the veil over a
  * spoilered or explicit picture. These are in the main bundle; a bot's controls, quotes of linked messages, the
- * voice-message player and the video player are a chunk of their own (Rich.tsx), loaded when a message has one.
+ * voice-message and sound players and the video player are a chunk of their own (Rich.tsx), loaded when a message has one.
  */
 import type * as P from '@dither-chat/protocol';
 import { waveformPoints } from '@dither-chat/protocol';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { clock } from '../../format.ts';
+import { fileFacts } from '../../files.ts';
 import { renderMarkdown } from '../../markdown.ts';
 import { authorName, plainBody } from '../../model.ts';
 import { db, openMessage } from '../../state.ts';
 import { canPress, picksOf, press, pressState, stateWords } from '../../apps.ts';
+import { fileKey, playback, playFile, playingKey } from '../../nowplaying.ts';
 import { Icon } from '../icons.tsx';
 import { Video } from '../Video.tsx';
 
@@ -33,6 +35,13 @@ const kit = {
   pressState,
   picks: picksOf,
   words: stateWords,
+  // The app's player (nowplaying.ts): voice messages and sound files play in it, so they go on outside their chat.
+  playFile,
+  playback,
+  playingKey,
+  fileKey,
+  // A file's type and size (files.ts), under a sound file's name until it plays.
+  facts: fileFacts,
 };
 export type Kit = typeof kit;
 
@@ -145,9 +154,15 @@ export function RichFoot({ m }: { m: P.MessageView }) {
 }
 
 /** A voice message's player, with its waveform and length. Until the chunk is in, the plain player. */
-export function Voice({ a, index }: { a: P.AttachmentView; index: number }) {
+export function Voice({ m, a, index }: { m: P.MessageView; a: P.AttachmentView; index: number }) {
   const c = useChunk(true);
-  return c ? <c.VoicePlayer a={a} index={index} kit={kit} /> : <audio class="att-audio" data-att={index} src={a.url} controls preload="metadata" />;
+  return c ? <c.VoicePlayer m={m} a={a} index={index} kit={kit} /> : <audio class="att-audio" data-att={index} src={a.url} controls preload="metadata" />;
+}
+
+/** A sound file's player, with its name and a position bar. Until the chunk is in, the plain player. */
+export function Sound({ m, a, index, onPlay }: { m: P.MessageView; a: P.AttachmentView; index: number; onPlay?: () => void }) {
+  const c = useChunk(true);
+  return c ? <c.SoundPlayer m={m} a={a} index={index} kit={kit} onPlay={onPlay} /> : <audio class="att-audio" data-att={index} src={a.url} controls preload="metadata" onPlay={onPlay} />;
 }
 
 /** An embed's video: a file played here, or a player page loaded only once clicked. */
