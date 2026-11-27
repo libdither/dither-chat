@@ -6,6 +6,7 @@ import { codeBuild } from './restarts.ts';
 import { pathToFileURL } from 'node:url';
 import type * as P from '@dither-chat/protocol';
 import type { DownloadAs } from '@dither-chat/protocol';
+import { personPosts } from './personposts.ts';
 import { chatIdOf, chatRef, chatRoutes, chatView, chooseRoute, defaultRoute, isEmailRoute, parseCursor } from './chats.ts';
 import { ATTACHMENT_LIMITS, CALENDAR_URL_DEFAULT, LIVE_RESUME, calendarAccountUrl, CLICK_BODY_MAX, directTarget, discordEmojiUrl, downloadsAs, IMPORT_CHUNK, KEPT_KINDS, MAX_UPLOAD, NETWORK_META, NETWORKS, postIdOf, PICTURE_MAX as P_PICTURE_MAX, PICTURE_TYPES as P_PICTURE_TYPES, RETENTION_GUARDED, RULE_LEVELS, RUNGS, sendBlocker, UPLOAD_CHUNK, WATCH_EVERY } from '@dither-chat/protocol';
 import { hubId } from '@dither-chat/protocol/ids';
@@ -1919,6 +1920,11 @@ export class HubServer {
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/stream$/)) && method === 'GET') {
       if (!s.one('SELECT 1 FROM conversation WHERE id = ?', m[1])) return bad('no such conversation', 404);
       return ok(s.mergedTimeline(s.channelStream(m[1]), parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
+    }
+    // Their public posts as the hub logged them, newest first (personposts.ts, docs/places.md "A person's networks").
+    if ((m = path.match(/^\/api\/persons\/([\w-]+)\/posts$/)) && method === 'GET') {
+      const v = personPosts(s, m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 30, 100), url.searchParams.get('toYou') === '1');
+      return v ? ok(v) : bad('nobody by that id', 404);
     }
     if ((m = path.match(/^\/api\/persons\/([\w-]+)\/timeline$/))) return ok(s.personTimeline(m[1], parseCursor(url.searchParams.get('before')), Math.min(num('limit') ?? 60, 200)));
     if ((m = path.match(/^\/api\/conversations\/([\w-]+)\/notify$/))) return ok(this.triage.effectiveLevel(m[1]));

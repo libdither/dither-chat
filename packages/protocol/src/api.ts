@@ -1803,6 +1803,31 @@ export interface MessagePage {
   elsewhere?: ElsewhereView[];
 }
 
+/**
+ * One of a person's public posts, as the hub logged it (GET /api/persons/:id/posts, docs/places.md "A person's
+ * networks"): a post read in a thread or on a profile (variant 'posts'), under a post you follow ('follow'), or their
+ * reply, mention or quote in your notifications ('feed'). Authors are hub identity ids, pictures signed paths.
+ */
+export interface PersonPostView {
+  /** The hub message it was logged as. */
+  messageId: string;
+  network: Network;
+  /** ms epoch: when it was posted. */
+  ts: number;
+  post: PostFact;
+  /** Written to you: a reply to a post of yours, a mention of you, a quote of your post. */
+  toYou?: 'reply' | 'mention' | 'quote';
+}
+
+/** A page of a person's posts, newest first. `before`: the cursor for the next older page, null at the end. */
+export interface PersonPostsPage {
+  posts: PersonPostView[];
+  /** Everyone the page names: the authors, and those a reply, repost or quote names. */
+  identities: IdentityView[];
+  hasMore: boolean;
+  before: string | null;
+}
+
 export interface InboxItem {
   message: MessageView;
   conversationId: string;
