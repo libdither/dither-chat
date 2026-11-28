@@ -49,10 +49,22 @@ With no sink set (tests, scripts, `DITHER_TRACE=0`) a span is a function call: n
 | `triage` | main.ts, each message decided | `decision`, `unjudged` |
 | `flush` | server.ts, when it had events to send | `events` |
 | a sliced job (`embeddings refit`, `activity features` inside a `triage`) | slices.ts `sliced` | `slices`, `busyMs` (the slices' time on the thread in all) |
+| `dropped target` | store.ts through dropped.ts: an event for a message the hub does not hold (below) | `network`, `account`, `kind`, `count` |
 | `upkeep`, `categories`, `votes and held alerts`, `notifications: read and requests`, `attention: first scoring`, `attention: rescore all`, `scorecard` | main.ts timers | |
 
 Making a group adds `network`, `people`, `named`, then `added`, `invited`, `failed`, and the events `paced` and
 `adapter answered`, to its `POST /api/groups` span, whose child is `command createGroup`.
+
+**Dropped targets** (`dropped.ts`). A `reaction`, `pin`, `delete`, `pollUpdate` or `reactionsCleared` for a message id
+with no row is dropped, as before, and a message whose `replyTo` names one is kept with its reply pointing nowhere;
+each is now counted per network and kind (`kind` is the event's `t`, or `replyTo`), and written as a
+`dropped target` span, a child of the batch it came in. One span per account and kind at most every 10 s: the drops in
+between fold into the next one's `count` (the in-memory counts have every one). A reply is counted when it is first
+stored, not each time backfill sends it again. A few are normal (a reaction on a message older than backfill went); a
+rise means the hub and the network name a message differently, as Signal's edits did when every reaction on an edited
+message was dropped this way. The counts since the hub started are in the owner's `GET /api/health`
+(`droppedTargets`: network, kind, count, lastAt), and `--name 'dropped target'` finds the spans. Never the message,
+the emoji or anything a person wrote. For what is already in the database, the parity audit (docs/testing.md).
 
 **Attributes are never content.** Ids, counts, kinds, statuses and route shapes only: no message text, no names, no
 group names, nothing a person wrote. The files are in the data directory, private to the hub's user, like the database.

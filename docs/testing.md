@@ -227,6 +227,30 @@ workflow. It judges nothing: each night's medians and spread go as one line onto
 job's summary flags what moved against the nights before (a time by 15%, a count outside what its runs came to), with a page of charts as the
 artifact `perf-trend`. It fails only when measuring breaks. docs/perf.md, "Nightly trends".
 
+### Parity audit
+
+`scripts/audit-parity.ts` (logic in `packages/hub/src/parity.ts`, tests in `packages/hub/test/parity.test.ts`) reads
+a hub database and says, in counts only, what a wrong message id leaves behind: an edit stored as a message of its own
+(a row whose `edited_ts` is another row's `ts`, same chat and author), replies to rows that are not there (with a quote,
+and naming a time some row was edited at), edited messages reacted to far less than the rest, reactions, tallies,
+files and history rows whose message is gone, and edited messages with no edit history row. With
+`--signal-desktop <profile>` it also compares the hub with a linked Signal Desktop, read by the importer's own reader
+(docs/import-signal.md) into a temporary plain copy that is removed after: per chat, over the time both cover,
+messages, edited ones, reactions and files on each side, which of Desktop's the hub lacks, which of the hub's Desktop
+does not know, and reactions the hub dropped.
+
+```sh
+bun scripts/audit-parity.ts                                # the live database, every network
+bun scripts/audit-parity.ts --network signal --signal-desktop ~/.config/Signal --days 30
+bun scripts/audit-parity.ts --db <copy.sqlite> --direct --json
+```
+
+It never opens the live database: it copies it with `sqlite3 -readonly <db> "VACUUM INTO '<tmp>'"` into a private
+temporary folder and removes it when done; `--direct` opens `--db` itself, read-only, for a copy or a test database.
+Chats and messages are named by hashes of their hub ids (`--show-ids` for the ids). `--self <aci>` and
+`--desktop-key <hex>` are for a Desktop whose database does not say whom it is linked as, or whose key a keyring holds.
+It exits 1 when it found an anomaly or a mismatch, 2 when it could not run.
+
 ## Checks across the code
 
 Three checks look at the whole code base rather than one feature, cheap enough for every run (CI's typecheck job). The

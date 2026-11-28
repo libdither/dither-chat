@@ -205,6 +205,7 @@ describe('with a password', () => {
     expect((await fetch(`${base}/api/bootstrap`, { headers: auth })).status).toBe(200);
     const h = await (await fetch(`${base}/api/health`, { headers: auth })).json();
     expect(h.gapRestarts).toBe(0);
+    expect(h.droppedTargets).toEqual([]);
     const t = await fetch(`${base}/api/ticket`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ url: '/media/abc/def' }) });
     expect(t.status).toBe(200);
   });
