@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { About, AdapterEvent, PersonAbout } from '@dither-chat/protocol';
 import { type AdapterHost, CAPABILITIES, LINK_MESSAGE, SignalAdapter, socketPathFor, updateGroupParams } from '../src/adapter.ts';
+import { AdapterState } from '../src/state.ts';
 
 const FAKE = join(import.meta.dir, 'fake-signal-cli.ts');
 const SELF = '5f2c7a8e-1111-4aaa-8bbb-000000000001';
@@ -239,11 +240,15 @@ describe('signal adapter against a fake signal-cli', () => {
     mark = events.length;
     await cmd({ t: 'edit', conversation: DM_ALICE, message: sent.nativeId, body: 'fixed *now*' });
     expect(calls('send').at(-1).params).toEqual({ recipient: [ALICE], message: 'fixed now', textStyle: ['6:3:ITALIC'], editTimestamp: ts });
+    // Read before toMatchObject, which leaves its expect.any() in the object it matched.
+    const editedTs = of('message', mark)[0].message.editedTs!;
+    expect(editedTs).toBeGreaterThan(ts);
     expect(of('message', mark)[0].message).toMatchObject({ nativeId: sent.nativeId, ts, editedTs: expect.any(Number), body: 'fixed *now*' });
 
     mark = events.length;
     await cmd({ t: 'redact', conversation: DM_ALICE, message: sent.nativeId });
-    expect(calls('remoteDelete').at(-1).params).toEqual({ recipient: [ALICE], targetTimestamp: ts });
+    // Other clients know the message by its edit's timestamp now.
+    expect(calls('remoteDelete').at(-1).params).toEqual({ recipient: [ALICE], targetTimestamp: editedTs });
     expect(of('delete', mark)).toEqual([{ t: 'delete', conversation: DM_ALICE, nativeId: sent.nativeId }]);
     await expect(cmd({ t: 'redact', conversation: GROUP, message: `${ALICE}:${T + 1000}` })).rejects.toThrow(/own messages/);
 
@@ -297,6 +302,106 @@ describe('signal adapter against a fake signal-cli', () => {
     mark = events.length;
     push(receipt(alice, 'read', [T + 18000], T + 19000));
     expect(await until('receipt for a phone edit', () => of('receipt', mark)[0])).toEqual({ t: 'receipt', conversation: DM_ALICE, messages: [`${SELF}:${T + 9000}`], who: ALICE, state: 'read', ts: T + 19000 });
+  });
+
+  test("someone's edit chain: each edit names the one before, and all of them update one message", async () => {
+    const P = T + 60000;
+    const id = `${ALICE}:${P}`;
+    const aliceAt = (at: number, fields: Record<string, unknown>) => {
+      const f = fixture('reply-quote');
+      f.envelope.timestamp = at;
+      delete f.envelope.dataMessage.quote;
+      Object.assign(f.envelope.dataMessage, { timestamp: at, message: null, ...fields });
+      return f;
+    };
+    const edit = (target: number, at: number, text: string) => {
+      const f = fixture('edit');
+      f.envelope.timestamp = at;
+      f.envelope.editMessage.targetSentTimestamp = target;
+      delete f.envelope.editMessage.dataMessage.quote;
+      Object.assign(f.envelope.editMessage.dataMessage, { timestamp: at, message: text, textStyles: [] });
+      return f;
+    };
+    const her = { targetAuthor: '+15550137', targetAuthorNumber: '+15550137', targetAuthorUuid: ALICE };
+    let mark = events.length;
+    push(aliceAt(P, { message: 'meet at 6' }));
+    push(edit(P, P + 1000, 'meet at 7'));
+    push(edit(P + 1000, P + 2000, 'meet at 8'));
+    push(edit(P + 2000, P + 3000, 'meet at 9'));
+    await until('the third edit', () => of('message', mark).find((e) => e.message.editedTs === P + 3000));
+    expect(of('message', mark).map((e) => [e.message.nativeId, e.message.ts, e.message.editedTs ?? null, e.message.body])).toEqual([
+      [id, P, null, 'meet at 6'],
+      [id, P, P + 1000, 'meet at 7'],
+      [id, P, P + 2000, 'meet at 8'],
+      [id, P, P + 3000, 'meet at 9'],
+    ]);
+
+    // Her reactions, replies and pins name the newest timestamp; they count for the one message.
+    mark = events.length;
+    push(aliceAt(P + 4000, { reaction: { emoji: '👍', ...her, targetSentTimestamp: P + 3000, isRemove: false } }));
+    push(aliceAt(P + 4100, { reaction: { emoji: '👍', ...her, targetSentTimestamp: P + 3000, isRemove: true } }));
+    push(aliceAt(P + 4200, { message: 'see above', quote: { id: P + 3000, author: '+15550137', authorNumber: '+15550137', authorUuid: ALICE, text: 'meet at 9', attachments: [] } }));
+    push(aliceAt(P + 4300, { pinMessage: { ...her, targetSentTimestamp: P + 3000, pinDurationSeconds: -1 } }));
+    push(aliceAt(P + 4400, { unpinMessage: { ...her, targetSentTimestamp: P + 2000 } }));
+    await until('the unpin', () => of('pin', mark).length >= 2);
+    expect(of('reaction', mark)).toEqual([
+      { t: 'reaction', conversation: DM_ALICE, message: id, author: ALICE, key: '👍' },
+      { t: 'reaction', conversation: DM_ALICE, message: id, author: ALICE, key: '👍', remove: true },
+    ]);
+    expect(of('message', mark).find((e) => e.message.body === 'see above')!.message.replyTo).toBe(id);
+    expect(of('pin', mark).map((e) => [e.message, e.pinned])).toEqual([
+      [id, true],
+      [id, false],
+    ]);
+
+    // Yours too go out with the newest timestamp.
+    await cmd({ t: 'react', conversation: DM_ALICE, message: id, key: '🎉' });
+    expect(calls('sendReaction').at(-1).params).toEqual({ recipient: [ALICE], emoji: '🎉', targetAuthor: ALICE, targetTimestamp: P + 3000 });
+    await cmd({ t: 'send', conversation: DM_ALICE, body: 'works for me', replyTo: id });
+    expect(calls('send').at(-1).params).toMatchObject({ quoteTimestamp: P + 3000, quoteAuthor: ALICE, quoteMessage: 'meet at 9' });
+
+    // And her delete of the newest version deletes the message.
+    mark = events.length;
+    push(aliceAt(P + 5000, { remoteDelete: { timestamp: P + 3000 } }));
+    expect(await until('the delete', () => of('delete', mark)[0])).toEqual({ t: 'delete', conversation: DM_ALICE, nativeId: id });
+  });
+
+  test('your edit chain: each edit, reaction, reply and delete names your newest edit', async () => {
+    const sent = (await cmd({ t: 'send', conversation: DM_ALICE, body: 'leaving at 5' })) as { nativeId: string };
+    const ts = Number(sent.nativeId.split(':')[1]);
+    let mark = events.length;
+    await cmd({ t: 'edit', conversation: DM_ALICE, message: sent.nativeId, body: 'leaving at 6' });
+    expect(calls('send').at(-1).params.editTimestamp).toBe(ts);
+    const first = of('message', mark)[0].message.editedTs!;
+    mark = events.length;
+    await cmd({ t: 'edit', conversation: DM_ALICE, message: sent.nativeId, body: 'leaving at 7' });
+    expect(calls('send').at(-1).params.editTimestamp).toBe(first);
+    const second = of('message', mark)[0].message.editedTs!;
+    expect(second).toBeGreaterThan(first);
+    expect(of('message', mark)[0].message).toMatchObject({ nativeId: sent.nativeId, ts, body: 'leaving at 7' });
+
+    await cmd({ t: 'react', conversation: DM_ALICE, message: sent.nativeId, key: '👀' });
+    expect(calls('sendReaction').at(-1).params).toMatchObject({ targetAuthor: SELF, targetTimestamp: second });
+    await cmd({ t: 'send', conversation: DM_ALICE, body: 'or 8', replyTo: sent.nativeId });
+    expect(calls('send').at(-1).params).toMatchObject({ quoteTimestamp: second, quoteAuthor: SELF, quoteMessage: 'leaving at 7' });
+    mark = events.length;
+    push(receipt({ uuid: ALICE, number: '+15550137', name: 'Alice Chen' }, 'read', [second], second + 100));
+    expect((await until('read receipt', () => of('receipt', mark)[0])).messages).toEqual([sent.nativeId]);
+    await cmd({ t: 'redact', conversation: DM_ALICE, message: sent.nativeId });
+    expect(calls('remoteDelete').at(-1).params).toEqual({ recipient: [ALICE], targetTimestamp: second });
+
+    // Edited twice on your phone (the first edit, T+18000, came in the receipts step): one message, and the next
+    // edit from here names the phone's newest.
+    mark = events.length;
+    const again = fixture('sync-sent-edit');
+    again.envelope.timestamp = T + 21000;
+    again.envelope.syncMessage.sentMessage.editMessage.targetSentTimestamp = T + 18000;
+    Object.assign(again.envelope.syncMessage.sentMessage.editMessage.dataMessage, { timestamp: T + 21000, message: 'on my way 🚲 (2 min)' });
+    push(again);
+    const m = (await until('the phone edit', () => of('message', mark)[0])).message;
+    expect(m).toMatchObject({ nativeId: `${SELF}:${T + 9000}`, ts: T + 9000, editedTs: T + 21000, body: 'on my way 🚲 (2 min)' });
+    await cmd({ t: 'edit', conversation: DM_ALICE, message: `${SELF}:${T + 9000}`, body: 'here' });
+    expect(calls('send').at(-1).params.editTimestamp).toBe(T + 21000);
   });
 
   test('history, fetchMedia, typing action, bad input', async () => {
@@ -808,6 +913,43 @@ describe('signal adapter against a fake signal-cli', () => {
       .map((r) => r.pid);
     await adapter.shutdown();
     await until('children gone', () => pids.every((p) => !alive(p)), 5000);
+  });
+});
+
+describe('adapter state', () => {
+  test('edit chains survive a reload, and a state file from before them still loads', () => {
+    const d = mkdtempSync(join(tmpdir(), 'dither-sig-state-'));
+    try {
+      const path = join(d, 'state.json');
+      const orig = `${ALICE}:${T}`;
+      const s = new AdapterState(path);
+      s.remember(orig, DM_ALICE, 'v1');
+      s.alias(`${ALICE}:${T + 10}`, orig, DM_ALICE);
+      s.alias(`${ALICE}:${T + 20}`, `${ALICE}:${T + 10}`, DM_ALICE);
+      s.alias(`${ALICE}:${T + 15}`, `${ALICE}:${T + 10}`, DM_ALICE); // late to arrive: not the newest
+      s.remember(orig, DM_ALICE, 'v3');
+      s.remember(`${ALICE}:${T + 99}`, DM_ALICE, 'never edited');
+      s.flush();
+
+      const r = new AdapterState(path);
+      for (const e of [T + 10, T + 15, T + 20]) expect(r.originalOf(`${ALICE}:${e}`)).toBe(orig);
+      expect(r.latestTsOf(orig)).toBe(T + 20);
+      expect(r.latestTsOf(`${ALICE}:${T + 10}`)).toBe(T + 20);
+      expect(r.textOf(orig)).toBe('v3');
+      expect(r.conversationOf(`${ALICE}:${T + 20}`)).toBe(DM_ALICE);
+      expect(r.latestTsOf(`${ALICE}:${T + 99}`)).toBeUndefined();
+
+      writeFileSync(path, JSON.stringify({ v: 1, dms: [], index: [[orig, { c: DM_ALICE, t: 'v2' }], [`${ALICE}:${T + 10}`, { c: DM_ALICE, t: '', o: orig }]], unread: {}, expiring: [], groups: {} }));
+      const old = new AdapterState(path);
+      expect(old.originalOf(`${ALICE}:${T + 10}`)).toBe(orig);
+      expect(old.latestTsOf(orig)).toBeUndefined();
+      old.alias(`${ALICE}:${T + 30}`, `${ALICE}:${T + 10}`, DM_ALICE);
+      expect(old.originalOf(`${ALICE}:${T + 30}`)).toBe(orig);
+      expect(old.latestTsOf(orig)).toBe(T + 30);
+      old.flush();
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
 

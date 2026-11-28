@@ -270,6 +270,88 @@ describe('sync messages (your other devices)', () => {
   });
 });
 
+describe('edit chains: every edit moves a message to a new timestamp', () => {
+  // Alice's reply (T+2000) edited at T+7000 and again at T+8000; your "on my way" (T+9000) edited at T+18000.
+  const edits = new Map<string, string>([
+    [`${ALICE}:${T + 7000}`, `${ALICE}:${T + 2000}`],
+    [`${ALICE}:${T + 8000}`, `${ALICE}:${T + 2000}`],
+    [`${SELF}:${T + 18000}`, `${SELF}:${T + 9000}`],
+  ]);
+  const ectx = (over: Partial<MapContext> = {}) => ctx({ originalOf: (id) => edits.get(id), ...over });
+  const mapE = (rcv: SigReceive) => mapReceive(rcv, ectx());
+  /** Alice's edit naming `target`, sent at `at`. */
+  const aliceEdit = (target: number, at: number, text: string) => {
+    const rcv = fixture('edit');
+    rcv.envelope!.timestamp = at;
+    rcv.envelope!.editMessage!.targetSentTimestamp = target;
+    Object.assign(rcv.envelope!.editMessage!.dataMessage, { timestamp: at, message: text, textStyles: [] });
+    return rcv;
+  };
+  /** A plain data message from Alice in your 1:1, at T+30000, with `fields` on it. */
+  const fromAlice = (fields: Record<string, unknown>) => {
+    const rcv = fixture('reply-quote');
+    rcv.envelope!.timestamp = T + 30000;
+    const dm = rcv.envelope!.dataMessage!;
+    delete dm.quote;
+    Object.assign(dm, { timestamp: T + 30000, message: null, ...fields });
+    return rcv;
+  };
+
+  test('a second and third edit name the one before: each updates the original message', () => {
+    const second = mapE(aliceEdit(T + 7000, T + 8000, 'make it three'));
+    expect(message(second.events)).toMatchObject({ nativeId: `${ALICE}:${T + 2000}`, author: ALICE, ts: T + 2000, editedTs: T + 8000, body: 'make it three' });
+    expect(second.messages).toEqual([expect.objectContaining({ nativeId: `${ALICE}:${T + 2000}`, ts: T + 2000, editedTs: T + 8000 })]);
+    const third = mapE(aliceEdit(T + 8000, T + 9500, 'four, final answer'));
+    expect(message(third.events)).toMatchObject({ nativeId: `${ALICE}:${T + 2000}`, ts: T + 2000, editedTs: T + 9500 });
+    // A first edit names the original itself.
+    expect(message(mapE(aliceEdit(T + 2000, T + 7000, 'two')).events)).toMatchObject({ nativeId: `${ALICE}:${T + 2000}`, editedTs: T + 7000 });
+  });
+
+  test('your second edit from the phone names your first edit', () => {
+    const rcv = fixture('sync-sent-edit');
+    const em = rcv.envelope!.syncMessage!.sentMessage!.editMessage!;
+    em.targetSentTimestamp = T + 18000;
+    Object.assign(em.dataMessage, { timestamp: T + 21000, message: 'on my way 🚲 (2 min)' });
+    expect(message(mapE(rcv).events)).toMatchObject({ nativeId: `${SELF}:${T + 9000}`, author: SELF, ts: T + 9000, editedTs: T + 21000, body: 'on my way 🚲 (2 min)' });
+  });
+
+  test('reactions, replies, deletes, pins and ended polls that name an edit count for the original', () => {
+    const target = { targetAuthor: '+15550137', targetAuthorNumber: '+15550137', targetAuthorUuid: ALICE, targetSentTimestamp: T + 8000 };
+    const add = fixture('reaction-add');
+    add.envelope!.dataMessage!.reaction!.targetSentTimestamp = T + 8000;
+    expect(of(mapE(add).events, 'reaction')).toEqual([{ t: 'reaction', conversation: GROUP, message: `${ALICE}:${T + 2000}`, author: SAM, key: '🔥' }]);
+    const remove = fixture('reaction-remove');
+    remove.envelope!.dataMessage!.reaction!.targetSentTimestamp = T + 7000;
+    expect(of(mapE(remove).events, 'reaction')).toEqual([{ t: 'reaction', conversation: GROUP, message: `${ALICE}:${T + 2000}`, author: SAM, key: '🔥', remove: true }]);
+
+    const reply = fixture('reply-quote');
+    reply.envelope!.dataMessage!.quote!.id = T + 18000;
+    expect(message(mapE(reply).events).replyTo).toBe(`${SELF}:${T + 9000}`);
+
+    const del = fixture('remote-delete');
+    del.envelope!.dataMessage!.remoteDelete!.timestamp = T + 8000;
+    expect(of(mapE(del).events, 'delete')).toEqual([{ t: 'delete', conversation: DM_ALICE, nativeId: `${ALICE}:${T + 2000}` }]);
+    expect(of(mapE(fromAlice({ adminDelete: target })).events, 'delete')).toEqual([{ t: 'delete', conversation: DM_ALICE, nativeId: `${ALICE}:${T + 2000}` }]);
+
+    const pin = fixture('pin');
+    Object.assign(pin.envelope!.dataMessage!.pinMessage!, target);
+    expect(of(mapE(pin).events, 'pin')).toEqual([{ t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 2000}`, pinned: true, by: ALICE, ts: T + 25000 }]);
+    expect(message(mapE(pin).events).replyTo).toBe(`${ALICE}:${T + 2000}`);
+    const unpin = fixture('unpin');
+    Object.assign(unpin.envelope!.dataMessage!.unpinMessage!, target);
+    expect(of(mapE(unpin).events, 'pin')).toEqual([{ t: 'pin', conversation: GROUP, message: `${ALICE}:${T + 2000}`, pinned: false, by: ALICE, ts: T + 26000 }]);
+
+    expect(message(mapE(fromAlice({ pollTerminate: { targetSentTimestamp: T + 7000 } })).events).replyTo).toBe(`${ALICE}:${T + 2000}`);
+  });
+
+  test('without an index (a fresh device), ids pass through as they are', () => {
+    const add = fixture('reaction-add');
+    add.envelope!.dataMessage!.reaction!.targetSentTimestamp = T + 8000;
+    expect(of(map('reaction-add').events, 'reaction')[0].message).toBe(`${ALICE}:${T + 1000}`);
+    expect(of(mapReceive(add, ctx()).events, 'reaction')[0].message).toBe(`${ALICE}:${T + 8000}`);
+  });
+});
+
 describe('receipts (for messages you sent)', () => {
   // Your messages: "on my way" to Alice (T+9000) and "see you all" in the group (T+10000); T+18000 is an edit of the first.
   const yours = new Map<string, string>([
