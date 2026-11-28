@@ -158,6 +158,10 @@ A profile folder holds `config.json`, `sql/db.sqlite` (with `db.sqlite-wal` whil
    seconds off the message live sync got, so they would meet no hub row and come in a second time beside the live
    one. Checked on a real profile against the hub: the text messages, stickers and pins all met their live rows.
 
+To check the hub against a Desktop without importing anything, counts only: `bun scripts/audit-parity.ts
+--signal-desktop <profile>` (docs/testing.md, "Parity audit"). It reads the profile with this reader, without opening
+or copying its attachments.
+
 To add one: upload the profile folder from the Signal account's History section (any upload holding `sql/db.sqlite`
 is one), or copy it in: `raw/<folder>/` with `config.json`, `sql/` and `attachments.noindex/`, and a `source.json`
 with `"network": "signal", "kind": "signal-desktop"` and the account. Copy it while Desktop is closed, or copy `sql/`

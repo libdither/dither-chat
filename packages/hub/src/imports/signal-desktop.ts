@@ -129,6 +129,16 @@ function selfOf(db: Database): string | null {
   }
 }
 
+/** The ACI a plain copy's Desktop is linked as, if it says. */
+export function desktopSelf(dbPath: string): string | null {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items'`).get() ? selfOf(db) : null;
+  } finally {
+    db.close();
+  }
+}
+
 const month = (ms: number | null | undefined) => (ms ? new Date(ms).toISOString().slice(0, 7) : null);
 
 /** Counts and shapes of a plain copy, never content. */
@@ -231,6 +241,11 @@ interface MapOptions {
   /** The profile folder, for attachments.noindex/. */
   profile: string;
   mediaDir: string;
+  /**
+   * Counts only (scripts/audit-parity.ts): an attachment on disk is a fact without its bytes being opened or copied
+   * into mediaDir, and a long message's text file is not read.
+   */
+  countOnly?: boolean;
   progress?: (p: number) => void;
 }
 
@@ -299,6 +314,7 @@ export function mapDesktop(dbPath: string, o: MapOptions, emit: (line: unknown) 
       if (typeof a.path !== 'string' || !a.path) return null;
       const abs = resolve(attRoot, a.path);
       if (!abs.startsWith(attRoot + '/') || !existsSync(abs)) return null;
+      if (o.countOnly) return { sha: typeof a.plaintextHash === 'string' && a.plaintextHash ? a.plaintextHash : createHash('sha256').update(a.path).digest('hex'), path: abs };
       let bytes: Buffer;
       try {
         const raw = readFileSync(abs);
@@ -432,7 +448,7 @@ export function mapDesktop(dbPath: string, o: MapOptions, emit: (line: unknown) 
         let text: string | null = null;
         if (long) {
           const s = stored(long);
-          if (s) text = readFileSync(s.path, 'utf8');
+          if (s && !o.countOnly) text = readFileSync(s.path, 'utf8');
         }
         const r = rangesOf(j.bodyRanges);
         let mentionsSelf = false;

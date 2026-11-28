@@ -28,6 +28,7 @@ import { feedItemOf, feedView, postView, scrubEventGuests } from './feed.ts';
 import { keepAbout } from './people.ts';
 import { alertBar, type Facts } from './learn.ts';
 import { attachmentExtra, attachmentRich, embedViews, richView, type StoredExtra } from './rich.ts';
+import { DroppedTargets, type DroppedKind } from './dropped.ts';
 
 /** A pre-deploy copy this young was made for this start (the deployer copies, then restarts the hub). */
 const PRE_DEPLOY_FRESH_MS = 15 * 60_000;
@@ -331,6 +332,8 @@ export class Store {
   reminderDue: ((r: DueReminder) => void) | null = null;
   /** How long each step of opening the database took (startup.ts). */
   readonly opening: [string, number][];
+  /** Events whose message the hub does not hold, by network and kind (dropped.ts). */
+  readonly dropped = new DroppedTargets();
 
   /**
    * A reader (`reader: true`): a read-only connection for search's own thread (search-worker.ts), opened on a database
@@ -982,25 +985,29 @@ export class Store {
           if (ev.live) this.typingStopped(hubId('cnv', acc.network, ev.message.conversation), hubId('idn', acc.network, ev.message.author));
           break;
         }
-        case 'delete':
-          this.gone(acc, hubId('msg', acc.network, ev.nativeId), ev.reason === 'expired' ? 'disappeared' : 'deleted');
+        case 'delete': {
+          const mid = hubId('msg', acc.network, ev.nativeId);
+          if (!this.held(acc, mid, 'delete')) break;
+          this.gone(acc, mid, ev.reason === 'expired' ? 'disappeared' : 'deleted');
           break;
+        }
         case 'reaction': {
           const mid = hubId('msg', acc.network, ev.message);
-          if (!this.db.query('SELECT 1 FROM message WHERE id = ?').get(mid)) break;
+          if (!this.held(acc, mid, 'reaction')) break;
           this.applyReaction(acc, mid, ev);
           this.markReacted(mid);
           break;
         }
         case 'pin': {
           const mid = hubId('msg', acc.network, ev.message);
-          if (!this.db.query('SELECT 1 FROM message WHERE id = ?').get(mid) || !this.retention().changes) break;
+          if (!this.held(acc, mid, 'pin') || !this.retention().changes) break;
           this.messageEvent(mid, ev.pinned ? 'pin' : 'unpin', null, ev.by ? this.ensureIdentity(acc, ev.by) : null, acc.id, ev.ts ?? Date.now());
           break;
         }
         case 'pollUpdate': {
           // Votes are not news in themselves, as reactions are not (polls.ts).
           const { t: _t, ...u } = ev;
+          if (!this.held(acc, hubId('msg', acc.network, ev.message), 'pollUpdate')) break;
           if (applyPollUpdate(this.db, acc.network, (n) => this.ensureIdentity(acc, n), u)) this.markReacted(hubId('msg', acc.network, ev.message));
           break;
         }
@@ -1034,6 +1041,7 @@ export class Store {
           break;
         case 'reactionsCleared': {
           const mid = hubId('msg', acc.network, ev.message);
+          if (!this.held(acc, mid, 'reactionsCleared')) break;
           const key = ev.key === undefined ? null : canonicalReactionKey(ev.key);
           // A moderator clearing reactions: what was there, kept like any reaction taken back.
           const now = { at: Date.now(), exact: false };
@@ -1128,6 +1136,18 @@ export class Store {
     });
     tx();
     return fresh;
+  }
+
+  /** The hub holds this message; if not, the event for it is dropped, and counted (dropped.ts). */
+  private held(acc: AccountRow, messageId: string, kind: DroppedKind): boolean {
+    if (this.db.query('SELECT 1 FROM message WHERE id = ?').get(messageId)) return true;
+    this.dropped.note(acc, kind);
+    return false;
+  }
+
+  /** Events dropped since the hub started because their message is not held, by network and kind (dropped.ts). */
+  droppedTargets() {
+    return this.dropped.list();
   }
 
   /**
@@ -1751,6 +1771,8 @@ export class Store {
         f.mentionsSelf && !f.mentionsAll && f.mentionsGroup ? 1 : 0,
         f.extra || f.forward || f.silent ? JSON.stringify({ ...scrubEventGuests(f.extra), ...(f.forward ? { forward: f.forward } : {}), ...(f.silent ? { silent: true } : {}) }) : null,
       );
+    // A reply to a message the hub does not hold (yet, or under another id): kept, and counted once (dropped.ts).
+    if (replyTo && old?.reply_to_id !== replyTo && !this.db.query('SELECT 1 FROM message WHERE id = ?').get(replyTo)) this.dropped.note(acc, 'replyTo');
     // A message that moved (a Zulip topic renamed or moved): it leaves the conversation it was in, which falls back to
     // its own newest message.
     if (f.moved && old && old.conversation_id !== cid) {

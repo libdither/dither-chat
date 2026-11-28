@@ -1284,7 +1284,9 @@ export class HubServer {
     const num = (k: string) => (url.searchParams.get(k) ? Number(url.searchParams.get(k)) : null);
 
     // gapRestarts: accounts the hub still has to restart after a gap (remote.ts), which the deployer waits for.
-    if (path === '/api/health') return ok({ ok: true, now: Date.now(), gapRestarts: (this.sup as { gapRestartsWaiting?: () => number }).gapRestartsWaiting?.() ?? 0 });
+    // droppedTargets: events whose message the hub does not hold, by network and kind, since it started (dropped.ts).
+    if (path === '/api/health')
+      return ok({ ok: true, now: Date.now(), gapRestarts: (this.sup as { gapRestartsWaiting?: () => number }).gapRestartsWaiting?.() ?? 0, droppedTargets: this.store.droppedTargets() });
     if (path === '/api/demo/reset' && method === 'POST') {
       if (!this.opts.onDemoReset) return bad('demo is not enabled', 404);
       await this.opts.onDemoReset();
