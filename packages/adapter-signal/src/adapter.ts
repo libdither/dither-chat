@@ -580,7 +580,8 @@ export class SignalAdapter {
       if (m.author !== self && !m.editedTs && m.kind !== 'system' && m.kind !== 'call' && m.ts > (this.acked.get(m.conversation) ?? 0)) {
         this.state.addUnread(m.conversation, m.author, m.ts);
       }
-      if (m.author === self && m.editedTs) this.state.alias(msgId(self, m.editedTs), m.nativeId, m.conversation);
+      // Everyone's edits: what comes next (reactions, quotes, deletes, the next edit) names the newest timestamp.
+      if (m.editedTs) this.state.alias(msgId(m.author, m.editedTs), m.nativeId, m.conversation);
       if (m.timer !== undefined) this.timers.set(m.conversation, m.timer);
       if (m.expiresInSeconds) this.trackExpiry(m, m.expiresInSeconds, m.author === self ? Date.now() : undefined);
       if (m.groupUpdate) this.pendingGroupUpdates.set(m.groupUpdate, m);
@@ -670,6 +671,11 @@ export class SignalAdapter {
     return m;
   }
 
+  /** The timestamp other clients know a message by: its newest edit's, else its own. */
+  private currentTs(id: string, ts: number) {
+    return this.state.latestTsOf(id) ?? ts;
+  }
+
   async command(cmd: P.AdapterCommand): Promise<unknown> {
     switch (cmd.t) {
       case 'history':
@@ -683,7 +689,7 @@ export class SignalAdapter {
         return this.edit(cmd.conversation, cmd.message, cmd.body);
       case 'react': {
         const m = this.message(cmd.message);
-        await this.call('sendReaction', { ...this.target(cmd.conversation), emoji: cmd.key, targetAuthor: m.author, targetTimestamp: m.ts, ...(cmd.remove ? { remove: true } : {}) });
+        await this.call('sendReaction', { ...this.target(cmd.conversation), emoji: cmd.key, targetAuthor: m.author, targetTimestamp: this.currentTs(cmd.message, m.ts), ...(cmd.remove ? { remove: true } : {}) });
         this.host.emit({ t: 'reaction', conversation: cmd.conversation, message: cmd.message, author: this.self, key: cmd.key, ...(cmd.remove ? { remove: true } : {}) });
         return {};
       }
@@ -694,7 +700,7 @@ export class SignalAdapter {
       case 'redact': {
         const m = this.message(cmd.message);
         if (m.author !== this.self) throw new Error('Signal only lets you delete your own messages for everyone');
-        await this.call('remoteDelete', { ...this.target(cmd.conversation), targetTimestamp: m.ts });
+        await this.call('remoteDelete', { ...this.target(cmd.conversation), targetTimestamp: this.currentTs(cmd.message, m.ts) });
         this.host.emit({ t: 'delete', conversation: cmd.conversation, nativeId: cmd.message });
         this.purge(cmd.message);
         return {};
@@ -754,7 +760,7 @@ export class SignalAdapter {
     if (st.mentions.length) params.mention = st.mentions;
     if (replyTo) {
       const q = this.message(replyTo);
-      params.quoteTimestamp = q.ts;
+      params.quoteTimestamp = this.currentTs(replyTo, q.ts);
       params.quoteAuthor = q.author;
       const text = this.state.textOf(replyTo);
       if (text) params.quoteMessage = text;
@@ -812,14 +818,15 @@ export class SignalAdapter {
     const m = this.message(message);
     if (m.author !== self) throw new Error('you can only edit your own messages');
     const st = toSignal(body);
-    const params: Record<string, unknown> = { ...this.target(conversation), message: st.text, editTimestamp: m.ts };
+    // An edit names the newest version, the way Signal's own clients send one.
+    const params: Record<string, unknown> = { ...this.target(conversation), message: st.text, editTimestamp: this.currentTs(message, m.ts) };
     if (st.textStyles.length) params.textStyle = st.textStyles;
     if (st.mentions.length) params.mention = st.mentions;
     // Clients rebuild the message from the edit, so a quote has to be sent again.
     const replyTo = this.state.replyOf(message);
     const q = replyTo ? parseMsgId(replyTo) : null;
     if (q) {
-      params.quoteTimestamp = q.ts;
+      params.quoteTimestamp = this.currentTs(replyTo!, q.ts);
       params.quoteAuthor = q.author;
       const text = this.state.textOf(replyTo!);
       if (text) params.quoteMessage = text;

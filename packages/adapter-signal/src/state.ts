@@ -4,8 +4,11 @@
  *   dms       peers we have a 1:1 with (Signal has no conversation list)
  *   index     recent message ids -> conversation, text, quoted message, files:
  *             read syncs and receipts carry no conversation, quotes and edits
- *             want the original, deletions remove the downloaded files; your
- *             own edits' ids point at the message they edit (receipts name them)
+ *             want the original, deletions remove the downloaded files. Every
+ *             edit moves a message to a new timestamp, and receipts, reactions,
+ *             quotes, deletes, pins and later edits name the newest one: each
+ *             edit's id points at the original (o), and the original keeps its
+ *             newest timestamp (l), to send when we act on it
  *   unread    incoming messages not yet acknowledged with a read receipt
  *   expiring  disappearing messages and when their timer started
  *   pins      pins that end by themselves, and when
@@ -16,7 +19,7 @@
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import type { PinTimer } from './mapping.ts';
+import { type PinTimer, parseMsgId } from './mapping.ts';
 import type { SigGroup } from './types.ts';
 
 export interface Expiring {
@@ -51,6 +54,7 @@ interface IndexEntry {
   r?: string; // quoted message id
   f?: string[]; // downloaded attachment files
   o?: string; // the message this edit's id stands for
+  l?: number; // on an original: the timestamp of its newest edit
 }
 
 const INDEX_MAX = 5000;
@@ -104,7 +108,8 @@ export class AdapterState {
     this.index.delete(id);
     const r = replyTo ?? prev?.r;
     const f = files?.length ? files : prev?.f;
-    this.index.set(id, { c: conversation, t: text.length > TEXT_MAX ? text.slice(0, TEXT_MAX - 1) + '…' : text, ...(r ? { r } : {}), ...(f ? { f } : {}) });
+    const l = prev?.l;
+    this.index.set(id, { c: conversation, t: text.length > TEXT_MAX ? text.slice(0, TEXT_MAX - 1) + '…' : text, ...(r ? { r } : {}), ...(f ? { f } : {}), ...(l ? { l } : {}) });
     while (this.index.size > INDEX_MAX) this.index.delete(this.index.keys().next().value!);
     this.save();
   }
@@ -122,13 +127,27 @@ export class AdapterState {
     return this.index.get(id)?.c;
   }
 
-  /** An edit you sent, by its own id: receipts for it count for the message it edits. */
-  alias(editId: string, original: string, conversation: string) {
+  /**
+   * An edit, by its own id (author:editTimestamp), stands for the message it edits: `target` is the id the edit
+   * named, itself an earlier edit when the message was edited before, so the chain is followed back to the original.
+   * The original remembers the newest edit's timestamp.
+   */
+  alias(editId: string, target: string, conversation: string) {
+    const original = this.originalOf(target) ?? target;
     if (editId === original) return;
     this.index.delete(editId);
-    this.index.set(editId, { c: conversation, t: '', o: this.originalOf(original) ?? original });
+    this.index.set(editId, { c: conversation, t: '', o: original });
+    const ts = parseMsgId(editId)?.ts;
+    const e = this.index.get(original);
+    if (ts && !e) this.index.set(original, { c: conversation, t: '', l: ts });
+    else if (ts && e && !(e.l && e.l >= ts)) e.l = ts;
     while (this.index.size > INDEX_MAX) this.index.delete(this.index.keys().next().value!);
     this.save();
+  }
+
+  /** The timestamp a message goes by now: its newest edit's, or nothing when it was never edited (use its own). */
+  latestTsOf(id: string) {
+    return this.index.get(this.originalOf(id) ?? id)?.l;
   }
 
   originalOf(id: string) {
